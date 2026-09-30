@@ -108,6 +108,40 @@ void main() {
       },
     );
 
+    test('emitViewError delivers the error, with its stack trace, on the '
+        "subscriber's error channel", () async {
+      final fake = FakeReaction();
+      final stream = fake.viewSource.watch<Map<String, Object?>>(
+        viewName: 'v',
+        mapper: (m) => m,
+      );
+      final errors = <Object>[];
+      final traces = <StackTrace>[];
+      final sub = stream.listen(
+        (_) {},
+        onError: (Object e, StackTrace s) {
+          errors.add(e);
+          traces.add(s);
+        },
+      );
+      await pumpEventQueue();
+
+      const refusal = ViewConvergingRefusal('v_index');
+      final trace = StackTrace.current;
+      fake.emitViewError('v', refusal, trace);
+      await pumpEventQueue();
+
+      expect(errors, [same(refusal)]);
+      expect(traces, [same(trace)]);
+      await sub.cancel();
+    });
+
+    test('emitViewError throws after dispose', () async {
+      final fake = FakeReaction();
+      await fake.dispose();
+      expect(() => fake.emitViewError('v', StateError('x')), throwsStateError);
+    });
+
     test('permissionSource.current and stream are drivable', () async {
       final fake = FakeReaction();
       expect(fake.permissionSource.current, isNull);

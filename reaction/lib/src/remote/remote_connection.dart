@@ -35,6 +35,7 @@ import 'dart:convert';
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:http/http.dart' as http;
+import 'package:reaction/src/interfaces/view_source.dart';
 import 'package:reaction/src/scope/connection_status.dart';
 import 'package:reaction/src/wire/subscription_messages.dart';
 import 'package:reaction/src/wire/update_codec.dart';
@@ -429,9 +430,7 @@ class RemoteConnection {
             );
             _scheduleConvergingRetry(subId, entry);
           } else {
-            entry.controller.addError(
-              'subscription_denied: ${json['reason'] ?? json['message']}',
-            );
+            entry.controller.addError(_terminalRefusal(json, entry));
             _subs.remove(subId);
             entry.controller.close();
           }
@@ -462,6 +461,30 @@ class RemoteConnection {
       entry.convergingRetryTimer?.cancel();
       entry.convergingRetryTimer = null;
       entry.controller.add(UpdateCodec.decode(json));
+    }
+  }
+
+  /// The error a terminal refusal frame surfaces on its subscription's
+  /// stream: a typed [SubscriptionDenied] naming the subscribed view for a
+  /// `subscription_denied` frame (a [FormatException] when its reason is not
+  /// one this client knows), and a string naming the frame's code and
+  /// message for an `error` frame.
+  static Object _terminalRefusal(
+    Map<String, Object?> json,
+    _SubscriptionEntry entry,
+  ) {
+    // Implements: EVS-PRD-cross-process-event-transport/M
+    if (json['type'] != 'subscription_denied') {
+      return 'error: ${json['code']}: ${json['message']}';
+    }
+    final reason = json['reason'];
+    try {
+      return SubscriptionDenied(
+        viewName: entry.subscribeMsg.viewName,
+        reason: SubscriptionDenyReason.fromWire(reason is String ? reason : ''),
+      );
+    } on FormatException catch (e) {
+      return e;
     }
   }
 

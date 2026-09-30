@@ -287,6 +287,7 @@ void main() {
       expect(_aggregateIdOf(ready.rows.single), 'a');
     });
 
+    // Verifies: EVS-PRD-reaction-widget-contract/L
     testWidgets('ConnectionStatus.Reconnecting -> Stale retains rows', (
       tester,
     ) async {
@@ -321,6 +322,7 @@ void main() {
       expect(dc.connectionStatus, isA<Reconnecting>());
     });
 
+    // Verifies: EVS-PRD-reaction-widget-contract/L
     testWidgets('Connected after Stale re-enters Loading then Ready', (
       tester,
     ) async {

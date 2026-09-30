@@ -26,6 +26,8 @@ import 'dart:convert';
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
+import 'package:reaction/reaction.dart'
+    show SubscriptionDenied, SubscriptionDenyReason;
 import 'package:reaction/src/remote/remote_connection.dart';
 import 'package:stream_channel/stream_channel.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
@@ -477,6 +479,73 @@ void main() {
       expect((result as ViewConvergingRefusal).viewName, 'notes_today');
 
       await conn.dispose();
+    });
+  });
+
+  group('subscription_denied refusal', () {
+    Future<(Object?, bool)> refuse(Object? reason) async {
+      final pair = _Pair();
+      addTearDown(pair.close);
+      final conn = RemoteConnection(
+        baseUrl: Uri.parse('http://localhost:0'),
+        httpClient: _FakeHttpClient(),
+        wsFactory: (_) => pair.clientSide,
+      )..setCredential('alice');
+      addTearDown(conn.dispose);
+      pair.serverSide.stream.listen((_) {});
+
+      final stream = conn.openSubscription(
+        subscriptionId: 'sub-1',
+        viewName: 'notes_today',
+      );
+      Object? error;
+      final done = Completer<void>();
+      stream.listen(
+        (_) {},
+        onError: (Object e) => error = e,
+        onDone: done.complete,
+      );
+
+      await Future<void>.delayed(Duration.zero);
+      pair.serverSide.sink.add(
+        jsonEncode({'type': 'auth_ok', 'principalId': 'alice'}),
+      );
+      await Future<void>.delayed(Duration.zero);
+      pair.serverSide.sink.add(
+        jsonEncode({
+          'type': 'subscription_denied',
+          'subscriptionId': 'sub-1',
+          'reason': reason,
+        }),
+      );
+      await done.future.timeout(const Duration(seconds: 2));
+      return (error, done.isCompleted);
+    }
+
+    // Verifies: EVS-PRD-cross-process-event-transport/M
+    test('surfaces a typed SubscriptionDenied naming the view and the reason, '
+        'then ends the subscription', () async {
+      final (error, closed) = await refuse('view_permission_denied');
+      expect(
+        error,
+        isA<SubscriptionDenied>()
+            .having((e) => e.viewName, 'viewName', 'notes_today')
+            .having(
+              (e) => e.reason,
+              'reason',
+              SubscriptionDenyReason.viewPermissionDenied,
+            ),
+      );
+      expect(error.toString(), contains('subscription_denied'));
+      expect(error.toString(), contains('view_permission_denied'));
+      expect(closed, isTrue);
+    });
+
+    test('a denial with an unrecognised reason surfaces a FormatException '
+        'and ends the subscription', () async {
+      final (error, closed) = await refuse('no_such_reason');
+      expect(error, isA<FormatException>());
+      expect(closed, isTrue);
     });
   });
 

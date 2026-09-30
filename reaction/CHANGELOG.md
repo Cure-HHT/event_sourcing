@@ -2,6 +2,15 @@
 
 ## 0.1.0-dev (unreleased)
 
+- A subscription the server denies surfaces a typed `SubscriptionDenied`
+  on its stream, naming the subscribed view and the
+  `SubscriptionDenyReason` (both now exported), instead of a
+  `'subscription_denied: <reason>'` string; its `toString()` keeps both
+  tokens. A denial whose reason this client does not know surfaces a
+  `FormatException`. Either way the subscription then ends.
+- A non-converging `error` frame addressed to a subscription surfaces as
+  `'error: <code>: <message>'` on its stream, no longer mislabelled
+  `subscription_denied`; the subscription still ends.
 - A subscription refused with `view_converging` no longer terminates: the
   refusal still surfaces once on the subscription's stream as a typed,
   transient `ViewConvergingRefusal`, and `RemoteConnection` re-issues the

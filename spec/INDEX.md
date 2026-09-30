@@ -12,7 +12,7 @@
 | EVS-PRD-action-submitter              | Action Submitter                | prd-reaction.md                      | fec6feb6 |
 | EVS-PRD-auth-session                  | Auth Session                    | prd-reaction.md                      | 6b3b75e2 |
 | EVS-PRD-canonical-json                | Canonical JSON Serialization    | prd-canonical-json.md                | 14bb1343 |
-| EVS-PRD-cross-process-event-transport | Cross-Process Event Transport   | prd-reaction.md                      | 6485cb2c |
+| EVS-PRD-cross-process-event-transport | Cross-Process Event Transport   | prd-reaction.md                      | 3a77adea |
 | EVS-PRD-delivery-channel              | Delivery channel continuity     | delivery-continuity.md               | f6230ffe |
 | EVS-PRD-destinations                  | Destinations                    | prd-destinations.md                  | 4f6634d8 |
 | EVS-PRD-event-log                     | Event Log                       | prd-event-log.md                     | e50ef232 |
@@ -26,7 +26,7 @@
 | EVS-PRD-portability                   | Portability                     | prd-portability.md                   | 4fd789d6 |
 | EVS-PRD-provenance                    | Provenance Chain Tracking       | prd-provenance.md                    | d9fe1da3 |
 | EVS-PRD-reaction-scope                | Reaction Scope                  | prd-reaction.md                      | 6c2b0c02 |
-| EVS-PRD-reaction-widget-contract      | Reaction Widget Contract        | prd-reaction.md                      | 57462176 |
+| EVS-PRD-reaction-widget-contract      | Reaction Widget Contract        | prd-reaction.md                      | bb877b44 |
 | EVS-PRD-regulatory-alignment          | Regulatory Alignment            | prd-regulatory-alignment.md          | d8a802ad |
 | EVS-PRD-scoped-permissions            | Scope-aware authorization model | scoped-permissions.md                | 3442b415 |
 | EVS-PRD-storage-barrier               | Storage barrier                 | prd-storage-barrier.md               | 35fe949c |

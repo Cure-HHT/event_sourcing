@@ -40,9 +40,34 @@ class ParticipantsList extends StatelessWidget {
             Expanded(child: _ParticipantListView(participants: lastRows)),
           ],
         ),
+        Converging<Participant>(:final viewName) => _Notice(
+          'Updating "$viewName" after a deploy…',
+        ),
+        Rejected<Participant>() => const _Notice(
+          'You do not have access to participants.',
+        ),
+        Errored<Participant>(:final error) => _Notice(
+          'Could not load participants: $error',
+        ),
       },
     );
   }
+}
+
+/// A centered one-line notice for a view with no rows to show: a
+/// converging view, or a rejected or errored subscription.
+class _Notice extends StatelessWidget {
+  const _Notice(this.message);
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) => Center(
+    child: Padding(
+      padding: const EdgeInsets.all(12),
+      child: Text(message, textAlign: TextAlign.center),
+    ),
+  );
 }
 
 /// Reconnecting banner shown over the last-known rows (Stale state).

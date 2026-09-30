@@ -1,8 +1,13 @@
 // Verifies: EVS-PRD-reaction-widget-contract/D+G
+// the subscription's errors reach
+//   onError when supplied; absent it, a converging refusal (transient) is
+//   dropped and any other error is reported to FlutterError, none left
+//   uncaught in the zone.
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:reaction/reaction.dart';
 import 'package:reaction_widgets/reaction_widgets.dart';
 import 'package:reaction_widgets_testing/reaction_widgets_testing.dart';
 
@@ -142,5 +147,80 @@ void main() {
           'ViewListener MUST render only its child, with no added '
           'decoration (EVS-PRD-reaction-widget-contract/G).',
     );
+  });
+
+  group('subscription errors', () {
+    Future<void> pumpListener(
+      WidgetTester tester,
+      FakeReaction fake, {
+      void Function(BuildContext, Object, StackTrace)? onError,
+    }) => pumpReactionWidget(
+      tester,
+      fake: fake,
+      child: ViewListener<_Row>(
+        viewName: 'v',
+        mapper: (m) => m,
+        onUpdate: (ctx, u) {},
+        onError: onError,
+        child: const SizedBox.shrink(),
+      ),
+    );
+
+    // Verifies: EVS-PRD-reaction-widget-contract/O
+    testWidgets('onError receives every error with its stack trace', (
+      tester,
+    ) async {
+      final fake = FakeReaction();
+      final errors = <Object>[];
+      final traces = <StackTrace>[];
+      await pumpListener(
+        tester,
+        fake,
+        onError: (ctx, e, s) {
+          errors.add(e);
+          traces.add(s);
+        },
+      );
+
+      const refusal = ViewConvergingRefusal('v');
+      final denial = const SubscriptionDenied(
+        viewName: 'v',
+        reason: SubscriptionDenyReason.unknownView,
+      );
+      final trace = StackTrace.current;
+      fake.emitViewError('v', refusal);
+      fake.emitViewError('v', denial, trace);
+      await _settleStream(tester);
+
+      expect(tester.takeException(), isNull);
+      expect(errors, [same(refusal), same(denial)]);
+      expect(traces.last, same(trace));
+    });
+
+    // Verifies: EVS-PRD-reaction-widget-contract/O
+    testWidgets('without onError a converging refusal is dropped', (
+      tester,
+    ) async {
+      final fake = FakeReaction();
+      await pumpListener(tester, fake);
+
+      fake.emitViewError('v', const ViewConvergingRefusal('v'));
+      await _settleStream(tester);
+
+      expect(tester.takeException(), isNull);
+    });
+
+    // Verifies: EVS-PRD-reaction-widget-contract/O
+    testWidgets('without onError any other error is reported to '
+        'FlutterError', (tester) async {
+      final fake = FakeReaction();
+      await pumpListener(tester, fake);
+
+      final error = StateError('transport broke');
+      fake.emitViewError('v', error);
+      await _settleStream(tester);
+
+      expect(tester.takeException(), same(error));
+    });
   });
 }

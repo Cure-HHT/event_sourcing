@@ -6,8 +6,9 @@
 // ViewBuilder subscribes through the composed scope's ViewSource,
 // accumulates the `Snapshot × N -> EndOfReplay -> Delta / Tombstone`
 // stream keyed by aggregate id, and surfaces a sealed `ViewState<Note>`
-// (Loading / Ready / Stale). This file is pure rendering sugar: it
-// maps each ViewState variant to a Flutter widget — the
+// (Loading / Ready / Stale / Converging / Rejected / Errored). This file
+// is pure rendering sugar: it maps each ViewState variant to a Flutter
+// widget — the
 // "headless primitive + per-app sugar" split the widget library is built
 // around (EVS-PRD-reaction-widget-contract-G).
 //
@@ -60,6 +61,16 @@ class NotesList extends StatelessWidget {
             _StaleBanner(),
             Expanded(child: _NoteListView(notes: lastRows)),
           ],
+        ),
+        Converging<Note>(:final viewName) => ViewNotice(
+          'Updating "$viewName" after a deploy…',
+          isTransient: true,
+        ),
+        Rejected<Note>() => const ViewNotice(
+          'You do not have access to these notes.',
+        ),
+        Errored<Note>(:final error) => ViewNotice(
+          'Could not load notes: $error',
         ),
       },
     );

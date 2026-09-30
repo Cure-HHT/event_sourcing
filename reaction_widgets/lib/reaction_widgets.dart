@@ -17,7 +17,7 @@
 /// - [ViewBuilder] / [ViewListener] — declarative (builds rows) and
 ///   imperative (side-effects on row changes) consumers of a
 ///   `ViewSource` subscription. [ViewState] is the sealed
-///   build-time state (Loading/Ready/Stale).
+///   build-time state (Loading/Ready/Stale/Converging/Rejected/Errored).
 /// - [PermissionGate] — conditionally builds children based on a
 ///   `PermissionSource` snapshot for the active principal.
 /// - [ReActionErrorListener] — surfaces transport / subscription
@@ -36,7 +36,8 @@ export 'src/scope/reaction_scope_widget.dart' show ReActionScope;
 export 'src/action/action_builder.dart' show ActionBuilder, ActionBuilderFn;
 
 // View
-export 'src/view/view_state.dart' show ViewState, Loading, Ready, Stale;
+export 'src/view/view_state.dart'
+    show ViewState, Loading, Ready, Stale, Converging, Rejected, Errored;
 export 'src/view/view_builder.dart' show ViewBuilder, ViewBuilderFn;
 export 'src/view/view_listener.dart' show ViewListener;
 

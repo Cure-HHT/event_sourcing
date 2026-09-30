@@ -1,26 +1,34 @@
 // Implements: EVS-PRD-reaction-widget-contract/I
 
 import 'package:meta/meta.dart';
+import 'package:reaction/reaction.dart' show SubscriptionDenied;
 
 /// View-subscription rendering state exposed by `ViewBuilder`.
 ///
-/// Three variants, exhaustive:
+/// Six variants, exhaustive:
 ///
-/// - [Loading] — pre-`EndOfReplay`; no rows yet (or isProgressive mode
+/// - [Loading]    — pre-`EndOfReplay`; no rows yet (or isProgressive mode
 ///   disabled).
-/// - [Ready]   — post-`EndOfReplay`; rows are live and current.
-/// - [Stale]   — transport disconnected; `lastRows` retained for UX
+/// - [Ready]      — post-`EndOfReplay`; rows are live and current.
+/// - [Stale]      — transport disconnected; `lastRows` retained for UX
 ///   continuity. Transition is driven by the composed `ReactionScope`'s
 ///   authoritative `ConnectionStatus` per
 ///   `EVS-PRD-reaction-widget-contract`-I — NOT by inference from
 ///   subscription-stream liveness.
+/// - [Converging] — the subscription was refused because a view it reads
+///   is converging; transient, the subscription recovers on its own.
+/// - [Rejected]   — the subscription was denied; terminal.
+/// - [Errored]    — the subscription failed with any other error; terminal.
 ///
-/// The `Stale` variant is named for what it IS at the rendering layer
-/// (a stale-data surface) rather than echoing `reaction`'s transport-
-/// layer term `ConnectionStatus.Disconnected`. Picking distinct names
-/// keeps consumer code free of `hide`-clause workarounds when both
-/// `ViewBuilder` and any `ConnectionStatus`-aware widget are imported
-/// in the same library.
+/// Every error a `ViewBuilder`'s subscription reports lands in one of the
+/// last three, so none is left uncaught.
+///
+/// The variants are named for what they ARE at the rendering layer
+/// rather than echoing terms `package:reaction` exports (`Disconnected`,
+/// `Denied`, `Failed`). Picking distinct names keeps consumer code free
+/// of `hide`-clause workarounds when both `ViewBuilder` and
+/// `ConnectionStatus`- or `ActionState`-aware code are imported in the
+/// same library.
 @immutable
 sealed class ViewState<T> {
   const ViewState();
@@ -53,4 +61,35 @@ class Stale<T> extends ViewState<T> {
 
   final List<T> lastRows;
   final Object connectionStatus;
+}
+
+/// The subscription was refused because the view named by [viewName] (the
+/// subscribed view, or one the server reads to scope it) is converging
+/// after a deploy. Transient: the view source re-issues the subscription
+/// without a new request, and the state returns to [Loading] or [Ready]
+/// as the recovered subscription's rows arrive. No rows are held: the
+/// recovered subscription replays the view from the start.
+class Converging<T> extends ViewState<T> {
+  const Converging(this.viewName);
+
+  /// The converging view the refusal named.
+  final String viewName;
+}
+
+/// The subscription was denied (`denial` names the view and the reason).
+/// Terminal: no reconnect re-issues a denied subscription, so the state
+/// stays until the `ViewBuilder` is rebuilt with a new key.
+class Rejected<T> extends ViewState<T> {
+  const Rejected(this.denial);
+
+  final SubscriptionDenied denial;
+}
+
+/// The subscription failed with [error], one that is neither a converging
+/// refusal nor a denial. Terminal, like [Rejected].
+class Errored<T> extends ViewState<T> {
+  const Errored(this.error, this.stackTrace);
+
+  final Object error;
+  final StackTrace stackTrace;
 }

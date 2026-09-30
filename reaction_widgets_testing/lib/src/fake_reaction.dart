@@ -22,6 +22,9 @@ import 'package:reaction_widgets/reaction_widgets.dart';
 ///   `actionSubmitter.submit`.
 /// - [emitViewUpdate] — pushes an [Update] to active `viewSource.watch`
 ///   subscribers of a given view.
+/// - [emitViewError] — delivers an error on the error channel of active
+///   `viewSource.watch` subscribers of a given view (a
+///   `ViewConvergingRefusal`, a `SubscriptionDenied`, or any other error).
 /// - [drivePermission] — sets the current [EffectiveAuthorization] and
 ///   emits on `permissionSource.stream`.
 class FakeReaction implements ReactionScope {
@@ -149,6 +152,20 @@ class FakeReaction implements ReactionScope {
     _checkDisposed();
     final c = _viewControllers[viewName];
     if (c != null && !c.isClosed) c.add(update);
+  }
+
+  /// Deliver [error] (with [stackTrace], when given) on the error channel
+  /// of any active subscriber of [viewName], the way a view source reports
+  /// a `ViewConvergingRefusal`, a `SubscriptionDenied` or a transport
+  /// failure. The subscription stays open: follow it with
+  /// [emitViewUpdate] to drive a recovery.
+  ///
+  /// Dropped when nothing has subscribed to [viewName] yet, like
+  /// [emitViewUpdate].
+  void emitViewError(String viewName, Object error, [StackTrace? stackTrace]) {
+    _checkDisposed();
+    final c = _viewControllers[viewName];
+    if (c != null && !c.isClosed) c.addError(error, stackTrace);
   }
 
   /// Set the current [EffectiveAuthorization] and emit on

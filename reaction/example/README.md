@@ -44,9 +44,12 @@ that updates when permissions change mid-session.
   - **`ViewBuilder<T>`** (`notes_list.dart`, `admin_panel.dart`) replaces
     the old hand-written accumulators. It owns subscription,
     `Snapshot/EndOfReplay/Delta/Tombstone` accumulation, and surfaces a
-    sealed `ViewState` (`Loading` / `Ready` / `Stale`). The `Stale`
-    branch renders a reconnecting banner over last-known rows, driven by
-    the scope's authoritative `ConnectionStatus`.
+    sealed `ViewState` (`Loading` / `Ready` / `Stale` / `Converging` /
+    `Rejected` / `Errored`). The `Stale` branch renders a reconnecting
+    banner over last-known rows, driven by the scope's authoritative
+    `ConnectionStatus`; the other three render a notice for a view that
+    is converging after a deploy, a denied subscription, and a failed
+    one.
   - **`ActionBuilder`** (`submit_note_form.dart`, `admin_panel.dart`)
     owns the submission lifecycle and idempotency-key minting, exposing
     `Idle/Submitting/Success/Denied/Failed` to the builder.
@@ -102,7 +105,7 @@ reaction/example/
     login_screen.dart              username text field
     home_screen.dart               PermissionGate + ViewListener +
                                    ReActionErrorListener composition hub
-    notes_list.dart                ViewBuilder<Note> (Loading/Ready/Stale)
+    notes_list.dart                ViewBuilder<Note> (every ViewState)
     submit_note_form.dart          PermissionGate + ActionBuilder
     admin_panel.dart               ViewBuilder + ActionBuilder (admin-only)
   test/server_smoke_test.dart      11-case server-side end-to-end test

@@ -133,6 +133,16 @@ class _AdminPanelState extends State<AdminPanel> {
                   _AssignmentTable(rows: lastRows),
                 ],
               ),
+              Converging<_Assignment>(:final viewName) => ViewNotice(
+                'Updating "$viewName" after a deploy…',
+                isTransient: true,
+              ),
+              Rejected<_Assignment>() => const ViewNotice(
+                'You do not have access to the assignments.',
+              ),
+              Errored<_Assignment>(:final error) => ViewNotice(
+                'Could not load assignments: $error',
+              ),
             },
           ),
           const Divider(height: 24),
