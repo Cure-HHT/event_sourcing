@@ -92,12 +92,15 @@ Future<List<DetectedChainFinding>> chainStructureFindingsInTxn(
   }
   final previous = at.previousEventHash;
   final found = <DetectedChainFinding>[];
+  final neighbours = await backend.findChainNeighboursInTxn(
+    txn,
+    originatingDatabaseId: db,
+    previousEventHash: previous,
+    originPosition: position,
+  );
 
   if (previous != null) {
-    final predecessors = await backend.findEventsBySealedHashInTxn(
-      txn,
-      previous,
-    );
+    final predecessors = neighbours.predecessors;
     final broken = predecessors.any((held) {
       final p = ChainCoordinates.of(held);
       if (p.originatingDatabaseId != db) return true;
@@ -119,11 +122,7 @@ Future<List<DetectedChainFinding>> chainStructureFindingsInTxn(
     }
   }
 
-  final atPosition = await backend.findEventsByOriginPositionInTxn(
-    txn,
-    originatingDatabaseId: db,
-    originPosition: position,
-  );
+  final atPosition = neighbours.atPosition;
   if (atPosition.any((held) => held.eventId != stored.eventId)) {
     found.add(
       DetectedChainFinding(
@@ -137,11 +136,7 @@ Future<List<DetectedChainFinding>> chainStructureFindingsInTxn(
     );
   }
 
-  final successors = await backend.findEventsByPredecessorInTxn(
-    txn,
-    originatingDatabaseId: db,
-    previousEventHash: previous,
-  );
+  final successors = neighbours.successors;
   final forked = successors.any(
     (held) =>
         held.eventId != stored.eventId &&

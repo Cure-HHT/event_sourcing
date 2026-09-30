@@ -58,6 +58,19 @@ const TableProjectionSpec _kBigKeyTableSpec = TableProjectionSpec(
   rowData: WholePayload(),
 );
 
+/// A table view keyed on `data.j`, folding the same delivered records as
+/// the big-key view: a short key, so its row write never fails.
+const String _kShortKeyView = 'short_key_delivery_notes';
+
+const TableProjectionSpec _kShortKeyTableSpec = TableProjectionSpec(
+  viewName: _kShortKeyView,
+  interest: SubscriptionFilter(entryTypes: <String>{kDeliveryNoteType}),
+  insertEventTypes: <String>{'finalized'},
+  removeEventTypes: <String>{},
+  rowKey: CompositeKey(<String>['data.j']),
+  rowData: WholePayload(),
+);
+
 /// A deterministic pseudo-random string of [length] characters, spread
 /// over a 62-symbol alphabet: too irregular for the server's storage
 /// compression to shrink it back under the btree index's row-size limit,
@@ -332,6 +345,98 @@ void main() {
         'sealed_hash': ChainCoordinates.of(hugeEvent).sealedHash,
         'reason': 'row_write_failed',
       });
+    },
+  );
+
+  // Verifies: EVS-DEV-view-convergence/E
+  // Verifies: EVS-DEV-security-findings/S
+  test(
+    'when one of the copies an event folds into meets a row write the '
+    'server rejects, only that copy passes over the event and records a '
+    'fold_failed finding; the other copy folds it',
+    skip: pg == null ? 'PG_TEST_URL is not set' : null,
+    () async {
+      final db = (await PostgresScenarioDatabase.fresh(pg))!;
+      // The copy that folds cleanly is registered first, so its row write
+      // for the huge record precedes the failing one in the event's fold.
+      final registry = ProjectionRegistry()
+        ..register(_kShortKeyTableSpec)
+        ..register(_kBigKeyTableSpec);
+      final store = await openReceiverStore(db, projections: registry);
+      addTearDown(() async {
+        await store.close();
+        await db.close();
+      });
+      final senders = <String>{deliveryChannel().senderDatabaseId};
+      const views = <String>{_kBigKeyView, _kShortKeyView};
+
+      await waitForViewsCurrent(
+        store,
+        views,
+        DateTime.now().add(const Duration(seconds: 10)),
+      );
+
+      final huge = sealedRecord(
+        data: <String, Object?>{'k': _incompressibleKey(4000), 'j': 'huge'},
+      );
+      final ok = sealedRecord(data: <String, Object?>{'k': 'ok', 'j': 'ok'});
+      final delivery = sealedDelivery(
+        records: <Map<String, Object?>>[huge, ok],
+      );
+
+      final response = await store.receiverEndpoint.accept(
+        delivery.encode(),
+        senderDatabaseIds: senders,
+      );
+      expect(
+        response,
+        isA<ReceiverAcknowledgement>().having(
+          (r) => r.outcome,
+          'outcome',
+          AcknowledgementOutcome.accepted,
+        ),
+      );
+
+      await waitForViewsCurrent(
+        store,
+        views,
+        DateTime.now().add(const Duration(seconds: 10)),
+      );
+      for (final progress in await store.reader.viewProgress()) {
+        if (!views.contains(progress.viewName)) continue;
+        expect(
+          progress.state,
+          ViewConvergenceState.current,
+          reason: '${progress.viewName} stays current',
+        );
+      }
+
+      expect(
+        (await store.reader.findViewRows(
+          _kBigKeyView,
+        )).rows.map((r) => r['k']).toList(),
+        <String>['ok'],
+        reason: 'the copy whose row write failed keeps no row of that event',
+      );
+      final shortKeys = (await store.reader.findViewRows(
+        _kShortKeyView,
+      )).rows.map((r) => r['j']).toList()..sort();
+      expect(
+        shortKeys,
+        <String>['huge', 'ok'],
+        reason:
+            "another copy's fold failure on the same event leaves this "
+            "copy's fold of it in place",
+      );
+
+      final findings = await authoredFindings(store);
+      expect(findings, hasLength(1));
+      expect(findings.single['kind'], 'fold_failed');
+      expect(
+        (findings.single['evidence']! as Map<String, Object?>)['view'],
+        _kBigKeyView,
+        reason: 'the finding names only the copy whose fold failed',
+      );
     },
   );
 

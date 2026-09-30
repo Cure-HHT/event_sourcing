@@ -312,9 +312,10 @@ abstract final class IntegrityMarks {
   ) async {
     final held = _byTransaction[txn];
     if (held != null) return held;
-    final holder = await backend.readDatabaseIdTxn(txn);
+    final (databaseId: holder, :holdsFinding) = await backend
+        .readMarksHolderInTxn(txn);
     final findings = <_HeldFinding>[];
-    if (await backend.holdsSecurityFindingInTxn(txn)) {
+    if (holdsFinding) {
       for (final e in await backend.findSecurityFindingsInTxn(txn)) {
         final f = _HeldFinding.of(e, holder);
         if (f != null) findings.add(f);

@@ -1255,20 +1255,28 @@ class PostgresBackend extends StorageBackend {
   @override
   @internal
   Future<AppendResult> appendEvent(Transaction txn, StoredEvent event) async {
-    final session = _asPgTxn(txn)._session;
+    final pgTxn = _asPgTxn(txn);
+    final session = pgTxn._session;
     // Validate the reservation: the persisted counter must equal the seq
-    // the caller is consuming. Reading the counter inside the same txn
-    // sees the value staged by nextSequenceNumber.
-    final reservedResult = await session.execute(
-      Sql.named('''
-        SELECT value::numeric::int FROM backend_state
-        WHERE key = @k
-      '''),
-      parameters: {'k': _sequenceCounterKey},
-    );
-    final reserved = reservedResult.isEmpty
-        ? 0
-        : reservedResult.first[0] as int;
+    // the caller is consuming. The counter's value in this transaction is
+    // the one nextSequenceNumber last reserved in it, which the handle
+    // keeps; without one (no reservation yet, or one a savepoint rolled
+    // back), reading the counter inside the same txn sees the value staged
+    // there.
+    final int reserved;
+    final kept = pgTxn._reservedSequence;
+    if (kept != null) {
+      reserved = kept;
+    } else {
+      final reservedResult = await session.execute(
+        Sql.named('''
+          SELECT value::numeric::int FROM backend_state
+          WHERE key = @k
+        '''),
+        parameters: {'k': _sequenceCounterKey},
+      );
+      reserved = reservedResult.isEmpty ? 0 : reservedResult.first[0] as int;
+    }
     if (event.sequenceNumber != reserved) {
       throw StateError(
         'appendEvent: event.sequenceNumber (${event.sequenceNumber}) '
@@ -1389,12 +1397,20 @@ class PostgresBackend extends StorageBackend {
       return result;
     } catch (e, st) {
       await session.execute('ROLLBACK TO SAVEPOINT $name');
+      // The rollback may undo a reservation the body made: the counter is
+      // read back from the transaction again.
+      pgTxn._reservedSequence = null;
       if (e is ServerException && _isRowWriteRejectionSqlState(e.code)) {
         Error.throwWithStackTrace(RowWriteRejected(e, st), st);
       }
       rethrow;
     }
   }
+
+  // ROLLBACK TO SAVEPOINT undoes every write of the savepoint's body.
+  @override
+  @internal
+  bool get savepointRollsBackWrites => true;
 
   // Implements: EVS-DEV-view-convergence Terms
   // a view-row write the server rejects with SQLSTATE class 22, 23 or 54
@@ -1616,12 +1632,14 @@ class PostgresBackend extends StorageBackend {
   /// the surrounding transaction rolls back, the counter advance falls
   /// out of Postgres's transactional semantics.
   ///
-  /// The row in `backend_state` is materialized lazily: a first-time
-  /// caller sees the `INSERT ... ON CONFLICT DO NOTHING` initialize it
-  /// to `0`, and the subsequent `UPDATE ... SET value = value + 1`
-  /// reserves `1`. The counter is stored as a JSONB number; the
-  /// `::text::int` round-trip keeps both the read and the increment
-  /// explicit (JSONB doesn't have a direct arithmetic operator).
+  /// The row in `backend_state` is materialized lazily, in the one
+  /// upsert that reserves: a first-time caller inserts it at `1`, and
+  /// every later call increments it and reserves the new value. The
+  /// counter is stored as a JSONB number; the `::text::int` round-trip
+  /// keeps both the read and the increment explicit (JSONB doesn't have a
+  /// direct arithmetic operator). The reserved value is also kept on the
+  /// transaction handle, so the paired [appendEvent] validates its
+  /// reservation without reading the counter back.
   // Implements: EVS-PRD-event-log/B
   // monotonic per-transaction reserve.
   @override
@@ -1629,24 +1647,19 @@ class PostgresBackend extends StorageBackend {
   Future<int> nextSequenceNumber(Transaction txn) async {
     final session = _asPgTxn(txn)._session;
     _asPgTxn(txn)._wroteBackendState = true;
-    await session.execute(
-      Sql.named('''
-        INSERT INTO backend_state (key, value)
-        VALUES (@k, '0'::jsonb)
-        ON CONFLICT (key) DO NOTHING
-      '''),
-      parameters: {'k': _sequenceCounterKey},
-    );
     final result = await session.execute(
       Sql.named('''
-        UPDATE backend_state
-        SET value = ((value::numeric::int) + 1)::text::jsonb
-        WHERE key = @k
+        INSERT INTO backend_state AS s (key, value)
+        VALUES (@k, '1'::jsonb)
+        ON CONFLICT (key) DO UPDATE
+        SET value = ((s.value::numeric::int) + 1)::text::jsonb
         RETURNING value::numeric::int
       '''),
       parameters: {'k': _sequenceCounterKey},
     );
-    return result.first[0] as int;
+    final reserved = result.first[0] as int;
+    _asPgTxn(txn)._reservedSequence = reserved;
+    return reserved;
   }
 
   // Implements: EVS-PRD-event-log/B
@@ -3677,6 +3690,67 @@ class PostgresBackend extends StorageBackend {
     {'db': originatingDatabaseId, 'pos': originPosition},
   );
 
+  // The three lookups of one stored event's chain-structure checks in one
+  // statement: a disjunction of the three predicates (each served by its
+  // index), each row flagged with the predicates it satisfies, so every
+  // list holds exactly the rows its own lookup returns.
+  @override
+  @internal
+  Future<
+    ({
+      List<StoredEvent> predecessors,
+      List<StoredEvent> atPosition,
+      List<StoredEvent> successors,
+    })
+  >
+  findChainNeighboursInTxn(
+    Transaction txn, {
+    required String originatingDatabaseId,
+    required String? previousEventHash,
+    required int originPosition,
+  }) async {
+    final session = _asPgTxn(txn)._session;
+    final hasPrevious = previousEventHash != null;
+    final predecessor = hasPrevious ? 'sealed_hash = @p' : 'false';
+    const atPosition =
+        'origin_database_id = @db AND origin_position = @pos::bigint';
+    final successor = hasPrevious
+        ? 'origin_database_id = @db AND previous_event_hash = @p'
+        : 'origin_database_id = @db AND previous_event_hash IS NULL';
+    final result = await session.execute(
+      Sql.named(
+        'SELECT *, '
+        'COALESCE($predecessor, false) AS chain_is_predecessor, '
+        'COALESCE($atPosition, false) AS chain_is_at_position, '
+        'COALESCE($successor, false) AS chain_is_successor '
+        'FROM events '
+        'WHERE ${hasPrevious ? '($predecessor) OR ' : ''}'
+        '($atPosition) OR ($successor) '
+        'ORDER BY sequence_number ASC',
+      ),
+      parameters: <String, Object?>{
+        'db': originatingDatabaseId,
+        'pos': originPosition,
+        if (hasPrevious) 'p': previousEventHash,
+      },
+    );
+    final predecessors = <StoredEvent>[];
+    final held = <StoredEvent>[];
+    final successors = <StoredEvent>[];
+    for (final row in result) {
+      final m = row.toColumnMap();
+      final event = _storedEventFromRow(row);
+      if (m['chain_is_predecessor'] == true) predecessors.add(event);
+      if (m['chain_is_at_position'] == true) held.add(event);
+      if (m['chain_is_successor'] == true) successors.add(event);
+    }
+    return (
+      predecessors: predecessors,
+      atPosition: held,
+      successors: successors,
+    );
+  }
+
   // The range of one database's origin positions is served by the
   // origin-position index.
   @override
@@ -3707,6 +3781,39 @@ class PostgresBackend extends StorageBackend {
       parameters: {'type': kSecurityFindingRecordedEventType},
     );
     return result.isNotEmpty;
+  }
+
+  // The database identity and the probe of holdsSecurityFindingInTxn in one
+  // statement; the identity is checked exactly as readDatabaseIdTxn checks
+  // it.
+  @override
+  @internal
+  Future<({String? databaseId, bool holdsFinding})> readMarksHolderInTxn(
+    Transaction txn,
+  ) async {
+    final session = _asPgTxn(txn)._session;
+    final result = await session.execute(
+      Sql.named(
+        'SELECT '
+        '(SELECT value FROM backend_state WHERE key = @k), '
+        'EXISTS (SELECT 1 FROM events '
+        "WHERE entry_type = '$kSecurityFindingEntryType' "
+        'AND event_type = @type)',
+      ),
+      parameters: {
+        'k': _databaseIdKey,
+        'type': kSecurityFindingRecordedEventType,
+      },
+    );
+    final row = result.first;
+    final value = row[0];
+    if (value != null && (value is! String || value.isEmpty)) {
+      throw StateError(
+        'backend_state[$_databaseIdKey] is not a non-empty string; '
+        'database corrupted',
+      );
+    }
+    return (databaseId: value as String?, holdsFinding: row[1] == true);
   }
 
   // The findings are served by the (event_type, sequence_number) index.

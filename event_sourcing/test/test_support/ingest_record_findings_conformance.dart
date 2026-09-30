@@ -845,11 +845,18 @@ void runIngestRecordFindingScenarios({
           aggregates: const <String>[],
         ),
       ))!;
+      // The receiver needs only the peer's identity and its finding, so
+      // the peer is closed before the receiver opens: a backend whose
+      // scenario databases share one schema resets it for the next open.
+      final peerDatabaseId = peer.databaseId;
+      opened.remove(peer);
+      await peer.close();
+      await databases.removeLast().close();
       final store = await open();
       // The finding travels on its originating database's channel, with
       // the peer's other events.
-      final a = sealedRecord(databaseId: peer.databaseId);
-      final c = sealedRecord(databaseId: peer.databaseId);
+      final a = sealedRecord(databaseId: peerDatabaseId);
+      final c = sealedRecord(databaseId: peerDatabaseId);
       final delivery = await deliverTo(store, <Map<String, Object?>>[
         a,
         Map<String, Object?>.from(peerFinding.toMap()),

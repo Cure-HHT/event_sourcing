@@ -31,6 +31,12 @@ class _PostgresTxn extends Transaction {
   /// writers.
   bool _wroteBackendState = false;
 
+  /// The sequence number [PostgresBackend.nextSequenceNumber] last
+  /// reserved in this transaction: the sequence counter's value in it, as
+  /// only that call writes the counter. Null before any reservation and
+  /// after a savepoint rollback, which may have undone one.
+  int? _reservedSequence;
+
   /// Counter for [PostgresBackend.runInSavepointInTxn]'s unique savepoint
   /// names within this transaction's lifetime, so repeated calls (e.g.,
   /// once per always-stored event's fold) never collide.

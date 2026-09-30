@@ -216,6 +216,14 @@ abstract class StorageBackend {
   @internal
   Future<T> runInSavepointInTxn<T>(Transaction txn, Future<T> Function() body);
 
+  /// Whether [runInSavepointInTxn] undoes every write its body made when
+  /// the body throws, so several folds may share one savepoint and a
+  /// failure in any of them leaves none of their writes. False by default
+  /// (a body that throws keeps what it wrote before the throw), so each
+  /// fold runs in a savepoint of its own; `PostgresBackend` is true.
+  @internal
+  bool get savepointRollsBackWrites => false;
+
   /// Events for one aggregate, sorted by `sequence_number` ascending.
   // Implements: EVS-PRD-event-log/C
   // per-aggregate-per-authority order.
@@ -1472,6 +1480,48 @@ abstract class StorageBackend {
     required int originPosition,
   });
 
+  /// The held events the chain-structure checks of one stored event read,
+  /// inside [txn], each list in ascending local sequence number:
+  /// `predecessors` as [findEventsBySealedHashInTxn] returns for
+  /// [previousEventHash] (empty when it is null), `atPosition` as
+  /// [findEventsByOriginPositionInTxn] returns for [originatingDatabaseId]
+  /// and [originPosition], and `successors` as
+  /// [findEventsByPredecessorInTxn] returns for [originatingDatabaseId] and
+  /// [previousEventHash]. An event may sit in more than one list. The
+  /// default composes those three lookups; a backend may read the three in
+  /// one statement.
+  @internal
+  Future<
+    ({
+      List<StoredEvent> predecessors,
+      List<StoredEvent> atPosition,
+      List<StoredEvent> successors,
+    })
+  >
+  findChainNeighboursInTxn(
+    Transaction txn, {
+    required String originatingDatabaseId,
+    required String? previousEventHash,
+    required int originPosition,
+  }) async {
+    final previous = previousEventHash;
+    return (
+      predecessors: previous == null
+          ? const <StoredEvent>[]
+          : await findEventsBySealedHashInTxn(txn, previous),
+      atPosition: await findEventsByOriginPositionInTxn(
+        txn,
+        originatingDatabaseId: originatingDatabaseId,
+        originPosition: originPosition,
+      ),
+      successors: await findEventsByPredecessorInTxn(
+        txn,
+        originatingDatabaseId: originatingDatabaseId,
+        previousEventHash: previous,
+      ),
+    );
+  }
+
   /// The held events of [originatingDatabaseId] at origin position
   /// [fromPosition] or above, in ascending local sequence number. Read
   /// inside [txn].
@@ -1498,12 +1548,26 @@ abstract class StorageBackend {
   /// Whether this database holds any security finding, authored or
   /// received: whether [findSecurityFindingsInTxn] would return an event.
   /// Read inside [txn], so it sees the findings stored earlier in it. The
-  /// marks read it on every transaction, so it reads no finding event.
+  /// marks read it, through [readMarksHolderInTxn], on every transaction,
+  /// so it reads no finding event.
   // Implements: EVS-PRD-materializer/G
   // every view's marks start from whether any finding is held, read inside
   //   the folding transaction.
   @internal
   Future<bool> holdsSecurityFindingInTxn(Transaction txn);
+
+  /// The database identity ([readDatabaseIdTxn]) and whether this database
+  /// holds any security finding ([holdsSecurityFindingInTxn]), both read
+  /// inside [txn]: what the marks read once per transaction before they
+  /// read any finding. The default composes those two reads; a backend may
+  /// read both in one statement.
+  @internal
+  Future<({String? databaseId, bool holdsFinding})> readMarksHolderInTxn(
+    Transaction txn,
+  ) async => (
+    databaseId: await readDatabaseIdTxn(txn),
+    holdsFinding: await holdsSecurityFindingInTxn(txn),
+  );
 
   /// Whether this database holds as authored a security finding whose
   /// `finding_id` is [findingId]: an event of the security-finding entry

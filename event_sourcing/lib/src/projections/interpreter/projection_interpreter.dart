@@ -153,11 +153,12 @@ class ProjectionInterpreter {
   /// post-commit subscriber notification via
   /// `SubscriptionEngine.publishRowChange`.
   ///
-  /// Under [ApplyEventMode.alwaysStored], a copy's fold runs inside
-  /// [StorageBackend.runInSavepointInTxn]: a [FoldFailure] rolls the
-  /// savepoint back, keeping no write of the failed fold, moves the copy's
-  /// watermark to [event]'s position regardless -- the copy passes over
-  /// the event and stays current -- and is collected into
+  /// Under [ApplyEventMode.alwaysStored], the current copies' folds run
+  /// inside [StorageBackend.runInSavepointInTxn] (one savepoint for all of
+  /// them, and one per copy only after that one meets a fold failure): a
+  /// [FoldFailure] in a copy's fold keeps no write of the failed fold,
+  /// moves the copy's watermark to [event]'s position regardless -- the
+  /// copy passes over the event and stays current -- and is collected into
   /// [ApplyEventResult.failures] rather than recorded here (the
   /// interpreter cannot append; its caller records the `fold_failed`
   /// finding in the same transaction, `EVS-DEV-security-findings/S`). Any
@@ -212,6 +213,7 @@ class ProjectionInterpreter {
 
     final changes = <AggregateFoldChange>[];
     final failures = <FoldFailureRecord>[];
+    final currentCopies = <_CurrentCopy>[];
     for (final spec in projections.all()) {
       final maybeCopyId = copyIds[spec.viewName];
       final copy = maybeCopyId == null ? null : copiesById[maybeCopyId];
@@ -264,74 +266,151 @@ class ProjectionInterpreter {
         continue;
       }
 
-      // Always-stored mode: this copy's fold runs in a savepoint, so a
-      // fold failure (a row key or row data function that cannot extract
-      // from the event's payload, a promoter, a derived field, or, on
-      // Postgres, a row write the server rejects for its value with
-      // SQLSTATE class 22, 23 or 54, reclassified by the backend as
-      // RowWriteRejected) rolls back only that fold's writes -- nothing
-      // else in the transaction is touched -- and this copy alone passes
-      // over the event: its watermark still moves to the event's
-      // position, so it stays current, and the failure is collected for
-      // the caller to record as a `fold_failed` finding. Every other copy,
-      // and the rest of the delivery, restore or record, still folds and
-      // commits (`EVS-PRD-ingest/G`). Any other throw -- a storage failure
-      // -- is not caught here and propagates out of applyEvent, refusing
-      // the whole transaction.
-      try {
-        final stepChanges = await backend.runInSavepointInTxn(
-          txn,
-          () => foldStep(
-            txn: txn,
-            backend: backend,
-            spec: spec,
-            promoters: promoters,
-            event: event,
-            registeredVersion: registeredVersion,
-            copyId: copyId,
-          ),
-        );
-        changes.addAll(stepChanges);
-      } on FoldFailure catch (e) {
-        // Implements: EVS-DEV-security-findings/T
-        // when the event being folded is itself a finding of kind
-        //   fold_failed, the copy passes over it (watermark still moves)
-        //   but nothing is collected: recording a further fold_failed
-        //   finding about the failed fold of a fold_failed finding would
-        //   recurse without bound.
-        if (!isFoldFailedFinding(event)) {
-          failures.add(
-            FoldFailureRecord(
-              viewName: spec.viewName,
-              definitionFingerprint: copy.fingerprint,
-              reason: e.reason,
-            ),
-          );
-        }
-      } on RowWriteRejected catch (_) {
-        // The backend classified the row write its savepoint's body
-        // performed as a rejection of the row's value (`EVS-DEV-view-
-        // convergence` Terms), not a storage failure: a fold failure of
-        // reason rowWriteFailed, exactly as a FoldFailure above (same
-        // fold_failed-of-a-fold_failed exemption, EVS-DEV-security-
-        // findings/T).
-        if (!isFoldFailedFinding(event)) {
-          failures.add(
-            FoldFailureRecord(
-              viewName: spec.viewName,
-              definitionFingerprint: copy.fingerprint,
-              reason: FoldFailureReason.rowWriteFailed,
-            ),
-          );
-        }
-      }
-      await backend.setViewCopyWatermarkInTxn(
-        txn,
-        copyId,
-        event.sequenceNumber,
+      // Always-stored mode: the copy's fold is deferred to the savepoint
+      // below, which covers every current copy's fold of this event.
+      currentCopies.add((spec: spec, copyId: copyId, copy: copy));
+    }
+    if (currentCopies.isNotEmpty) {
+      await _foldAlwaysStored(
+        txn: txn,
+        backend: backend,
+        event: event,
+        registeredVersion: registeredVersion,
+        copies: currentCopies,
+        changes: changes,
+        failures: failures,
       );
     }
     return ApplyEventResult(changes: changes, failures: failures);
+  }
+
+  /// Folds [event] into each of [copies] -- the copies current in [txn]
+  /// under [ApplyEventMode.alwaysStored] -- and moves each one's watermark
+  /// to [event]'s position, whether or not its fold succeeded.
+  ///
+  /// On a backend whose savepoint undoes every write of its body
+  /// ([StorageBackend.savepointRollsBackWrites]), the folds of every copy
+  /// run in one savepoint ([StorageBackend.runInSavepointInTxn]). When
+  /// that savepoint's body meets a fold failure (a [FoldFailure] or, on
+  /// Postgres, a [RowWriteRejected]), it rolls back, keeping no write of
+  /// any copy's fold, and each copy's fold is redone in a savepoint of its
+  /// own; on any other backend each copy's fold runs in a savepoint of its
+  /// own from the start. Either way a copy
+  /// whose own fold fails keeps no write of it and passes over the event
+  /// (collected into [failures], unless [event] is itself a fold_failed
+  /// finding), while every other copy folds the event as usual. The
+  /// [AggregateFoldChange] records of the folds that commit are added to
+  /// [changes]. Any other throw -- a storage failure -- propagates.
+  // Implements: EVS-DEV-view-convergence/E
+  // a current copy folds the event and moves its watermark to the event's
+  //   position; a copy whose fold meets a fold failure under always-stored
+  //   mode keeps no write of the failed fold, passes over the event and
+  //   stays current, while the event's other current copies fold it.
+  Future<void> _foldAlwaysStored({
+    required Transaction txn,
+    required StorageBackend backend,
+    required StoredEvent event,
+    required EntryTypeVersion registeredVersion,
+    required List<_CurrentCopy> copies,
+    required List<AggregateFoldChange> changes,
+    required List<FoldFailureRecord> failures,
+  }) async {
+    Future<List<AggregateFoldChange>> fold(_CurrentCopy c) => foldStep(
+      txn: txn,
+      backend: backend,
+      spec: c.spec,
+      promoters: promoters,
+      event: event,
+      registeredVersion: registeredVersion,
+      copyId: c.copyId,
+    );
+
+    // One savepoint for every copy's fold, where the backend's savepoint
+    // undoes every write of its body: the common case, where no fold
+    // fails, costs one savepoint per event however many copies fold it.
+    // A backend whose savepoint keeps the writes made before a throw runs
+    // each copy's fold in a savepoint of its own from the start.
+    var perCopy = !backend.savepointRollsBackWrites;
+    if (!perCopy) {
+      try {
+        changes.addAll(
+          await backend.runInSavepointInTxn(txn, () async {
+            final all = <AggregateFoldChange>[];
+            for (final c in copies) {
+              all.addAll(await fold(c));
+            }
+            return all;
+          }),
+        );
+      } on FoldFailure catch (_) {
+        perCopy = true;
+      } on RowWriteRejected catch (_) {
+        perCopy = true;
+      }
+    }
+
+    if (perCopy) {
+      // Each copy's fold runs in a savepoint of its own (redone, when the
+      // shared savepoint rolled back every copy's fold), so a fold failure (a row key or
+      // row data function that cannot extract from the event's payload, a
+      // promoter, a derived field, or, on Postgres, a row write the server
+      // rejects for its value with SQLSTATE class 22, 23 or 54,
+      // reclassified by the backend as RowWriteRejected) rolls back only
+      // that copy's fold -- nothing else in the transaction is touched --
+      // and that copy alone passes over the event, the failure collected
+      // for the caller to record as a `fold_failed` finding. Every other
+      // copy, and the rest of the delivery, restore or record, still folds
+      // and commits (`EVS-PRD-ingest/G`). Any other throw -- a storage
+      // failure -- is not caught here and propagates out of applyEvent,
+      // refusing the whole transaction.
+      for (final c in copies) {
+        try {
+          changes.addAll(await backend.runInSavepointInTxn(txn, () => fold(c)));
+        } on FoldFailure catch (e) {
+          // Implements: EVS-DEV-security-findings/T
+          // when the event being folded is itself a finding of kind
+          //   fold_failed, the copy passes over it (watermark still moves)
+          //   but nothing is collected: recording a further fold_failed
+          //   finding about the failed fold of a fold_failed finding would
+          //   recurse without bound.
+          if (!isFoldFailedFinding(event)) {
+            failures.add(
+              FoldFailureRecord(
+                viewName: c.spec.viewName,
+                definitionFingerprint: c.copy.fingerprint,
+                reason: e.reason,
+              ),
+            );
+          }
+        } on RowWriteRejected catch (_) {
+          // The backend classified the row write its savepoint's body
+          // performed as a rejection of the row's value (`EVS-DEV-view-
+          // convergence` Terms), not a storage failure: a fold failure of
+          // reason rowWriteFailed, exactly as a FoldFailure above (same
+          // fold_failed-of-a-fold_failed exemption, EVS-DEV-security-
+          // findings/T).
+          if (!isFoldFailedFinding(event)) {
+            failures.add(
+              FoldFailureRecord(
+                viewName: c.spec.viewName,
+                definitionFingerprint: c.copy.fingerprint,
+                reason: FoldFailureReason.rowWriteFailed,
+              ),
+            );
+          }
+        }
+      }
+    }
+
+    // Every current copy's watermark moves to the event's position, so a
+    // copy that passed over the event stays current.
+    for (final c in copies) {
+      await backend.setViewCopyWatermarkInTxn(
+        txn,
+        c.copyId,
+        event.sequenceNumber,
+      );
+    }
   }
 
   /// The one fold step every writer of a copy's rows shares -- an append
@@ -589,3 +668,7 @@ class ProjectionInterpreter {
 bool isFoldFailedFinding(StoredEvent event) =>
     isSecurityFindingEvent(event) &&
     event.data['kind'] == FindingKind.foldFailed.wire;
+
+/// A copy current in an always-stored fold's transaction: its view's
+/// `spec`, its `copyId` and its `copy` record.
+typedef _CurrentCopy = ({ProjectionSpec spec, String copyId, ViewCopy copy});
