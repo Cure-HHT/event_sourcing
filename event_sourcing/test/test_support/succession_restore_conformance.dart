@@ -16,6 +16,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'deliveries.dart' show TestDelivery, deliverTo, testChannel;
 import 'ingest_record_findings_conformance.dart' show resealed, sealedRecord;
+import 'manual_timers.dart' show neverFiringTimer;
 import 'version_compatibility_conformance.dart' show VersionTestDatabase;
 
 const String _kType = 'finding_note';
@@ -368,64 +369,171 @@ void runSuccessionRestoreScenarios({
 
     // Verifies: EVS-PRD-ingest/G
     // Verifies: EVS-DEV-view-convergence/E
-    // Verifies: EVS-DEV-view-convergence/Q
+    // Verifies: EVS-DEV-security-findings/S
     // Verifies: EVS-DEV-sender-succession/C
     // Verifies: EVS-DEV-sender-succession/H
-    test(
-      'a served history containing an event a table fold cannot key '
-      'restores without throwing, and every served event is stored',
-      () async {
-        final receiver = await receiverStore();
-        const predecessorId = 'predecessor-unkeyable';
-        final channel = testChannel(predecessorId);
-        final ok1 = sealedRecord(
-          databaseId: predecessorId,
-          entryType: _kType,
-          data: <String, Object?>{'k': 'x'},
-        );
-        final bad = sealedRecord(
-          databaseId: predecessorId,
-          entryType: _kType,
-          data: <String, Object?>{'title': 'no key'},
-        );
-        final ok2 = sealedRecord(
-          databaseId: predecessorId,
-          entryType: _kType,
-          data: <String, Object?>{'k': 'y'},
-        );
-        for (final record in <Map<String, Object?>>[ok1, bad, ok2]) {
-          await deliverTo(receiver, <Map<String, Object?>>[
-            record,
-          ], channel: channel);
-        }
+    test('a served history containing an event a table fold cannot key '
+        'restores without throwing, every served event is stored, and one '
+        'fold_failed finding names the unkeyable event', () async {
+      final receiver = await receiverStore();
+      const predecessorId = 'predecessor-unkeyable';
+      final channel = testChannel(predecessorId);
+      final ok1 = sealedRecord(
+        databaseId: predecessorId,
+        entryType: _kType,
+        data: <String, Object?>{'k': 'x'},
+      );
+      final bad = sealedRecord(
+        databaseId: predecessorId,
+        entryType: _kType,
+        data: <String, Object?>{'title': 'no key'},
+      );
+      final ok2 = sealedRecord(
+        databaseId: predecessorId,
+        entryType: _kType,
+        data: <String, Object?>{'k': 'y'},
+      );
+      for (final record in <Map<String, Object?>>[ok1, bad, ok2]) {
+        await deliverTo(receiver, <Map<String, Object?>>[
+          record,
+        ], channel: channel);
+      }
 
-        final bundle = await successorBundle(
-          receiver,
-          projections: ProjectionRegistry()..register(_kKeyedTableSpec),
-        );
-        final successor = bundle.eventStore;
+      final bundle = await successorBundle(
+        receiver,
+        projections: ProjectionRegistry()..register(_kKeyedTableSpec),
+      );
+      final successor = bundle.eventStore;
 
-        // The unkeyable event's fold throws inside the restore's one
-        // transaction; it must not propagate as a refusal outside the
-        // enumerated list in EVS-DEV-sender-succession/H.
-        await successor.restoreFromReceiver(
-          registry: bundle.destinations,
-          destinationId: _destinationId,
-          predecessorDatabaseId: predecessorId,
-          initiator: const AutomationInitiator(service: 'restore-test'),
-        );
+      // The unkeyable event's fold throws inside the restore's one
+      // transaction; it must not propagate as a refusal outside the
+      // enumerated list in EVS-DEV-sender-succession/H.
+      await successor.restoreFromReceiver(
+        registry: bundle.destinations,
+        destinationId: _destinationId,
+        predecessorDatabaseId: predecessorId,
+        initiator: const AutomationInitiator(service: 'restore-test'),
+      );
 
-        for (final record in <Map<String, Object?>>[ok1, bad, ok2]) {
-          expect(
-            await successor.reader.findEventById(record['event_id']! as String),
-            isNotNull,
-            reason:
-                'the restore stores every served event whatever a view '
-                "fold makes of it (${record['event_id']})",
+      for (final record in <Map<String, Object?>>[ok1, bad, ok2]) {
+        expect(
+          await successor.reader.findEventById(record['event_id']! as String),
+          isNotNull,
+          reason:
+              'the restore stores every served event whatever a view '
+              "fold makes of it (${record['event_id']})",
+        );
+      }
+      final findings = await _ownFindings(successor);
+      expect(findings, hasLength(1));
+      expect(findings.single['kind'], 'fold_failed');
+      expect(
+        findings.single['evidence'],
+        containsPair('event_id', bad['event_id']),
+      );
+      expect(findings.single['aggregates'], <String>[
+        bad['aggregate_id'] as String,
+      ]);
+    });
+
+    // Verifies: EVS-DEV-view-convergence/E
+    // Verifies: EVS-DEV-security-findings/S
+    test('a successor whose registered view cannot key the succession event '
+        'stores it and records a fold_failed finding instead of failing the '
+        'restore', () async {
+      final receiver = await receiverStore();
+      const predecessorId = 'predecessor-succession-unkeyable';
+      final channel = testChannel(predecessorId);
+      await deliverTo(receiver, <Map<String, Object?>>[
+        sealedRecord(databaseId: predecessorId, entryType: _kType),
+      ], channel: channel);
+
+      const succeededView = 'unkeyable_succession_view';
+      const succeededSpec = TableProjectionSpec(
+        viewName: succeededView,
+        interest: SubscriptionFilter(
+          entryTypes: <String>{kDestinationSenderSucceededEntryType},
+          includeSystemEvents: true,
+        ),
+        insertEventTypes: <String>{kDestinationSenderSucceededEventType},
+        removeEventTypes: <String>{},
+        rowKey: CompositeKey(<String>['data.no_such_field']),
+        rowData: WholePayload(),
+      );
+      final begins = <String>[];
+      late EventStoreBundle bundle;
+      await runWithDeliveryTestHooks(
+        DeliveryTestHooks(
+          timerFactory: neverFiringTimer,
+          onCatchUpTransactionBegin: begins.add,
+        ),
+        () async {
+          bundle = await successorBundle(
+            receiver,
+            projections: ProjectionRegistry()..register(succeededSpec),
           );
-        }
-      },
-    );
+          // The view's initial catch-up pass (over the empty log at open)
+          // must settle before the restore, or the copy reads converging
+          // and the succession event's fold is left to a later catch-up
+          // instead of failing inline, in the restore's own transaction.
+          for (var i = 0; i < 400; i++) {
+            if (begins.isNotEmpty) break;
+            await Future<void>.delayed(const Duration(milliseconds: 5));
+          }
+          expect(
+            begins,
+            isNotEmpty,
+            reason: 'the catch-up driver never began a pass before the timeout',
+          );
+          await Future<void>.delayed(const Duration(milliseconds: 50));
+          var settled = false;
+          for (var i = 0; i < 400; i++) {
+            final progress = await bundle.eventStore.reader.viewProgress();
+            final state = progress
+                .singleWhere((p) => p.viewName == succeededView)
+                .state;
+            if (state == ViewConvergenceState.current) {
+              settled = true;
+              break;
+            }
+            await Future<void>.delayed(const Duration(milliseconds: 5));
+          }
+          if (!settled) {
+            fail(
+              'view $succeededView never reached "current" before the '
+              'timeout',
+            );
+          }
+        },
+      );
+      final successor = bundle.eventStore;
+
+      // The succession event's own append runs under always-stored
+      // mode, so this fold failure is passed over and recorded instead
+      // of refusing the whole restore.
+      await successor.restoreFromReceiver(
+        registry: bundle.destinations,
+        destinationId: _destinationId,
+        predecessorDatabaseId: predecessorId,
+        initiator: const AutomationInitiator(service: 'restore-test'),
+      );
+
+      final storedSuccessions = await successor.reader.findAllEvents(
+        entryType: kDestinationSenderSucceededEntryType,
+      );
+      expect(storedSuccessions, hasLength(1));
+      final findings = await _ownFindings(successor);
+      expect(findings, hasLength(1));
+      expect(findings.single['kind'], 'fold_failed');
+      expect(
+        findings.single['evidence'],
+        containsPair('event_id', storedSuccessions.single.eventId),
+      );
+      expect(
+        (findings.single['detector']! as Map<String, Object?>)['role'],
+        'fold',
+      );
+    });
 
     // Verifies: EVS-DEV-sender-succession/C
     test('an event served on more than one generation of a channel is '
@@ -1622,6 +1730,56 @@ void runSuccessionRestoreScenarios({
       );
       expect(
         await successor.reader.findEventById(malformed['event_id']! as String),
+        isNull,
+        reason:
+            'no event is stored for a record the library cannot hold '
+            'as one',
+      );
+    });
+
+    // Verifies: EVS-DEV-security-findings/O
+    // Verifies: EVS-DEV-security-findings/U
+    // Verifies: EVS-DEV-event-record/L
+    test('records event_malformed (unstorable_character), and no '
+        'restore_unverified, for a served record carrying U+0000', () async {
+      final receiver = await receiverStore();
+      const predecessorId = 'predecessor-nul';
+      final channel = testChannel(predecessorId);
+      final nulRecord = sealedRecord(
+        databaseId: predecessorId,
+        entryType: _kType,
+        data: <String, Object?>{'note': 'x\u0000y'},
+      );
+      await deliverTo(receiver, <Map<String, Object?>>[
+        nulRecord,
+      ], channel: channel);
+
+      final bundle = await successorBundle(receiver);
+      final successor = bundle.eventStore;
+      await successor.restoreFromReceiver(
+        registry: bundle.destinations,
+        destinationId: _destinationId,
+        predecessorDatabaseId: predecessorId,
+        initiator: const AutomationInitiator(service: 'restore-test'),
+      );
+
+      final findings = await _ownFindings(successor);
+      final malformedFindings = findings.where(
+        (f) => f['kind'] == 'event_malformed',
+      );
+      expect(malformedFindings, hasLength(1));
+      expect(
+        (malformedFindings.single['evidence']! as Map)['reason'],
+        'unstorable_character',
+      );
+      expect(
+        (malformedFindings.single['evidence']! as Map)['record'],
+        isA<String>(),
+        reason: 'a record carrying U+0000 is kept encoded, not verbatim',
+      );
+      expect(findings.where((f) => f['kind'] == 'restore_unverified'), isEmpty);
+      expect(
+        await successor.reader.findEventById(nulRecord['event_id']! as String),
         isNull,
         reason:
             'no event is stored for a record the library cannot hold '

@@ -8,8 +8,12 @@
 // the fold is deterministic: upsert on
 //   insert, delete on remove, no-op on absent row; applying the same events
 //   in the same order from the same state yields identical results.
+// The row key and row data extractors are two of the four computation
+//   sites the fold wraps as a FoldFailure (`EVS-DEV-view-convergence`
+//   Terms); each runs before any row write.
 import 'package:event_sourcing/src/projections/integrity_marks.dart';
 import 'package:event_sourcing/src/projections/interpreter/aggregate_fold.dart';
+import 'package:event_sourcing/src/projections/interpreter/fold_failure.dart';
 import 'package:event_sourcing/src/projections/projection_spec.dart';
 import 'package:event_sourcing/src/storage/storage_backend.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
@@ -34,8 +38,15 @@ class TableFold {
     required String copyId,
   }) async {
     if (spec.insertEventTypes.contains(event.eventType)) {
-      final key = spec.rowKey.extract(event);
+      final key = guardFold(
+        FoldFailureReason.rowKeyFailed,
+        () => spec.rowKey.extract(event),
+      );
       final keyStr = key.toString();
+      final rowData = guardFold(
+        FoldFailureReason.rowDataFailed,
+        () => spec.rowData.extract(event),
+      );
       // Stamp the substrate-owned identity (`aggregateId`) and ordering
       // (`sequence`) fields into the row, mirroring AggregateFold. Without
       // them, TableProjectionSpec rows would violate the view-row contract
@@ -45,7 +56,7 @@ class TableFold {
       // Stamped last so they win over any colliding payload key, as in
       // AggregateFold.
       final row = <String, Object?>{
-        ...spec.rowData.extract(event),
+        ...rowData,
         'aggregateId': keyStr,
         'sequence': event.sequenceNumber,
         // Implements: EVS-PRD-materializer/F
@@ -70,7 +81,10 @@ class TableFold {
       );
     }
     if (spec.removeEventTypes.contains(event.eventType)) {
-      final key = spec.rowKey.extract(event);
+      final key = guardFold(
+        FoldFailureReason.rowKeyFailed,
+        () => spec.rowKey.extract(event),
+      );
       final keyStr = key.toString();
       // Only emit a tombstone change when the row actually existed; a
       // remove event targeting a nonexistent row is a silent no-op so

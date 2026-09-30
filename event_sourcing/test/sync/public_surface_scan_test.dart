@@ -103,6 +103,10 @@ const _functionTyped = <String, String>{
       "internal: the chain verification's reads, in a read-only snapshot",
   'PostgresBackend.readOnlyTransaction(body)':
       "internal: the storage reader's body, in a READ ONLY transaction",
+  'PostgresBackend.runInSavepointInTxn(body)':
+      "internal: an always-stored event's fold, isolated in a savepoint so "
+      "a fold failure's server-side error does not abort the storing "
+      'transaction',
   'PostgresBackend.transaction(body)':
       "the consumer's transaction body; every write it can reach is internal",
   'ScopeClassRegistry.new(projectionLookup)':
@@ -121,6 +125,9 @@ const _functionTyped = <String, String>{
       'lock',
   'SembastBackend.nonBlockingRead(body)':
       "internal: the chain verification's reads, outside any transaction",
+  'SembastBackend.runInSavepointInTxn(body)':
+      'internal: runs the body as-is; Sembast has no partial-rollback '
+      'primitive',
   'SembastBackend.transaction(body)':
       "the consumer's transaction body; every write it can reach is internal",
   'StorageBackend.bootTransaction(body)':
@@ -133,6 +140,9 @@ const _functionTyped = <String, String>{
       'waits for',
   'StorageBackend.readOnlyTransaction(body)':
       "internal: the storage reader's body, in a transaction for reads only",
+  'StorageBackend.runInSavepointInTxn(body)':
+      "internal: an always-stored event's fold, isolated so a fold "
+      "failure's server-side error does not abort the storing transaction",
   'StorageBackend.transaction(body)':
       "the consumer's transaction body; every write it can reach is internal",
   'StorageReader.transaction(body)':
@@ -229,6 +239,8 @@ const _seamKinds = <String, String>{
   'onCatchUpStep': 'interleave',
   'catchUpClock': 'input substitution',
   'afterViewStateReadBeforeRows': 'interleave',
+  'failFoldSavepointWithSerializationFailure': 'failure injection',
+  'failCatchUpFoldFindingAppend': 'failure injection',
 };
 
 const _seamKindNames = <String>{

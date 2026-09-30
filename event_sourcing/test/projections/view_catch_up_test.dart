@@ -34,6 +34,8 @@
 import 'dart:async';
 
 import 'package:event_sourcing/event_sourcing.dart';
+import 'package:event_sourcing/src/event_store.dart'
+    show recordFindingInTxnForTest;
 import 'package:event_sourcing/src/projections/view_catch_up.dart';
 import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -611,6 +613,240 @@ void main() {
             _kView,
             appended.sequenceNumber,
           );
+          await store.close();
+        },
+      );
+    });
+  });
+
+  group('a catch-up fold failure', () {
+    const kKeyedView = 'catch_up_keyed_notes';
+    const kKeyedSpec = TableProjectionSpec(
+      viewName: kKeyedView,
+      interest: SubscriptionFilter(entryTypes: <String>{_kType}),
+      insertEventTypes: <String>{'finalized'},
+      removeEventTypes: <String>{'removed'},
+      rowKey: CompositeKey(<String>['data.k']),
+      rowData: WholePayload(),
+    );
+
+    Future<StoredEvent> appendKeyed(
+      EventStore store,
+      String aggregateId, {
+      required bool keyed,
+    }) async {
+      final event = await store.append(
+        entryType: _kType,
+        aggregateId: aggregateId,
+        aggregateType: 'note',
+        eventType: 'finalized',
+        data: keyed
+            ? <String, Object?>{'k': aggregateId}
+            : <String, Object?>{'title': aggregateId},
+        initiator: const UserInitiator('catch-up-user'),
+      );
+      return event!;
+    }
+
+    // Verifies: EVS-DEV-view-convergence/Z
+    // Verifies: EVS-DEV-view-convergence/O
+    // Verifies: EVS-DEV-security-findings/F
+    // Verifies: EVS-DEV-security-findings/S
+    // Verifies: EVS-PRD-materializer/I
+    test('a converging copy that cannot key one event records one fold_failed '
+        'finding, passes over it, and becomes current', () async {
+      final backend = await _openBackend();
+      final seeder = await _open(backend, projections: const []);
+      StoredEvent? first;
+      StoredEvent? unkeyable;
+      StoredEvent? last;
+      for (var i = 0; i < 4; i++) {
+        last = await appendKeyed(seeder, 'agg-$i', keyed: i != 2);
+        first ??= last;
+        if (i == 2) unkeyable = last;
+      }
+      await seeder.close();
+
+      late String copyId;
+      var transactionCount = 0;
+      // (transaction index, event id) for every step this copy took,
+      // across every catch-up transaction attempted on it.
+      final stepLog = <(int, String)>[];
+      await runWithDeliveryTestHooks(
+        DeliveryTestHooks(
+          onCatchUpTransactionBegin: (id) {
+            if (id != copyId) return;
+            transactionCount++;
+          },
+          onCatchUpStep: (id, eventId) {
+            if (id != copyId) return;
+            stepLog.add((transactionCount, eventId));
+          },
+        ),
+        () async {
+          final store = await _open(backend, projections: const [kKeyedSpec]);
+          copyId = store.copyIdOf(kKeyedView);
+
+          await _waitUntilWatermarkAtLeast(
+            backend,
+            kKeyedView,
+            last!.sequenceNumber,
+          );
+
+          final findings = await store.reader.findAllEvents(
+            entryType: kSecurityFindingEntryType,
+          );
+          expect(findings, hasLength(1));
+          final data = findings.single.data;
+          expect(data['kind'], 'fold_failed');
+          final evidence = data['evidence']! as Map<String, Object?>;
+          expect(evidence['view'], kKeyedView);
+          expect(evidence['event_id'], unkeyable!.eventId);
+          expect(evidence['reason'], 'row_key_failed');
+
+          final rows = (await store.reader.findViewRows(kKeyedView)).rows;
+          final keys = rows.map((r) => r['aggregateId']).toSet();
+          expect(keys, containsAll(<String>['agg-0', 'agg-1', 'agg-3']));
+          expect(keys, isNot(contains('agg-2')));
+
+          // The transaction that met the unkeyable event wrote nothing,
+          // including the steps it folded before that event: the retry
+          // re-folds the log from the same watermark it started at, so
+          // the first event's step is seen again in a later transaction
+          // than the one that first attempted it.
+          final firstEventTransactions = stepLog
+              .where((e) => e.$2 == first!.eventId)
+              .map((e) => e.$1)
+              .toSet();
+          expect(
+            firstEventTransactions.length,
+            greaterThan(1),
+            reason:
+                'the first event is re-folded by a later transaction, '
+                'proving the transaction that met the unkeyable event '
+                'committed none of its earlier steps',
+          );
+          final unkeyableEventTransactions = stepLog
+              .where((e) => e.$2 == unkeyable!.eventId)
+              .map((e) => e.$1)
+              .toSet();
+          expect(
+            unkeyableEventTransactions,
+            hasLength(2),
+            reason:
+                'the unkeyable event is met once by the transaction that '
+                'ends unwritten on it, and once more by the retry, which '
+                'finds the finding held and passes over it -- never a '
+                'third time',
+          );
+
+          final progress = await store.reader.viewProgress();
+          expect(
+            progress.singleWhere((p) => p.viewName == kKeyedView).state,
+            ViewConvergenceState.current,
+          );
+
+          // No back-off: a fold failure never records a copy failure.
+          expect(store.catchUpProgressOf(copyId)?.lastFailure, isNull);
+
+          await store.close();
+        },
+      );
+    });
+
+    // Verifies: EVS-DEV-security-findings/T
+    test('a fold_failed finding event the copy cannot key is passed over at '
+        'once, with no second finding authored about it', () async {
+      final backend = await _openBackend();
+      final seeder = await _open(backend, projections: const []);
+      // A finding whose own evidence carries no top-level 'k' is itself
+      // unkeyable by kKeyedSpec: recorded through the same path any
+      // detection point uses, not appended directly (the reserved
+      // namespace refuses a plain append).
+      final findingEvent = await seeder.runTransaction(
+        (txn, collector) => recordFindingInTxnForTest(
+          seeder,
+          txn,
+          collector,
+          role: FindingRole.fold,
+          kind: FindingKind.foldFailed,
+          evidence: <String, Object?>{
+            'view': 'peer-view',
+            'definition_fingerprint': 'peer-fp',
+            'event_id': 'peer-event',
+            'sealed_hash': 'peer-hash',
+            'reason': 'row_key_failed',
+          },
+          aggregates: <String>['peer-agg'],
+        ),
+      );
+      await seeder.close();
+
+      final store = await _open(backend, projections: const [kKeyedSpec]);
+      await _waitUntilWatermarkAtLeast(
+        backend,
+        kKeyedView,
+        findingEvent!.sequenceNumber,
+      );
+
+      final findings = await store.reader.findAllEvents(
+        entryType: kSecurityFindingEntryType,
+      );
+      expect(
+        findings,
+        hasLength(1),
+        reason:
+            'exactly the received finding is stored; the copy passes over '
+            'it without authoring a further fold_failed finding about it '
+            '(EVS-DEV-security-findings/T)',
+      );
+      await store.close();
+    });
+
+    // Verifies: EVS-DEV-view-convergence/Z
+    test("when the finding's own append fails, the copy's watermark stays "
+        'before the event and no pass-over happens', () async {
+      final backend = await _openBackend();
+      final seeder = await _open(backend, projections: const []);
+      await appendKeyed(seeder, 'agg-0', keyed: true);
+      final unkeyable = await appendKeyed(seeder, 'agg-1', keyed: false);
+      await seeder.close();
+
+      await runWithDeliveryTestHooks(
+        DeliveryTestHooks(failCatchUpFoldFindingAppend: () => true),
+        () async {
+          final store = await _open(backend, projections: const [kKeyedSpec]);
+          final copyId = store.copyIdOf(kKeyedView);
+
+          // The finding's own append fails with a plain throw, not a fold
+          // failure, so this path is logged and backed off from 1 s like
+          // any other storage failure (Q): a handful of pumps is enough to
+          // observe the one attempt this backoff allows within the window.
+          await pumpEventQueue(times: 200);
+
+          final copy = await _copyOf(backend, kKeyedView);
+          expect(
+            copy.watermark,
+            lessThan(unkeyable.sequenceNumber),
+            reason:
+                'the finding append is injected to fail, so the copy '
+                'never passes over the event it names',
+          );
+          expect(
+            await store.reader.findAllEvents(
+              entryType: kSecurityFindingEntryType,
+            ),
+            isEmpty,
+            reason: 'the failing append leaves no finding recorded',
+          );
+          expect(
+            store.catchUpProgressOf(copyId)?.lastFailure,
+            isNotNull,
+            reason:
+                'unlike a fold failure, the finding append throw is logged '
+                "and backed off: it does update the copy's last failure",
+          );
+
           await store.close();
         },
       );

@@ -14,8 +14,14 @@ import 'dart:typed_data';
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing/src/ingest/sender_succession.dart'
     show SenderSuccessionChannel, SenderSuccessionData;
+import 'package:event_sourcing/src/projections/integrity_marks.dart'
+    show integrityFindingIdsOf;
+import 'package:event_sourcing/src/projections/view_fingerprint.dart'
+    show viewFingerprint;
 import 'package:event_sourcing/src/security/system_entry_types.dart'
     show kIngestAuditEntryType, kIngestDuplicateReceivedEventType;
+import 'package:event_sourcing/src/storage/chain_coordinates.dart'
+    show ChainCoordinates;
 import 'package:event_sourcing/src/testing/delivery_test_hooks.dart'
     show DeliveryTestHooks, runWithDeliveryTestHooks;
 import 'package:flutter_test/flutter_test.dart';
@@ -42,6 +48,20 @@ const TableProjectionSpec _kKeyedTableSpec = TableProjectionSpec(
   removeEventTypes: <String>{},
   rowKey: CompositeKey(<String>['data.k']),
   rowData: WholePayload(),
+);
+
+/// An aggregate view of the same entry type as [_kKeyedTableSpec], keyed by
+/// aggregate id rather than a data field: it folds every one of the
+/// scenarios' records without a fold failure, so it demonstrates that the
+/// aggregate a `fold_failed` finding names carries the outstanding-finding
+/// mark in every default view, not only the one whose copy failed
+/// (`EVS-PRD-materializer/D`).
+const String _kAggregateNotesView = 'aggregate_delivery_notes';
+
+const AggregateProjectionSpec _kAggregateNotesSpec = AggregateProjectionSpec(
+  viewName: _kAggregateNotesView,
+  interest: SubscriptionFilter(entryTypes: <String>{kDeliveryNoteType}),
+  tombstoneEventTypes: <String>{},
 );
 
 /// A view whose interest includes the receiver's own `ingest.delivery_accepted`
@@ -851,6 +871,52 @@ void runDeliveryReceiverScenarios({
       );
     });
 
+    // Verifies: EVS-DEV-delivery-receiver/Y
+    test('attributes carrying U+0000, in a value and in a key, are stored '
+        'in the audit as the base64 of their canonical JSON, decoding back '
+        'to what was sent', () async {
+      final store = await open();
+      final delivery = sealedDelivery(
+        attributes: <String, Object?>{'note': 'x\u0000y', 'x\u0000y': 'value'},
+      );
+      final carried = DeliveryEnvelope.decode(delivery.encode());
+
+      expect(
+        await present(store, delivery),
+        acknowledgement(store, delivery, AcknowledgementOutcome.accepted),
+      );
+
+      expect(
+        await store.reader.findEventById(
+          carried.events.single['event_id']! as String,
+        ),
+        isNotNull,
+        reason: "the delivery's event is stored",
+      );
+
+      final audit = (await authoredDeliveryAudits(store)).single.data;
+      expect(
+        audit['attributes'],
+        isA<String>(),
+        reason: 'attributes carrying U+0000 are not stored verbatim',
+      );
+      final decodedAttributes =
+          jsonDecode(utf8.decode(base64.decode(audit['attributes']! as String)))
+              as Map<String, Object?>;
+      expect(decodedAttributes, carried.attributes);
+      expect(
+        computeDeliveryHash(
+          channel: DeliveryChannel.fromJson(audit['channel']),
+          deliveryNumber: audit['delivery_number']! as int,
+          previousDeliveryHash: audit['previous_delivery_hash'] as String?,
+          eventHashes: audit['event_hashes']! as List<Object?>,
+          attributes: decodedAttributes,
+        ),
+        delivery.deliveryHash,
+        reason: 'the encoded attributes still recompute the delivery hash',
+      );
+    });
+
     // Verifies: EVS-DEV-delivery-receiver/H
     test('each event ingested from a delivery carries the delivery in its '
         'receiver provenance entry', () async {
@@ -945,10 +1011,14 @@ void runDeliveryReceiverScenarios({
     // Verifies: EVS-PRD-ingest/G
     // Verifies: EVS-DEV-view-convergence/E
     // Verifies: EVS-DEV-view-convergence/F
-    // Verifies: EVS-DEV-view-convergence/Q
-    test('a delivered event a table fold cannot key is stored; the delivery '
-        'is accepted whole and the copy is left behind for catch-up', () async {
-      final registry = ProjectionRegistry()..register(_kKeyedTableSpec);
+    // Verifies: EVS-PRD-materializer/I
+    // Verifies: EVS-DEV-security-findings/S
+    test('a delivered event a table fold cannot key is passed over; the '
+        'delivery is accepted whole, the copy stays current and one '
+        'fold_failed finding is recorded', () async {
+      final registry = ProjectionRegistry()
+        ..register(_kKeyedTableSpec)
+        ..register(_kAggregateNotesSpec);
       final store = await open(null, registry);
       final ok1 = sealedRecord(data: <String, Object?>{'k': 'x'});
       final bad = sealedRecord(data: <String, Object?>{'title': 'no key'});
@@ -962,7 +1032,7 @@ void runDeliveryReceiverScenarios({
       expect(
         response,
         acknowledgement(store, delivery, AcknowledgementOutcome.accepted),
-        reason: 'a fold throw on one event never rolls back the delivery',
+        reason: 'a fold failure on one event never rolls back the delivery',
       );
       for (final record in <Map<String, Object?>>[ok1, bad, ok2]) {
         expect(
@@ -973,34 +1043,184 @@ void runDeliveryReceiverScenarios({
               'a view fold makes of it',
         );
       }
-      final badEvent = await store.reader.findEventById(
+      final badEvent = (await store.reader.findEventById(
         bad['event_id']! as String,
-      );
+      ))!;
+      final ok2Event = (await store.reader.findEventById(
+        ok2['event_id']! as String,
+      ))!;
 
-      // The failing copy's watermark is left where it was in the same
-      // storing transaction as the delivery, before any catch-up retry
-      // has a chance to run.
-      final immediateProgress = (await store.reader.viewProgress()).singleWhere(
+      // The copy passes over the event whose fold failed, in the same
+      // storing transaction as the delivery: its watermark reaches the
+      // delivery's last event and it reads current at once, with no wait
+      // on catch-up.
+      final progress = (await store.reader.viewProgress()).singleWhere(
         (p) => p.viewName == _kKeyedTableView,
       );
       expect(
-        immediateProgress.watermark,
-        lessThan(badEvent!.sequenceNumber),
+        progress.watermark,
+        greaterThanOrEqualTo(ok2Event.sequenceNumber),
         reason:
-            "the failed copy's watermark is not advanced past the event "
-            'whose fold threw, in the storing transaction itself',
+            'the copy passes over the failed event and keeps folding the '
+            "delivery's later events, so its watermark reaches at least "
+            "the delivery's last event, in the storing transaction itself",
+      );
+      expect(
+        progress.state,
+        ViewConvergenceState.current,
+        reason: 'a copy that passes over a failed fold stays current',
       );
 
-      final progress = await _waitUntilLastFailure(store, _kKeyedTableView);
+      final rows = await store.reader.findViewRows(_kKeyedTableView);
+      final keys = rows.rows.map((r) => r['k']).toList();
+      expect(
+        keys,
+        unorderedEquals(<String>['x', 'y']),
+        reason: 'no row is written for the event whose fold failed',
+      );
+
+      final findingEvents = await store.reader.findAllEvents(
+        entryType: kSecurityFindingEntryType,
+      );
+      expect(findingEvents, hasLength(1));
+      expect(
+        findingEvents.single.sequenceNumber,
+        allOf(
+          greaterThan(badEvent.sequenceNumber),
+          lessThan(ok2Event.sequenceNumber),
+        ),
+        reason:
+            'the finding is recorded in the same storing transaction as '
+            'the delivery, right after the event whose fold failed and '
+            'before the next event of the delivery',
+      );
+      final finding = findingEvents.single.data;
+      expect(finding['kind'], 'fold_failed');
+      final expectedFingerprint = viewFingerprint(
+        _kKeyedTableSpec,
+        store.entryTypes,
+        store.promoters,
+      );
+      expect(finding['evidence'], <String, Object?>{
+        'view': _kKeyedTableView,
+        'definition_fingerprint': expectedFingerprint,
+        'event_id': badEvent.eventId,
+        'sealed_hash': ChainCoordinates.of(badEvent).sealedHash,
+        'reason': 'row_key_failed',
+      });
+      expect((finding['detector']! as Map<String, Object?>)['role'], 'fold');
+      expect(finding['aggregates'], <String>[badEvent.aggregateId]);
+
+      // The aggregate the finding names carries the outstanding-finding
+      // mark in every default view, not only the one whose copy failed
+      // (EVS-PRD-materializer/D): the aggregate view, whose fold of bad's
+      // event does not fail, still marks its row.
+      final badRow = await store.reader.transaction(
+        (txn) => store.reader.readViewRowInTxn(
+          txn,
+          _kAggregateNotesView,
+          badEvent.aggregateId,
+        ),
+      );
+      expect(badRow.row, isA<SettledRow>());
+      final markedRow = (badRow.row as SettledRow).data;
+      expect(integrityFindingIdsOf(markedRow), <String>[
+        findingEvents.single.aggregateId,
+      ]);
+    });
+
+    // Verifies: EVS-DEV-security-findings/T
+    // Verifies: EVS-DEV-security-findings/S
+    test('a view whose fold cannot key a security finding event records one '
+        'fold_failed finding about the delivered event and none about the '
+        'fold_failed finding itself', () async {
+      // Keyed on `data.k` and interested in both the delivered entry
+      // type and security findings, so once the delivered event's fold
+      // fails and the library appends a fold_failed finding, this same
+      // copy tries to key that finding event too -- and cannot, since a
+      // finding's data has no `k`.
+      const view = 'keyed_notes_and_findings';
+      const spec = TableProjectionSpec(
+        viewName: view,
+        interest: SubscriptionFilter(
+          entryTypes: <String>{kDeliveryNoteType, kSecurityFindingEntryType},
+          includeSystemEvents: true,
+        ),
+        insertEventTypes: <String>{
+          'finalized',
+          kSecurityFindingRecordedEventType,
+        },
+        removeEventTypes: <String>{},
+        rowKey: CompositeKey(<String>['data.k']),
+        rowData: WholePayload(),
+      );
+      final begins = <String>[];
+      final bad = sealedRecord(data: <String, Object?>{'title': 'no key'});
+      final delivery = sealedDelivery(records: <Map<String, Object?>>[bad]);
+      late EventStore store;
+      await runWithDeliveryTestHooks(
+        DeliveryTestHooks(
+          timerFactory: neverFiringTimer,
+          onCatchUpTransactionBegin: begins.add,
+        ),
+        () async {
+          final registry = ProjectionRegistry()..register(spec);
+          store = await open(null, registry);
+          // The view's initial catch-up pass (over the empty log at open)
+          // must settle before the delivery below, or the copy reads
+          // converging and the delivered event's fold is left to a later
+          // catch-up instead of failing inline, in this same transaction.
+          await _waitUntilFirstCatchUpPassSettles(store, begins, <String>[
+            view,
+          ]);
+
+          await present(store, delivery);
+        },
+      );
+
+      final badEvent = (await store.reader.findEventById(
+        bad['event_id']! as String,
+      ))!;
+      final findingEvents = await store.reader.findAllEvents(
+        entryType: kSecurityFindingEntryType,
+      );
+      expect(
+        findingEvents,
+        hasLength(1),
+        reason:
+            'exactly the one fold_failed finding about the delivered '
+            'event; the fold failure of the finding event itself, in '
+            'the same copy, is passed over with nothing recorded '
+            '(EVS-DEV-security-findings/T)',
+      );
+      expect(findingEvents.single.data['kind'], 'fold_failed');
+      expect(
+        findingEvents.single.data['evidence'],
+        containsPair('event_id', badEvent.eventId),
+      );
+
+      final progress = (await store.reader.viewProgress()).singleWhere(
+        (p) => p.viewName == view,
+      );
       expect(
         progress.watermark,
-        lessThan(badEvent.sequenceNumber),
+        greaterThanOrEqualTo(findingEvents.single.sequenceNumber),
         reason:
-            "the failed copy's watermark is not advanced past the "
-            'event whose fold threw',
+            'the copy passes over both the delivered event and the '
+            'finding event, staying current through the finding append',
       );
-      expect(progress.state, ViewConvergenceState.converging);
-      expect(progress.lastFailure, isNotNull);
+      expect(progress.state, ViewConvergenceState.current);
+
+      // Verifies: EVS-DEV-security-findings/E
+      // Re-presenting the delivery is a no-op the receiver recognizes
+      // from its record before anything is re-folded, so no second
+      // fold_failed finding of the same identity is ever attempted.
+      await present(store, delivery);
+      expect(
+        await store.reader.findAllEvents(entryType: kSecurityFindingEntryType),
+        hasLength(1),
+        reason: 're-presenting the same delivery records no second finding',
+      );
     });
 
     // Verifies: EVS-DEV-view-convergence/E
@@ -1104,23 +1324,6 @@ void runDeliveryReceiverScenarios({
       );
     });
   });
-}
-
-/// Polls [store]'s reader for [viewName]'s progress until a catch-up
-/// attempt has recorded a failure, pumping real (short) delays between
-/// checks since the catch-up driver runs on its own timer. Fails the test
-/// after too long rather than hanging.
-Future<ViewCopyStatus> _waitUntilLastFailure(
-  EventStore store,
-  String viewName,
-) async {
-  for (var i = 0; i < 400; i++) {
-    final progress = await store.reader.viewProgress();
-    final view = progress.singleWhere((p) => p.viewName == viewName);
-    if (view.lastFailure != null) return view;
-    await Future<void>.delayed(const Duration(milliseconds: 25));
-  }
-  fail('view "$viewName" never recorded a catch-up failure in time');
 }
 
 /// Waits for the catch-up driver's own first pass -- scheduled at open,

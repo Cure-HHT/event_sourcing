@@ -2,17 +2,22 @@
 // reads the effective role of every connected user through the
 // substrate's authorization policy. That read refuses with
 // ViewConvergingRefusal while the role-assignment or permission-grant
-// view is converging for this instance (EVS-DEV-converging-view-reads/H).
-// The watcher fails closed on a narrowing signal and keeps notifying on
-// an expanding one, and never lets the unawaited fan-out's error escape
-// uncaught.
+// view is converging for this instance. On a narrowing signal
+// (permission_revoked) the watcher fails closed, per EVS-DEV-authz-
+// watcher/G; on an expanding one (permission_granted) it over-notifies,
+// per EVS-DEV-converging-view-reads/H. Neither lets the unawaited
+// fan-out's error escape uncaught.
 //
+// Verifies: EVS-DEV-authz-watcher/G
+// on permission_revoked, a
+//   connected user whose role cannot be determined (a
+//   ViewConvergingRefusal, or any other error) is force-closed along
+//   with every confirmed holder of the revoked role, without aborting
+//   the fan-out for later users or leaking an uncaught async error.
 // Verifies: EVS-DEV-converging-view-reads/H
-// the watcher's own
-//   decisions (force-logout, stale_data) treat a ViewConvergingRefusal
-//   from the policy as fail-closed on a narrowing event and as an
-//   over-notify on an expanding one, per-user, without aborting the
-//   fan-out for later users or leaking an uncaught async error.
+// on permission_granted, a
+//   connected user whose role cannot be determined is over-notified
+//   with stale_data rather than skipped.
 
 import 'dart:async';
 
@@ -143,6 +148,7 @@ void main() {
 
   test('permission_revoked force-logs-out a user whose role view is '
       'converging and keeps closing every later connected user', () async {
+    // Verifies: EVS-DEV-authz-watcher/G
     final alice = _RecordingChannel();
     final bob = _RecordingChannel();
     final carol = _RecordingChannel();
@@ -186,6 +192,7 @@ void main() {
     'permission_revoked fails closed on a non-refusal error too, '
     'forcing that user out and continuing the loop, logged at severe',
     () async {
+      // Verifies: EVS-DEV-authz-watcher/G
       final alice = _RecordingChannel();
       final bob = _RecordingChannel();
       final carol = _RecordingChannel();
@@ -252,6 +259,7 @@ void main() {
 
   test('permission_granted sends stale_data even to a user whose role '
       'view is converging (over-notify is safe)', () async {
+    // Verifies: EVS-DEV-converging-view-reads/H
     final alice = _RecordingChannel();
     final bob = _RecordingChannel();
     registry

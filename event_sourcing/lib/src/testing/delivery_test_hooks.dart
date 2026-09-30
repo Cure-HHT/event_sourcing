@@ -131,6 +131,8 @@ class DeliveryTestHooks {
     this.onCatchUpStep,
     this.catchUpClock,
     this.afterViewStateReadBeforeRows,
+    this.failFoldSavepointWithSerializationFailure,
+    this.failCatchUpFoldFindingAppend,
   });
 
   /// Observes every line the library logs. An exception it throws is
@@ -438,6 +440,23 @@ class DeliveryTestHooks {
   /// between and observe that the rows the read returns still match the
   /// state it already read (EVS-DEV-converging-view-reads/A).
   final Future<void> Function()? afterViewStateReadBeforeRows;
+
+  /// Consulted by `PostgresBackend.runInSavepointInTxn`, inside the
+  /// savepoint and before its body runs. Returning true makes the library
+  /// raise a genuine SQLSTATE 40001 there, so the savepoint rolls back to
+  /// a real server-side serialization failure -- a storage failure, not a
+  /// fold failure (`EVS-DEV-view-convergence` Terms) -- exactly as a real
+  /// cross-session conflict inside a copy's fold would.
+  final bool Function()? failFoldSavepointWithSerializationFailure;
+
+  /// Consulted before the catch-up driver appends a `fold_failed` finding in
+  /// its own transaction, once a catch-up transaction has rolled back
+  /// unwritten on a fold failure (`EVS-DEV-view-convergence/Z`). Returning
+  /// true makes that append throw [InjectedFailure] instead, standing in for
+  /// a storage failure of the finding's own append: the copy's watermark
+  /// stays before the event, and no pass-over happens, until a later attempt
+  /// succeeds.
+  final bool Function()? failCatchUpFoldFindingAppend;
 
   /// Read once by `SyncCycle.start`. When true, the started cycle holds its
   /// event store's trigger slot as any cycle does, but a wake runs no pass

@@ -2,6 +2,23 @@
 
 ## 0.1.0-dev (unreleased)
 
+- A subscription refused with `view_converging` no longer terminates: the
+  refusal still surfaces once on the subscription's stream as a typed,
+  transient `ViewConvergingRefusal`, and `RemoteConnection` re-issues the
+  same subscribe on a capped backoff, with no bound on the number of
+  attempts, until the server serves it or the caller unsubscribes or the
+  connection is disposed — the caller recovers from its single `watch()`
+  call with no new request. `RemotePermissionSource`'s snapshot retry on a
+  503 `view_converging` response loses its fixed attempt bound the same
+  way, for the same reason.
+- `RemoteActionSubmitter` gains an opt-in, off-by-default automatic
+  retry of a `view_converging` refusal: `maxConvergingRetries` bounds
+  the number of re-sends, each waiting a bounded backoff, re-sending
+  the same `ActionSubmission` unchanged (its idempotency key never
+  changes across attempts), and surfacing each refusal on the new
+  `convergingStream` while it waits. With the option left at its
+  default (`0`), `submit()` still delivers the typed, transient
+  `ViewConvergingRefusal` to its caller immediately, with no retry.
 - `UpdateCodec` gains wire shapes for the substrate's `Pending<T>` variant
   (`type: "pending"`, `aggregateId`, `sequence` always 0) and for
   `EndOfReplay<T>`'s new `state` field (`type: "end_of_replay"`, `state`:

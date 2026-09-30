@@ -6,6 +6,7 @@
 import 'package:event_sourcing/src/entry_type_definition.dart';
 import 'package:event_sourcing/src/entry_type_registry.dart';
 import 'package:event_sourcing/src/event_store.dart';
+import 'package:event_sourcing/src/projections/projection_registry.dart';
 import 'package:event_sourcing/src/security/system_entry_types.dart';
 import 'package:event_sourcing/src/storage/sembast_backend.dart';
 import 'package:event_sourcing/src/storage/source.dart';
@@ -37,6 +38,7 @@ class AuditedRegistryDeps {
 Future<AuditedRegistryDeps> buildAuditedRegistryDeps(
   SembastBackend backend, {
   List<EntryTypeDefinition> callerEntryTypes = const <EntryTypeDefinition>[],
+  ProjectionRegistry? projections,
 }) async {
   final entryTypes = EntryTypeRegistry();
   for (final definition in kSystemEntryTypes) {
@@ -55,6 +57,7 @@ Future<AuditedRegistryDeps> buildAuditedRegistryDeps(
       softwareVersion: 'test@1.0.0',
     ),
     securityContexts: securityContexts,
+    projections: projections,
   );
   return AuditedRegistryDeps(
     entryTypes: entryTypes,

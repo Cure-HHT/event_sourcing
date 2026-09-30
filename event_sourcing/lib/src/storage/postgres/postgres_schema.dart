@@ -12,7 +12,9 @@
 //   partial unique index on an unmarked fingerprint, renames `view_rows`'
 //   `view_name` column to `copy_id`, and raises the minimum to itself;
 //   version 7 adds `view_rows.source_aggregate_id` with its partial index
-//   and raises the minimum to itself.
+//   and raises the minimum to itself; version 8 adds
+//   `fifo_entries.resends_delivery_number`, rewrites the guard to hold it
+//   immutable, and raises the minimum to itself.
 // Implements: EVS-DEV-chain-verification/A
 // the chain lookups on Postgres: columns of the events table holding the
 //   originating database, sealed hash and origin position each stored copy
@@ -40,13 +42,13 @@ import 'package:meta/meta.dart' show internal;
 /// and keeps [postgresMinCompatibleSchemaVersion]; a data-format major is
 /// provisioned only after every instance of the old major has stopped,
 /// which the incompatible-generation guard enforces.
-const int postgresSchemaVersion = 7;
+const int postgresSchemaVersion = 8;
 
 /// The minimum compatible schema version this build records when it
 /// provisions: the last migration step's `minCompatibleVersion`. A build
 /// whose [postgresSchemaVersion] is below the minimum stored in a database
 /// refuses to open it.
-const int postgresMinCompatibleSchemaVersion = 7;
+const int postgresMinCompatibleSchemaVersion = 8;
 
 /// The ordered migration steps of this build. Step `n` brings a schema at
 /// the previous step's version to its `toVersion`.
@@ -145,6 +147,16 @@ const List<PostgresMigrationStep> postgresMigrations = <PostgresMigrationStep>[
     toVersion: 7,
     minCompatibleVersion: 7,
     ddl: <String>[_viewRowsSourceAggregateColumn, _viewRowsSourceAggregateIdx],
+  ),
+  // A build before this step has no resends_delivery_number column, and
+  // its guard does not hold it immutable, so the step raises the minimum.
+  PostgresMigrationStep(
+    toVersion: 8,
+    minCompatibleVersion: 8,
+    ddl: <String>[
+      _fifoEntriesResendsDeliveryNumberColumn,
+      _fifoEntriesGuardFunction,
+    ],
   ),
 ];
 
@@ -397,6 +409,15 @@ ALTER TABLE fifo_entries
   ADD COLUMN IF NOT EXISTS transform_failures    INTEGER
 ''';
 
+// The delivery number a resend item enqueued by a receiver-behind resume
+// resends (EVS-DEV-delivery-resume/M); null for an ordinary item the fill
+// enqueues. Set only by the insert, held immutable by the guard like every
+// other column the item is enqueued with.
+const String _fifoEntriesResendsDeliveryNumberColumn = '''
+ALTER TABLE fifo_entries
+  ADD COLUMN IF NOT EXISTS resends_delivery_number BIGINT
+''';
+
 // The retained-delivery read: the sent item at a number under a
 // generation, the latest first.
 const String _fifoEntriesDeliveryIdx = '''
@@ -507,6 +528,7 @@ BEGIN
      OR NEW.envelope_metadata IS DISTINCT FROM OLD.envelope_metadata
      OR NEW.transform_failed IS DISTINCT FROM OLD.transform_failed
      OR NEW.transform_failures IS DISTINCT FROM OLD.transform_failures
+     OR NEW.resends_delivery_number IS DISTINCT FROM OLD.resends_delivery_number
      OR NEW.enqueued_at IS DISTINCT FROM OLD.enqueued_at THEN
     RAISE EXCEPTION 'fifo_entries_guard: queue item % changes a column it was enqueued with',
       OLD.entry_id USING ERRCODE = 'check_violation';

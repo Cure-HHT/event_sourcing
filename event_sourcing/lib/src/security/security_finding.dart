@@ -5,6 +5,7 @@ import 'dart:convert';
 
 import 'package:canonical_json_jcs/canonical_json_jcs.dart';
 import 'package:crypto/crypto.dart';
+import 'package:event_sourcing/src/storage/record_characters.dart';
 import 'package:meta/meta.dart' show immutable, internal;
 
 /// The role in which a database detected an integrity anomaly, recorded as
@@ -12,7 +13,8 @@ import 'package:meta/meta.dart' show immutable, internal;
 /// each role of each database records an anomaly once.
 // Implements: EVS-DEV-security-findings/Q
 // a finding names the role of the operation that detected it: ingest, the
-//   restore, the sender (the drainer) or the walk (the chain verification).
+//   restore, the sender (the drainer), the walk (the chain verification) or
+//   the fold (a view copy's fold of an event, inline or in catch-up).
 enum FindingRole {
   /// An ingest entry point.
   ingest('ingest'),
@@ -24,7 +26,11 @@ enum FindingRole {
   sender('sender'),
 
   /// The chain verification operation.
-  walk('walk');
+  walk('walk'),
+
+  /// A view copy's fold of a stored event, whether inline in the
+  /// transaction that stores the event or in the copy's catch-up.
+  fold('fold');
 
   const FindingRole(this.wire);
 
@@ -146,6 +152,10 @@ final class FindingKind {
     isKnown: true,
   );
 
+  /// A view copy's fold of a stored event fails; the copy passes over the
+  /// event.
+  static const foldFailed = FindingKind._('fold_failed', isKnown: true);
+
   /// Every kind this build records, in the order the requirement lists
   /// them.
   // Implements: EVS-DEV-security-findings/H
@@ -168,6 +178,7 @@ final class FindingKind {
     sequenceMissing,
     parentInvalid,
     parentsNotStamped,
+    foldFailed,
   ];
 
   /// The string recorded as the finding's `kind`.
@@ -186,16 +197,81 @@ final class FindingKind {
   String toString() => 'FindingKind($wire)';
 }
 
+/// The value a finding's evidence carries for a received [record]: the
+/// record itself when every string of it, a key included, is free of the
+/// character U+0000, and otherwise the base64 (RFC 4648 section 4, with
+/// padding) of the UTF-8 bytes of its RFC 8785 canonical JSON. Both forms
+/// carry the record in full; a reader tells them apart by type (an object
+/// is the record itself, a string its encoding) and decodes the string
+/// form back to the record it was built from ([decodeFindingRecordEvidence]).
+// Implements: EVS-DEV-security-findings/U
+@internal
+Object findingRecordEvidence(Map<String, Object?> record) =>
+    nulSafeEncoding(record);
+
+/// The record [recordEvidence] carries, as a finding's evidence stores it
+/// ([findingRecordEvidence]'s value): the object itself, or, for its base64
+/// string form, the record decoded back from it (the UTF-8 bytes of its
+/// canonical JSON, base64-decoded and parsed).
+// Implements: EVS-DEV-security-findings/U
+@internal
+Map<String, Object?> decodeFindingRecordEvidence(Object recordEvidence) =>
+    decodeNulSafeEncoding(recordEvidence);
+
+/// Whether an evidence key of kind [name] carries a received record: an
+/// object or, when it holds one that carries U+0000, its base64 encoding
+/// ([findingRecordEvidence]).
+enum _RecordKind {
+  /// Not a record key.
+  none,
+
+  /// Always carries a record: an object or a base64 string.
+  required,
+
+  /// Carries a record, or null when the finding holds none.
+  nullable,
+}
+
 /// One evidence key with, where the kind fixes one, the closed list of
 /// values it may hold.
-typedef _Key = ({String name, Set<String>? closed, bool deliveryRecord});
+typedef _Key = ({
+  String name,
+  Set<String>? closed,
+  bool deliveryRecord,
+  _RecordKind recordKind,
+});
 
-_Key _k(String name) => (name: name, closed: null, deliveryRecord: false);
+_Key _k(String name) => (
+  name: name,
+  closed: null,
+  deliveryRecord: false,
+  recordKind: _RecordKind.none,
+);
 
-_Key _closed(String name, Set<String> values) =>
-    (name: name, closed: values, deliveryRecord: false);
+_Key _closed(String name, Set<String> values) => (
+  name: name,
+  closed: values,
+  deliveryRecord: false,
+  recordKind: _RecordKind.none,
+);
 
-_Key _delivery(String name) => (name: name, closed: null, deliveryRecord: true);
+_Key _delivery(String name) => (
+  name: name,
+  closed: null,
+  deliveryRecord: true,
+  recordKind: _RecordKind.none,
+);
+
+/// An evidence key naming [name] (always `record`) that carries the record
+/// itself or its base64 encoding, required ([nullable] false, for
+/// `identity_mismatch` and `event_malformed`) or, for `own_event_ingested`,
+/// null when the finding holds no record.
+_Key _record(String name, {required bool nullable}) => (
+  name: name,
+  closed: null,
+  deliveryRecord: false,
+  recordKind: nullable ? _RecordKind.nullable : _RecordKind.required,
+);
 
 /// The keys of a delivery record in the evidence: the delivery number and
 /// the delivery hash.
@@ -230,15 +306,16 @@ final Map<String, List<_Key>> _evidenceByKind = <String, List<_Key>>{
   FindingKind.identityMismatch.wire: <_Key>[
     _k('event_id'),
     _k('held_hash'),
-    _k('record'),
+    _record('record', nullable: false),
   ],
   FindingKind.eventMalformed.wire: <_Key>[
     _closed('reason', const <String>{
       'record_malformed',
+      'unstorable_character',
       'reserved_type_undeclared',
       'audit_identity_invalid',
     }),
-    _k('record'),
+    _record('record', nullable: false),
   ],
   FindingKind.deliveryHashMismatch.wire: <_Key>[
     _k('channel'),
@@ -249,7 +326,7 @@ final Map<String, List<_Key>> _evidenceByKind = <String, List<_Key>>{
   FindingKind.ownEventIngested.wire: <_Key>[
     _k('event_id'),
     _k('sealed_hash'),
-    _k('record'),
+    _record('record', nullable: true),
   ],
   FindingKind.foreignEvent.wire: <_Key>[
     _k('channel'),
@@ -315,6 +392,19 @@ final Map<String, List<_Key>> _evidenceByKind = <String, List<_Key>>{
     _k('expected'),
     _k('actual'),
   ],
+  FindingKind.foldFailed.wire: <_Key>[
+    _k('view'),
+    _k('definition_fingerprint'),
+    _k('event_id'),
+    _k('sealed_hash'),
+    _closed('reason', const <String>{
+      'promoter_failed',
+      'row_key_failed',
+      'row_data_failed',
+      'derived_field_failed',
+      'row_write_failed',
+    }),
+  ],
 };
 
 /// Throws [ArgumentError] unless [kind] is a kind this build records and
@@ -324,7 +414,8 @@ final Map<String, List<_Key>> _evidenceByKind = <String, List<_Key>>{
 // Implements: EVS-DEV-security-findings/D
 // a finding's evidence holds only the fixed keys of its kind, so it carries
 //   identifiers, hashes, positions, identities, channels, delivery records,
-//   named reasons and checks, compared values and the record concerned.
+//   view names and definition fingerprints, named reasons and checks,
+//   compared values and the record concerned.
 @internal
 void checkFindingEvidence(FindingKind kind, Map<String, Object?> evidence) {
   final keys = _evidenceByKind[kind.wire];
@@ -365,6 +456,17 @@ void checkFindingEvidence(FindingKind kind, Map<String, Object?> evidence) {
         'evidence.${key.name}',
         'a delivery record is an object with exactly delivery_number and '
             'delivery_hash',
+      );
+    }
+    if (key.recordKind != _RecordKind.none &&
+        value is! Map &&
+        value is! String &&
+        !(key.recordKind == _RecordKind.nullable && value == null)) {
+      throw ArgumentError.value(
+        value,
+        'evidence.${key.name}',
+        'a received record is an object or its base64 encoding'
+            '${key.recordKind == _RecordKind.nullable ? ', or null' : ''}',
       );
     }
   }

@@ -8,6 +8,15 @@ import 'package:event_sourcing/src/destinations/destination.dart';
 import 'package:event_sourcing/src/destinations/subscription_filter.dart';
 import 'package:event_sourcing/src/destinations/wire_payload.dart';
 import 'package:event_sourcing/src/event_store.dart';
+import 'package:event_sourcing/src/projections/primitives/row_data.dart';
+import 'package:event_sourcing/src/projections/primitives/row_key.dart';
+import 'package:event_sourcing/src/projections/projection_registry.dart';
+import 'package:event_sourcing/src/projections/projection_spec.dart';
+import 'package:event_sourcing/src/security/system_entry_types.dart'
+    show
+        kDestinationRegisteredEntryType,
+        kDestinationRegisteredEventType,
+        kSecurityFindingEntryType;
 import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/sembast_backend.dart';
 import 'package:event_sourcing/src/storage/send_result.dart';
@@ -90,6 +99,58 @@ void main() {
       final d = _StubDestination('primary');
       await registry.addDestination(d, initiator: _testInit);
       expect(registry.all(), contains(d));
+    });
+
+    // Verifies: EVS-DEV-view-convergence/E
+    // Contrast with EVS-PRD-materializer/I, which covers an always-stored
+    // event's copy passing over a fold failure instead of throwing.
+    test('addDestination throws, storing nothing, when a registered view '
+        'cannot key the destination_registered event', () async {
+      final localBackend = await _openBackend('registry-local-op-throws.db');
+      const view = 'unkeyable_destination_registrations';
+      const spec = TableProjectionSpec(
+        viewName: view,
+        interest: SubscriptionFilter(
+          entryTypes: <String>{kDestinationRegisteredEntryType},
+          includeSystemEvents: true,
+        ),
+        insertEventTypes: <String>{kDestinationRegisteredEventType},
+        removeEventTypes: <String>{},
+        rowKey: CompositeKey(<String>['data.no_such_field']),
+        rowData: WholePayload(),
+      );
+      final deps = await buildAuditedRegistryDeps(
+        localBackend,
+        projections: ProjectionRegistry()..register(spec),
+      );
+      final localRegistry = DestinationRegistry(eventStore: deps.eventStore);
+      final d = _StubDestination('primary');
+
+      await expectLater(
+        localRegistry.addDestination(d, initiator: _testInit),
+        throwsA(isA<StateError>()),
+        reason:
+            "destination_registered is a public local operation's own "
+            'append; a fold failure fails it to its caller with nothing '
+            'stored, unlike an always-stored record',
+      );
+      expect(localRegistry.all(), isEmpty);
+      expect(
+        await deps.eventStore.reader.findAllEvents(
+          entryType: kDestinationRegisteredEntryType,
+        ),
+        isEmpty,
+      );
+      expect(
+        await deps.eventStore.reader.findAllEvents(
+          entryType: kSecurityFindingEntryType,
+        ),
+        isEmpty,
+        reason:
+            'nothing is recorded: the failure fails to the caller instead '
+            'of being passed over and recorded as a fold_failed finding',
+      );
+      await localBackend.close();
     });
 
     // addDestination throws ArgumentError.

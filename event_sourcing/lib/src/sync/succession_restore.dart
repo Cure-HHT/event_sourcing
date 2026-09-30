@@ -398,6 +398,11 @@ class _SuccessionRestore {
             ),
         ],
       );
+      // Implements: EVS-DEV-view-convergence/E
+      // the succession event is a record the library appends in the
+      //   transaction of a restore, an always-stored event; a fold
+      //   failure into one copy is passed over and recorded, not thrown
+      //   to the restore's caller.
       final event = await _store._appendReservedInTxn(
         txn,
         collector,
@@ -407,6 +412,7 @@ class _SuccessionRestore {
         eventType: kDestinationSenderSucceededEventType,
         data: successionData.toJson(),
         initiator: initiator,
+        mode: ApplyEventMode.alwaysStored,
       );
       // Never null: a reserved-entry-type append inside an open transaction
       // always yields the appended event.
@@ -539,20 +545,24 @@ class _SuccessionRestore {
   }
 
   /// Whether [record] is an occurrence this database could actually store
-  /// as an event: it parses as a well-formed record and names an
-  /// originator, and [EventStore._unstorableReason] finds no reason (a
-  /// reserved top-level data key, a malformed provenance shape, an
-  /// undeclared reserved-type shape, or an invalid destination-audit
-  /// identity) it cannot store it. This mirrors ingest's own check without
-  /// touching storage, so a distinct-hash occurrence known ahead of time to
-  /// end up kept only in an `event_malformed` finding never displaces one
-  /// this database can genuinely store, whatever their (registration,
-  /// generation, delivery number) sort.
+  /// as an event: it parses as a well-formed record, names an originator,
+  /// carries no string with the character U+0000, and
+  /// [EventStore._unstorableReason] finds no reason (a reserved top-level
+  /// data key, a malformed provenance shape, an undeclared reserved-type
+  /// shape, or an invalid destination-audit identity) it cannot store it.
+  /// This mirrors ingest's own check without touching storage, so a
+  /// distinct-hash occurrence known ahead of time to end up kept only in an
+  /// `event_malformed` finding never displaces one this database can
+  /// genuinely store, whatever their (registration, generation, delivery
+  /// number) sort. The U+0000 check runs over the raw record, before the
+  /// parse attempt, exactly as ingest's own classification does
+  /// (`EventStore._ingestRecordInTxn`), so the two never disagree.
   // Implements: EVS-DEV-sender-succession/C
   // Implements: EVS-DEV-security-findings/G
   static bool _looksStorable(Map<String, Object?> record) {
     final originator = EventStore._originatorDatabaseOfRecord(record);
     if (originator == null) return false;
+    if (recordFieldWithNulCharacter(record) != null) return false;
     try {
       final event = StoredEvent.fromMap(record, 0)..requireWellFormedRecord();
       return EventStore._unstorableReason(event, originator) == null;

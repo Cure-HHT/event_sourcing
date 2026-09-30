@@ -418,9 +418,10 @@ The currently-trusted inputs are:
   record back on every acknowledgement and refusal, and to serve the
   channel listing and restore pulls a successor makes
   (`EVS-PRD-delivery-channel`). The sender reads each record against its
-  own: a record naming, at its next number, a delivery it attempted
-  realigns it, a receiver behind is sent its missing deliveries again
-  exactly as sent, a record ahead naming no delivery it attempted is
+  own: a record above its own naming a delivery it attempted or sent on
+  the current generation is adopted, a receiver behind is sent its
+  missing deliveries again exactly as sent, a record ahead at a number
+  where it marked no delivery sent, naming no delivery it attempted, is
   recorded as a `sender_regressed` finding, and any other record
   is recorded as a `channel_unexplained` finding; the latter two continue
   the registration on a new generation filled again from the start of

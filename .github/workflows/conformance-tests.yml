@@ -277,6 +277,9 @@ jobs:
       - name: Causal stamping on Postgres
         run: flutter test test/storage/postgres/postgres_causal_stamping_test.dart
         working-directory: event_sourcing
+      - name: U+0000 append refusal on Postgres
+        run: flutter test test/storage/postgres/postgres_event_record_nul_test.dart
+        working-directory: event_sourcing
       - name: Security findings and forward-compatible reserved events on Postgres
         run: flutter test test/storage/postgres/postgres_security_finding_test.dart
         working-directory: event_sourcing

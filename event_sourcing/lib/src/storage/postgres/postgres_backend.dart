@@ -1359,6 +1359,69 @@ class PostgresBackend extends StorageBackend {
     );
   }
 
+  // Implements: EVS-DEV-view-convergence/E
+  // a SAVEPOINT isolates the body: RELEASE on success, ROLLBACK TO on a
+  //   throw (rethrown unchanged, or wrapped as RowWriteRejected when the
+  //   error is a row write the server rejects for its value), so a
+  //   server-side error inside the body does not abort the surrounding
+  //   transaction.
+  @override
+  @internal
+  Future<T> runInSavepointInTxn<T>(
+    Transaction txn,
+    Future<T> Function() body,
+  ) async {
+    final pgTxn = _asPgTxn(txn);
+    final session = pgTxn._session;
+    final name = pgTxn._nextSavepointName();
+    await session.execute('SAVEPOINT $name');
+    try {
+      if (DeliveryTestHooks.current?.failFoldSavepointWithSerializationFailure
+              ?.call() ??
+          false) {
+        await session.execute(
+          r"DO $$ BEGIN RAISE EXCEPTION 'injected serialization failure' "
+          r"USING ERRCODE = '40001'; END $$",
+        );
+      }
+      final result = await body();
+      await session.execute('RELEASE SAVEPOINT $name');
+      return result;
+    } catch (e, st) {
+      await session.execute('ROLLBACK TO SAVEPOINT $name');
+      if (e is ServerException && _isRowWriteRejectionSqlState(e.code)) {
+        Error.throwWithStackTrace(RowWriteRejected(e, st), st);
+      }
+      rethrow;
+    }
+  }
+
+  // Implements: EVS-DEV-view-convergence Terms
+  // a view-row write the server rejects with SQLSTATE class 22, 23 or 54
+  //   is a fold failure; every other SQLSTATE, and every other error, is a
+  //   storage failure. Classification is by class only, never by the
+  //   specific five-character code, so a server version that adds new
+  //   codes under these classes is covered without a code change. The
+  //   classifier itself cannot distinguish a row-write call from any other
+  //   statement runInSavepointInTxn's body issues (a read such as
+  //   IntegrityMarks.forEvent or readViewRowInTxn included): it types
+  //   every class-22/23/54 ServerException the body raises as a row-write
+  //   rejection, wider than the Terms' "a write of the copy's rows". Such
+  //   an error from a read is deterministic like a write rejection, so the
+  //   broader classification does not change whether a copy stays current,
+  //   but it is broader than the Terms describe.
+  static bool _isRowWriteRejectionSqlState(String? code) {
+    if (code == null || code.length < 2) return false;
+    switch (code.substring(0, 2)) {
+      case '22': // data exception
+      case '23': // integrity constraint violation
+      case '54': // program limit exceeded
+        return true;
+      default:
+        return false;
+    }
+  }
+
   // Implements: EVS-PRD-event-log/C
   // events for a single aggregate are
   //   returned in sequence_number order; the aggregate_id index keeps the
@@ -2078,6 +2141,7 @@ class PostgresBackend extends StorageBackend {
     int? transformFailures,
     String? wireFormat,
     String? transformVersion,
+    int? resendsDeliveryNumber,
   }) async {
     if (batch.isEmpty) {
       throw ArgumentError.value(
@@ -2203,14 +2267,16 @@ class PostgresBackend extends StorageBackend {
           wire_format, transform_version, enqueued_at,
           attempts, final_status, sent_at,
           wire_payload, envelope_metadata,
-          transform_failed, transform_failures
+          transform_failed, transform_failures,
+          resends_delivery_number
         ) VALUES (
           @dest, @seq, @entryId,
           @eventIds:jsonb, @firstSeq, @lastSeq,
           @wireFmt, @transformV, @enqueuedAt:timestamptz,
           '[]'::jsonb, NULL, NULL,
           @wirePayload:jsonb, @envelope:jsonb,
-          @transformFailed, @transformFailures
+          @transformFailed, @transformFailures,
+          @resendsDeliveryNumber
         )
       '''),
       parameters: {
@@ -2227,6 +2293,7 @@ class PostgresBackend extends StorageBackend {
         'envelope': nativeEnvelope?.toMap(),
         'transformFailed': transformFailed,
         'transformFailures': transformFailed ? transformFailures : null,
+        'resendsDeliveryNumber': resendsDeliveryNumber,
       },
     );
 
@@ -2247,6 +2314,7 @@ class PostgresBackend extends StorageBackend {
       envelopeMetadata: nativeEnvelope,
       transformFailed: transformFailed,
       transformFailures: transformFailed ? transformFailures : null,
+      resendsDeliveryNumber: resendsDeliveryNumber,
     );
   }
 
@@ -4076,6 +4144,7 @@ class PostgresBackend extends StorageBackend {
       deliveryHash: m['delivery_hash'] as String?,
       transformFailed: (m['transform_failed'] as bool?) ?? false,
       transformFailures: m['transform_failures'] as int?,
+      resendsDeliveryNumber: m['resends_delivery_number'] as int?,
     );
   }
 

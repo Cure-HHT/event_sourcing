@@ -20,6 +20,7 @@ import 'package:flutter_test/flutter_test.dart';
 import '../test_support/deliveries.dart';
 import '../test_support/destination_wedges_view_conformance.dart'
     show forgedEvent, wedgeData;
+import '../test_support/manual_timers.dart' show neverFiringTimer;
 import '../test_support/version_compatibility_conformance.dart'
     show VersionTestDatabase;
 
@@ -71,7 +72,7 @@ void runSecurityFindingScenarios({
     final opened = <EventStore>[];
     final databases = <VersionTestDatabase>[];
 
-    Future<EventStore> open() async {
+    Future<EventStore> open({ProjectionRegistry? projections}) async {
       final db = (await openDatabase())!;
       databases.add(db);
       final backend = await db.openBackend();
@@ -90,6 +91,7 @@ void runSecurityFindingScenarios({
           identifier: 'finding-install',
           softwareVersion: 'finding-app@1.0.0',
         ),
+        projections: projections,
       );
       opened.add(store);
       return store;
@@ -305,6 +307,103 @@ void runSecurityFindingScenarios({
         throwsArgumentError,
       );
       expect(await findings(store), isEmpty);
+    });
+
+    // Verifies: EVS-DEV-security-findings/T
+    test('a received finding of kind fold_failed a view cannot key is passed '
+        'over; no fold_failed finding about it is authored', () async {
+      const view = 'unkeyable_received_findings';
+      const spec = TableProjectionSpec(
+        viewName: view,
+        interest: SubscriptionFilter(
+          entryTypes: <String>{kSecurityFindingEntryType},
+          includeSystemEvents: true,
+        ),
+        insertEventTypes: <String>{kSecurityFindingRecordedEventType},
+        removeEventTypes: <String>{},
+        rowKey: CompositeKey(<String>['data.no_such_field']),
+        rowData: WholePayload(),
+      );
+      final begins = <String>[];
+      late EventStore store;
+      await runWithDeliveryTestHooks(
+        DeliveryTestHooks(
+          timerFactory: neverFiringTimer,
+          onCatchUpTransactionBegin: begins.add,
+        ),
+        () async {
+          store = await open(projections: ProjectionRegistry()..register(spec));
+          // The view's interest admits every system event
+          // (includeSystemEvents), so its initial catch-up pass (over the
+          // boot's own lib_version_initialized) must settle before the
+          // ingest below, or the copy reads converging and the received
+          // finding's fold is left to a later catch-up instead of failing
+          // inline, in the ingest's own transaction.
+          for (var i = 0; i < 400; i++) {
+            if (begins.isNotEmpty) break;
+            await Future<void>.delayed(const Duration(milliseconds: 5));
+          }
+          if (begins.isEmpty) {
+            fail('the catch-up driver never began a pass before the timeout');
+          }
+          await Future<void>.delayed(const Duration(milliseconds: 50));
+          var settled = false;
+          for (var i = 0; i < 400; i++) {
+            final progress = await store.reader.viewProgress();
+            final state = progress.singleWhere((p) => p.viewName == view).state;
+            if (state == ViewConvergenceState.current) {
+              settled = true;
+              break;
+            }
+            await Future<void>.delayed(const Duration(milliseconds: 5));
+          }
+          if (!settled) {
+            fail('view $view never reached "current" before the timeout');
+          }
+
+          final foreignFinding = forgedEvent(
+            entryType: kSecurityFindingEntryType,
+            aggregateType: kSecurityFindingAggregateType,
+            eventType: kSecurityFindingRecordedEventType,
+            data: <String, Object?>{
+              'finding_id': 'f' * 64,
+              'kind': 'fold_failed',
+              'evidence': <String, Object?>{
+                'view': 'peer-view',
+                'definition_fingerprint': 'peer-fp',
+                'event_id': 'peer-event',
+                'sealed_hash': 'peer-hash',
+                'reason': 'row_key_failed',
+              },
+              'aggregates': const <String>[],
+              'detector': const <String, Object?>{
+                'database_id': 'peer-db',
+                'role': 'fold',
+                'library_version': '0.9.0',
+              },
+            },
+          );
+
+          // The exemption below stops this view's own fold failure on
+          // the received finding from being recorded as a further
+          // fold_failed finding.
+          final outcome = await ingestEventForTest(store, foreignFinding);
+          expect(outcome.outcome, IngestOutcome.ingested);
+          expect(
+            await store.reader.findEventById(foreignFinding.eventId),
+            isNotNull,
+          );
+          expect(
+            await findings(store),
+            hasLength(1),
+            reason:
+                'exactly the received finding itself is stored; it is '
+                'passed over by the unkeyable view, and no further '
+                'fold_failed finding about it is authored here '
+                '(EVS-DEV-security-findings/T)',
+          );
+        },
+      );
     });
 
     group('forward-compatible reserved events', () {

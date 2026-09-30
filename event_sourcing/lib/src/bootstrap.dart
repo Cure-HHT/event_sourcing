@@ -140,6 +140,8 @@ Future<EventStoreBundle> _completeBootstrap(
         declaration.eventType: declaration.toJson(),
     };
   }
+  // The boot's own append stays local (default mode): a fold failure here
+  // fails the open, with nothing stored, rather than being passed over.
   await eventStore.runTransaction(
     (txn, collector) => eventStore._appendReservedInTxn(
       txn,

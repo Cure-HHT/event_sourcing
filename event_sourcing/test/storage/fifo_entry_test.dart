@@ -513,4 +513,47 @@ void main() {
       );
     });
   });
+
+  group('FifoEntry resendsDeliveryNumber', () {
+    // Verifies: EVS-DEV-delivery-resume/M
+    // a resend item also records the delivery number it resends, so
+    //   adoption can retire exactly those items.
+    test('resendsDeliveryNumber round-trips; absent reads as null', () {
+      final ordinary = makeBatch();
+      expect(ordinary.resendsDeliveryNumber, isNull);
+      expect(ordinary.toJson()['resends_delivery_number'], isNull);
+
+      final resend = FifoEntry(
+        entryId: 'entry-2',
+        eventIds: const ['ev-1'],
+        sequenceRange: (firstSeq: 10, lastSeq: 10),
+        sequenceInQueue: 2,
+        wirePayload: const <String, Object?>{'batch': 'ok'},
+        wireFormat: 'json-v1',
+        transformVersion: 'transform-v1',
+        enqueuedAt: enqueuedAt,
+        attempts: const <AttemptResult>[],
+        finalStatus: null,
+        sentAt: null,
+        resendsDeliveryNumber: 8,
+      );
+      expect(resend.resendsDeliveryNumber, 8);
+      final json = resend.toJson();
+      expect(json['resends_delivery_number'], 8);
+      final restored = FifoEntry.fromJson(json);
+      expect(restored, equals(resend));
+      expect(restored.resendsDeliveryNumber, 8);
+      expect(restored, isNot(equals(ordinary)));
+
+      // Absent key reads as null, e.g. an ordinary row predating the
+      // column.
+      final withoutKey = json..remove('resends_delivery_number');
+      expect(FifoEntry.fromJson(withoutKey).resendsDeliveryNumber, isNull);
+    });
+
+    test('a wrongly typed resends_delivery_number is refused', () {
+      final json = makeBatch().toJson()..['resends_delivery_number'] = '8';
+      expect(() => FifoEntry.fromJson(json), throwsFormatException);
+    });
+  });
 }

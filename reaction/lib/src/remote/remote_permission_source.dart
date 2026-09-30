@@ -24,13 +24,7 @@ import 'package:reaction/src/remote/remote_connection.dart';
 import 'package:reaction/src/wire/effective_authorization_codec.dart';
 import 'package:reaction/src/wire/view_converging_codec.dart';
 
-/// Schedules [callback] to run after [duration]. The seam
-/// [RemotePermissionSource] uses for its 503-retry backoff, injectable
-/// in tests (this package has no fake_async) so a test can fire the
-/// callback immediately or capture it without waiting out a real
-/// delay.
-typedef RetryScheduler =
-    Timer Function(Duration duration, void Function() callback);
+export 'package:reaction/src/remote/remote_connection.dart' show RetryScheduler;
 
 /// PermissionSource over HTTP. Fetches an [EffectiveAuthorization]
 /// from the server's `/permissions/snapshot` route on every Authenticated
@@ -51,11 +45,12 @@ typedef RetryScheduler =
 ///
 /// A 503 `view_converging` response from the snapshot route — on the
 /// Authenticated-transition fetch or a [refresh] call — schedules a
-/// bounded-backoff retry (honouring a `Retry-After` header when the
-/// server sends one) and surfaces the typed, transient refusal through
-/// [converging] and [convergingStream] meanwhile, cleared on the next
-/// `200`. The retry is cancelled by a newer auth transition, a
-/// [refresh] call, or [dispose] (`EVS-DEV-converging-view-reads/H`).
+/// capped-backoff retry, with no bound on the number of attempts
+/// (honouring a `Retry-After` header when the server sends one), and
+/// surfaces the typed, transient refusal through [converging] and
+/// [convergingStream] meanwhile, cleared on the next `200`. The retry
+/// is cancelled by a newer auth transition, a [refresh] call, or
+/// [dispose] (`EVS-PRD-cross-process-event-transport/L`).
 class RemotePermissionSource implements PermissionSource {
   RemotePermissionSource({
     required this.connection,
@@ -71,11 +66,6 @@ class RemotePermissionSource implements PermissionSource {
   final RemoteConnection connection;
   final AuthSession authSession;
   final RetryScheduler _scheduleRetry;
-
-  /// Bounded retry count for a 503 view_converging response: enough to
-  /// ride out a copy's catch-up without retrying forever against a
-  /// view that never converges.
-  static const int _maxRetryAttempts = 5;
 
   /// Backoff base and cap used when the server sends no `Retry-After`
   /// header: doubles from [_retryBaseDelay] up to [_retryMaxDelay].
@@ -170,13 +160,15 @@ class RemotePermissionSource implements PermissionSource {
   /// triggered fetch, and any retry pending from a prior 503, is
   /// superseded; the last writer wins. Quiet on a transport error, but
   /// propagates a typed [ViewConvergingRefusal]
-  /// (EVS-DEV-converging-view-reads/H) from a 503 view_converging
-  /// response: an explicit caller-awaited refresh is the one path
-  /// where the refusal is worth surfacing to its caller rather than
-  /// only backing off silently. The refusal also schedules its own
-  /// bounded-backoff retry, same as the Authenticated-transition path,
-  /// so a caller that does not await (or that ignores the throw) still
-  /// converges on a snapshot once the view catches up.
+  /// (`EVS-PRD-cross-process-event-transport/K`) from a 503
+  /// view_converging response: an explicit caller-awaited refresh is
+  /// the one path where the refusal is worth surfacing to its caller
+  /// rather than only backing off silently. The refusal also schedules
+  /// its own capped-backoff retry, with no attempt limit
+  /// (`EVS-PRD-cross-process-event-transport/L`), same as the
+  /// Authenticated-transition path, so a caller that does not await
+  /// (or that ignores the throw) still converges on a snapshot once
+  /// the view catches up.
   @override
   Future<void> refresh() async {
     if (_isDisposed) return;
@@ -186,14 +178,17 @@ class RemotePermissionSource implements PermissionSource {
     await _fetchSnapshot(rethrowConverging: true);
   }
 
-  // Implements: EVS-DEV-converging-view-reads/H
+  // Implements: EVS-PRD-cross-process-event-transport/K
   // decodes a 503 view_converging response into a typed
   //   ViewConvergingRefusal; rethrowConverging distinguishes the
   //   caller-awaited refresh() path (propagates it) from the
   //   fire-and-forget Authenticated-transition fetch (stays quiet,
-  //   since nothing awaits it to react). Either path schedules a
-  //   bounded-backoff retry and surfaces the refusal via `converging`
-  //   until a later fetch succeeds or the attempt bound is reached.
+  //   since nothing awaits it to react).
+  // Implements: EVS-PRD-cross-process-event-transport/L
+  // either path schedules a capped-backoff retry, with no attempt
+  //   limit, and surfaces the refusal via `converging` until a later
+  //   fetch succeeds, so the permission-snapshot caller recovers from
+  //   its single request without being asked again.
   Future<void> _fetchSnapshot({
     bool rethrowConverging = false,
     int attempt = 0,
@@ -249,19 +244,20 @@ class RemotePermissionSource implements PermissionSource {
     // state untouched.
   }
 
-  /// Schedules a bounded-backoff retry of [_fetchSnapshot] after a 503
-  /// view_converging response, honouring a `Retry-After` header when
-  /// the server sends one. No-op once [attempt] reaches
-  /// [_maxRetryAttempts], or once [gen] is superseded by the time the
-  /// timer fires (a newer auth transition, an explicit [refresh], or
-  /// [dispose] — each cancels the previous timer outright, so this is
-  /// a second, belt-and-suspenders check).
+  /// Schedules a retry of [_fetchSnapshot] after a 503 view_converging
+  /// response, honouring a `Retry-After` header when the server sends
+  /// one. No attempt bound
+  /// (`EVS-PRD-cross-process-event-transport/L` requires recovery, not
+  /// give-up): the retry keeps going, at [_retryMaxDelay]-capped
+  /// intervals, until a fetch succeeds or [gen] is superseded by the
+  /// time the timer fires (a newer auth transition, an explicit
+  /// [refresh], or [dispose] — each cancels the previous timer
+  /// outright, so this is a second, belt-and-suspenders check).
   void _scheduleSnapshotRetry({
     required int gen,
     required http.Response response,
     required int attempt,
   }) {
-    if (attempt >= _maxRetryAttempts) return;
     final delay = _retryAfterHeader(response) ?? _backoffDelay(attempt);
     _cancelRetry();
     _retryTimer = _scheduleRetry(delay, () {
@@ -273,7 +269,7 @@ class RemotePermissionSource implements PermissionSource {
   /// Exponential backoff from [_retryBaseDelay], capped at
   /// [_retryMaxDelay], used when the server sends no `Retry-After`.
   static Duration _backoffDelay(int attempt) {
-    final scaled = _retryBaseDelay * (1 << attempt);
+    final scaled = _retryBaseDelay * (1 << attempt.clamp(0, 20));
     return scaled > _retryMaxDelay ? _retryMaxDelay : scaled;
   }
 

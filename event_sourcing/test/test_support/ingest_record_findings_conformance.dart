@@ -18,6 +18,8 @@ import 'dart:convert';
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing/src/event_store.dart'
     show recordFindingInTxnForTest;
+import 'package:event_sourcing/src/security/security_finding.dart'
+    show findingRecordEvidence;
 import 'package:flutter_test/flutter_test.dart';
 
 import '../security/security_finding_conformance.dart'
@@ -521,6 +523,69 @@ void runIngestRecordFindingScenarios({
         );
         final id = record['event_id']! as String;
         expect(await store.reader.findEventById(id), isNull);
+      });
+    }
+
+    final unstorableCharacter = <String, Map<String, Object?> Function()>{
+      'a top-level data value': () =>
+          sealedRecord(data: <String, Object?>{'note': 'x\u0000y'}),
+      'a nested map value': () => sealedRecord(
+        data: <String, Object?>{
+          'nested': <String, Object?>{'note': 'x\u0000y'},
+        },
+      ),
+      'a nested map key': () => sealedRecord(
+        data: <String, Object?>{
+          'nested': <String, Object?>{'k\u0000ey': 1},
+        },
+      ),
+      'a list element': () => sealedRecord(
+        data: <String, Object?>{
+          'items': <Object?>['a', 'x\u0000y'],
+        },
+      ),
+    };
+
+    for (final c in unstorableCharacter.entries) {
+      // Verifies: EVS-DEV-security-findings/B
+      // Verifies: EVS-DEV-security-findings/O
+      // Verifies: EVS-DEV-security-findings/R
+      // Verifies: EVS-DEV-security-findings/U
+      // Verifies: EVS-DEV-event-record/L
+      // Verifies: EVS-PRD-ingest/G
+      test('a record with U+0000 in ${c.key} is kept in full, encoded, in '
+          'one event_malformed finding (unstorable_character) and not '
+          'stored', () async {
+        final store = await open();
+        final record = c.value();
+        final received = asReceived(record);
+        final encoded = findingRecordEvidence(received);
+        expect(
+          encoded,
+          isA<String>(),
+          reason: 'a record carrying U+0000 is kept encoded, not verbatim',
+        );
+        await expectOneFinding(
+          store,
+          anomaly: record,
+          kind: 'event_malformed',
+          evidence: <String, Object?>{
+            'reason': 'unstorable_character',
+            'record': encoded,
+          },
+          aggregates: const <String>[],
+          stored: false,
+          outcome: IngestOutcome.keptInFinding,
+        );
+        final id = record['event_id']! as String;
+        expect(await store.reader.findEventById(id), isNull);
+        // The encoding round-trips independently of findingRecordEvidence:
+        // base64 -> UTF-8 -> canonical JSON decodes back to the received
+        // record.
+        final decoded = jsonDecode(
+          utf8.decode(base64.decode(encoded as String)),
+        );
+        expect(decoded, received);
       });
     }
 

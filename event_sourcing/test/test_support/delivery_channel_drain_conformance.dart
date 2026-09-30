@@ -667,6 +667,16 @@ void runDeliveryChannelDrainScenarios(
         reason: 'the pending item carrying no attempt is deleted',
       );
       expect(
+        [
+          for (final i in items)
+            if (i.finalStatus == null) i.resendsDeliveryNumber,
+        ],
+        <int>[2, 3],
+        reason:
+            'each resend item records the delivery number it resends, '
+            'in ascending order',
+      );
+      expect(
         await w.backend.readFillCursor('hub'),
         n4.sequenceNumber - 1,
         reason: "the fill is rewound below the retired item's events",
@@ -959,10 +969,13 @@ void runDeliveryChannelDrainScenarios(
       expect(await w.findings(), hasLength(1));
     });
 
-    // Verifies: EVS-DEV-delivery-resume/Y
-    // a record more than one ahead naming an attempt the sender made before
-    //   a resume moved its record back is unexplained, not a regression.
-    test('a record ahead naming a superseded attempt is unexplained', () async {
+    // Verifies: EVS-DEV-delivery-resume/H
+    // a record above the sender channel record's naming an attempt the
+    //   sender made before a resume moved its record back is adopted, with
+    //   no finding.
+    // Verifies: EVS-DEV-delivery-resume/M
+    // the resend items above the adopted record are retired unsent.
+    test('a record ahead naming a superseded attempt is adopted', () async {
       if (!available) return;
       final d = NativeDestination(id: 'hub');
       await w.activate(d);
@@ -977,8 +990,17 @@ void runDeliveryChannelDrainScenarios(
       final superseded = _sentDeliveries(d).last;
       expect(superseded.deliveryNumber, 3);
       expect(await w.resumeEvents(), hasLength(1));
+      final pendingBefore = [
+        for (final i in await w.items('hub'))
+          if (i.finalStatus == null) i,
+      ];
+      expect(pendingBefore.map((i) => i.resendsDeliveryNumber).toList(), <int>[
+        1,
+        2,
+      ]);
 
-      // The receiver comes forward again, holding the superseded delivery.
+      // The receiver comes forward again, holding the superseded delivery,
+      // before either resend has landed.
       d.enqueueScript(
         SendAnswered(
           ReceiverAcknowledgement(
@@ -991,10 +1013,307 @@ void runDeliveryChannelDrainScenarios(
       );
       await w.drain(d);
 
-      final findings = await w.findings();
-      expect(findings, hasLength(1));
-      expect(findings.single.data['kind'], 'channel_unexplained');
-      expect((await w.senderRecord('hub'))!.generation, 2);
+      expect(await w.findings(), isEmpty);
+      expect(
+        await w.senderRecord('hub'),
+        SenderChannelRecord(
+          generation: 1,
+          receiverRecord: _recordOf(superseded),
+          receiverDatabaseId: d.receiverDatabaseId,
+        ),
+      );
+      final after = await w.items('hub');
+      expect(
+        after.where((i) => i.finalStatus == null),
+        isEmpty,
+        reason: 'both resend items (1 and 2) are retired unsent',
+      );
+      expect(
+        after.firstWhere((i) => i.resendsDeliveryNumber == 1).finalStatus,
+        FinalStatus.tombstoned,
+        reason: 'the head that carried the answer held an attempt',
+      );
+      expect(
+        after.where((i) => i.resendsDeliveryNumber == 2),
+        isEmpty,
+        reason: 'the resend that carried no attempt is deleted',
+      );
+    });
+
+    /// Delivers ten notes on `hub` as deliveries 1..10, each acknowledged
+    /// and marked sent, returning the destination, its channel and the
+    /// deliveries in send order.
+    Future<(NativeDestination, DeliveryChannel, List<DeliveryEnvelope>)>
+    deliverTen() async {
+      final d = NativeDestination(id: 'hub');
+      await w.activate(d);
+      for (var i = 1; i <= 10; i++) {
+        await w.note('n$i');
+      }
+      await w.deliverAll(d);
+      final channel = await w.channel('hub');
+      final delivered = _sentDeliveries(d);
+      return (d, channel, delivered);
+    }
+
+    group("adopting a receiver record above the sender's", () {
+      // Verifies: EVS-DEV-delivery-resume/H
+      // a record above the sender channel record's naming a delivery the
+      //   sender attempted or sent, on the current generation, at another
+      //   number is adopted: it becomes the sender channel record and
+      //   every other pending item at or below its number is retired
+      //   unsent.
+      // Verifies: EVS-DEV-delivery-resume/M
+      // a resend item records the delivery number it resends, so adoption
+      //   can retire exactly those items.
+      // Verifies: EVS-PRD-delivery-channel/I
+      // "attempted delivery" includes a delivery a queue item was marked
+      //   sent with, on the channel's current generation.
+      test('the receiver regresses then comes forward before any resend '
+          'lands: adopted at the true generation, no finding', () async {
+        if (!available) return;
+        final (d, channel, delivered) = await deliverTen();
+        final original = List<DeliveryEnvelope>.of(d.accepted[channel]!);
+        expect(original, hasLength(10));
+
+        // (2) The receiver is restored to 7.
+        d.restoreReceiverTo(channel, 7);
+        await w.note('n11');
+        await w.fill(d);
+        await w.drain(d); // one head attempt: the resume branch.
+        expect(
+          d.sent,
+          hasLength(11),
+          reason: 'only the n11 attempt was sent; no resend went out',
+        );
+        expect(await w.resumeEvents(), hasLength(1));
+        expect(
+          await w.senderRecord('hub'),
+          SenderChannelRecord(
+            generation: 1,
+            receiverRecord: _recordOf(delivered[6]),
+            receiverDatabaseId: d.receiverDatabaseId,
+          ),
+        );
+        final pendingAfterResume =
+            [
+              for (final i in await w.items('hub'))
+                if (i.finalStatus == null) i,
+            ]..sort(
+              (a, b) =>
+                  a.resendsDeliveryNumber!.compareTo(b.resendsDeliveryNumber!),
+            );
+        expect(
+          pendingAfterResume.map((i) => i.resendsDeliveryNumber).toList(),
+          <int>[8, 9, 10],
+        );
+        expect(pendingAfterResume.every((i) => i.attempts.isEmpty), isTrue);
+
+        // (3) The receiver comes forward to 10 before any resend lands.
+        d.accepted[channel]!.addAll(original.skip(7));
+        expect(d.accepted[channel], hasLength(10));
+
+        // (4) The next send (the resend of 8) is answered with record 10.
+        await w.drain(d);
+        expect(
+          d.sent,
+          hasLength(12),
+          reason: 'exactly one more send: the resend of 8',
+        );
+        expect(await w.findings(), isEmpty);
+        expect(
+          await w.senderRecord('hub'),
+          SenderChannelRecord(
+            generation: 1,
+            receiverRecord: _recordOf(delivered[9]),
+            receiverDatabaseId: d.receiverDatabaseId,
+          ),
+        );
+        final after = await w.items('hub');
+        expect(
+          after.where((i) => i.finalStatus == null),
+          isEmpty,
+          reason: 'the 8..10 resend items are retired unsent',
+        );
+        final retired8 = after.where((i) => i.resendsDeliveryNumber == 8);
+        expect(retired8, hasLength(1));
+        expect(retired8.single.finalStatus, FinalStatus.tombstoned);
+        expect(after.where((i) => i.resendsDeliveryNumber == 9), isEmpty);
+        expect(after.where((i) => i.resendsDeliveryNumber == 10), isEmpty);
+        expect(
+          after.where(
+            (i) => i.resendsDeliveryNumber != null && i.finalStatus != null,
+          ),
+          everyElement(
+            predicate<FifoEntry>(
+              (i) => i.finalStatus != FinalStatus.sent,
+              'not marked sent',
+            ),
+          ),
+          reason: 'none of the retired resend items was marked sent',
+        );
+
+        // The next new delivery is 11, and the receiver accepts it.
+        await w.deliverAll(d);
+        final eleven = _sentDeliveries(d).last;
+        expect(eleven.deliveryNumber, 11);
+        expect(eleven.previousDeliveryHash, delivered[9].deliveryHash);
+        expect(d.accepted[channel]!.last.deliveryNumber, 11);
+        expect(await w.findings(), isEmpty);
+      });
+
+      // Verifies: EVS-DEV-delivery-resume/H
+      // adoption applies whichever pending item is the head when the
+      //   record above the sender's arrives, whether or not the head
+      //   itself has already been sent and acknowledged in step.
+      // Verifies: EVS-DEV-delivery-resume/M
+      // a resend already sent under its own record is left marked sent;
+      //   the adopted record retires only the still-pending resends at or
+      //   below it.
+      test('variant (a): a resend sent and acknowledged, then a later record '
+          'arrives: adopted, the rest retired', () async {
+        if (!available) return;
+        final (d, channel, delivered) = await deliverTen();
+        d.restoreReceiverTo(channel, 7);
+        await w.note('n11');
+        await w.fill(d);
+        await w.drain(d); // resume: resends 8, 9, 10 pending.
+
+        // The resend of 8 is sent and acknowledged normally (the receiver
+        // is still at 7), then the resend of 9 is answered with record 10.
+        d
+          ..enqueueScript(
+            SendAnswered(
+              ReceiverAcknowledgement(
+                channel: channel,
+                receiverDatabaseId: d.receiverDatabaseId,
+                record: _recordOf(delivered[7]),
+                outcome: AcknowledgementOutcome.accepted,
+              ),
+            ),
+          )
+          ..enqueueScript(
+            SendAnswered(
+              ReceiverRefusal(
+                channel: channel,
+                receiverDatabaseId: d.receiverDatabaseId,
+                record: _recordOf(delivered[9]),
+                refusal: RefusalKind.outOfSequence,
+              ),
+            ),
+          );
+        await w.drain(d);
+
+        expect(await w.findings(), isEmpty);
+        expect(
+          await w.senderRecord('hub'),
+          SenderChannelRecord(
+            generation: 1,
+            receiverRecord: _recordOf(delivered[9]),
+            receiverDatabaseId: d.receiverDatabaseId,
+          ),
+        );
+        final after = await w.items('hub');
+        expect(after.where((i) => i.finalStatus == null), isEmpty);
+        expect(
+          after.firstWhere((i) => i.resendsDeliveryNumber == 8).finalStatus,
+          FinalStatus.sent,
+        );
+        expect(
+          after.firstWhere((i) => i.resendsDeliveryNumber == 9).finalStatus,
+          FinalStatus.tombstoned,
+          reason: 'the resend of 9 carried the attempt the answer replied to',
+        );
+        expect(
+          after.where((i) => i.resendsDeliveryNumber == 10),
+          isEmpty,
+          reason: 'the resend of 10 carried no attempt and is deleted',
+        );
+      });
+
+      // Verifies: EVS-DEV-delivery-resume/Y
+      // a record above the sender's naming a delivery the sender marked
+      //   sent at that number under another hash is unexplained, not a
+      //   regression.
+      // Verifies: EVS-PRD-delivery-channel/X
+      // a record no automatic path explains continues the registration on
+      //   a new generation.
+      test('variant (b): a record naming a hash the sender never sent at that '
+          'number is unexplained, a new generation', () async {
+        if (!available) return;
+        final (d, channel, _) = await deliverTen();
+        d.restoreReceiverTo(channel, 7);
+        await w.note('n11');
+        await w.fill(d);
+        await w.drain(d); // resume: resends 8, 9, 10 pending.
+
+        d.enqueueScript(
+          SendAnswered(
+            ReceiverRefusal(
+              channel: channel,
+              receiverDatabaseId: d.receiverDatabaseId,
+              record: DeliveryRecord(
+                deliveryNumber: 10,
+                deliveryHash: 'f' * 64,
+              ),
+              refusal: RefusalKind.outOfSequence,
+            ),
+          ),
+        );
+        await w.drain(d);
+
+        final findings = await w.findings();
+        expect(findings, hasLength(1));
+        expect(findings.single.data['kind'], 'channel_unexplained');
+        expect(
+          await w.senderRecord('hub'),
+          SenderChannelRecord(
+            generation: 2,
+            receiverRecord: DeliveryRecord.none,
+            receiverDatabaseId: d.receiverDatabaseId,
+          ),
+        );
+      });
+
+      // Verifies: EVS-DEV-delivery-resume/K
+      // a record naming no delivery attempted, at a number where the
+      //   sender marked no delivery sent, is a sender regression.
+      test('variant (c): a record at a number nothing was ever sent at is a '
+          'sender regression, a new generation', () async {
+        if (!available) return;
+        final (d, channel, _) = await deliverTen();
+        d.restoreReceiverTo(channel, 7);
+        await w.note('n11');
+        await w.fill(d);
+        await w.drain(d); // resume: resends 8, 9, 10 pending.
+
+        d.enqueueScript(
+          SendAnswered(
+            ReceiverRefusal(
+              channel: channel,
+              receiverDatabaseId: d.receiverDatabaseId,
+              record: DeliveryRecord(
+                deliveryNumber: 15,
+                deliveryHash: 'a' * 64,
+              ),
+              refusal: RefusalKind.outOfSequence,
+            ),
+          ),
+        );
+        await w.drain(d);
+
+        final findings = await w.findings();
+        expect(findings, hasLength(1));
+        expect(findings.single.data['kind'], 'sender_regressed');
+        expect(
+          await w.senderRecord('hub'),
+          SenderChannelRecord(
+            generation: 2,
+            receiverRecord: DeliveryRecord.none,
+            receiverDatabaseId: d.receiverDatabaseId,
+          ),
+        );
+      });
     });
 
     // Verifies: EVS-DEV-delivery-resume/Y

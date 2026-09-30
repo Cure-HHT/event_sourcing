@@ -22,6 +22,7 @@ import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'fake_destination.dart';
+import 'manual_timers.dart' show neverFiringTimer;
 import 'queue_registry_conformance.dart' show QueueTestDatabase;
 import 'queue_test_support.dart'
     show TestCycle, drainForTest, fillForTest, wedgeHeadForTest;
@@ -199,7 +200,7 @@ class _World {
   EventStore get store => a.store;
   DestinationRegistry get registry => a.registry;
 
-  Future<_Process> openProcess() async {
+  Future<_Process> openProcess({ProjectionRegistry? projections}) async {
     final backend = await db.openBackend();
     final entryTypes = EntryTypeRegistry();
     for (final d in kSystemEntryTypes) {
@@ -218,6 +219,7 @@ class _World {
       source: _source,
       securityContexts: db.securityFor(backend),
       clock: () => eventTime,
+      projections: projections,
     );
     return _Process(backend, store, DestinationRegistry(eventStore: store));
   }
@@ -412,6 +414,93 @@ void runDrainWedgeScenarios(
         );
         await expectWedgeRecordMatchesLog(w.store, 'x');
       });
+
+      // Verifies: EVS-DEV-view-convergence/E
+      // Verifies: EVS-DEV-security-findings/S
+      test(
+        'a view whose fold cannot key the wedge event stores it and '
+        'records a fold_failed finding instead of failing the drain',
+        () async {
+          if (!available) return;
+          const view = 'unkeyable_wedges';
+          const spec = TableProjectionSpec(
+            viewName: view,
+            interest: SubscriptionFilter(
+              entryTypes: <String>{kDestinationWedgedEntryType},
+              includeSystemEvents: true,
+            ),
+            insertEventTypes: <String>{kDestinationWedgedEventType},
+            removeEventTypes: <String>{},
+            rowKey: CompositeKey(<String>['data.no_such_field']),
+            rowData: WholePayload(),
+          );
+          final begins = <String>[];
+          late FakeDestination d;
+          late FifoEntry head;
+          await runWithDeliveryTestHooks(
+            DeliveryTestHooks(
+              timerFactory: neverFiringTimer,
+              onCatchUpTransactionBegin: begins.add,
+            ),
+            () async {
+              w.a = await w.openProcess(
+                projections: ProjectionRegistry()..register(spec),
+              );
+              // The view's interest admits every system event
+              // (includeSystemEvents), so its initial catch-up pass (over
+              // the boot's own lib_version_initialized) must settle
+              // before the drain, or the copy reads converging and the
+              // wedge event's fold is left to a later catch-up instead of
+              // failing inline, in the drain's own transaction.
+              for (var i = 0; i < 400; i++) {
+                if (begins.isNotEmpty) break;
+                await Future<void>.delayed(const Duration(milliseconds: 5));
+              }
+              if (begins.isEmpty) {
+                fail(
+                  'the catch-up driver never began a pass before the '
+                  'timeout',
+                );
+              }
+              await Future<void>.delayed(const Duration(milliseconds: 50));
+              for (var i = 0; i < 400; i++) {
+                final progress = await w.store.reader.viewProgress();
+                final state = progress
+                    .singleWhere((p) => p.viewName == view)
+                    .state;
+                if (state == ViewConvergenceState.current) break;
+                await Future<void>.delayed(const Duration(milliseconds: 5));
+              }
+              d = FakeDestination(
+                id: 'x',
+                script: <SendResult>[const SendPermanent(error: 'refused')],
+              );
+              head = await queued(d);
+              // The wedge event's own append runs under always-stored
+              // mode, so this fold failure is passed over and recorded
+              // rather than propagating out of the drain cycle.
+              await drainForTest(d, registry: w.registry, policy: budget(7));
+            },
+          );
+          final row = (await w.backend.readFifoRow('x', head.entryId))!;
+          expect(row.finalStatus, FinalStatus.wedged);
+          final event = (await w.wedgeEvents()).single;
+          final findings = <StoredEvent>[
+            for (final e in await w.backend.findAllEvents())
+              if (e.entryType == kSecurityFindingEntryType) e,
+          ];
+          expect(findings, hasLength(1));
+          expect(findings.single.data['kind'], 'fold_failed');
+          expect(
+            findings.single.data['evidence'],
+            containsPair('event_id', event.eventId),
+          );
+          expect(
+            (findings.single.data['detector']! as Map<String, Object?>)['role'],
+            'fold',
+          );
+        },
+      );
 
       // Verifies: EVS-DEV-destination-drain/I
       // an exhausted budget's wedge event

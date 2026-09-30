@@ -682,6 +682,51 @@ void main() {
     });
   });
 
+  group('no string carries U+0000', () {
+    // Verifies: EVS-DEV-event-record/L
+    test('fromMap refuses a record with U+0000 in a top-level value, '
+        'naming the field', () {
+      final record = _validEventMap()
+        ..['data'] = <String, Object?>{'note': 'x\u0000y'};
+      expect(
+        () => StoredEvent.fromMap(record, 0),
+        throwsA(
+          isA<FormatException>().having(
+            (e) => e.message,
+            'message',
+            contains('"data"'),
+          ),
+        ),
+      );
+    });
+
+    // Verifies: EVS-DEV-event-record/L
+    test('fromMap refuses a record with U+0000 in a nested map key, naming '
+        'the top-level field', () {
+      final record = _validEventMap()
+        ..['data'] = <String, Object?>{
+          'nested': <String, Object?>{'k\u0000ey': 1},
+        };
+      expect(
+        () => StoredEvent.fromMap(record, 0),
+        throwsA(
+          isA<FormatException>().having(
+            (e) => e.message,
+            'message',
+            contains('"data"'),
+          ),
+        ),
+      );
+    });
+
+    // Verifies: EVS-DEV-event-record/L
+    test('fromMap admits a record free of U+0000', () {
+      final record = _validEventMap()
+        ..['data'] = <String, Object?>{'note': 'ordinary'};
+      expect(() => StoredEvent.fromMap(record, 0), returnsNormally);
+    });
+  });
+
   group('keys this build does not read', () {
     // Verifies: EVS-DEV-event-record/B
     test('fromMap keeps the version maps, the initiator and top-level keys '

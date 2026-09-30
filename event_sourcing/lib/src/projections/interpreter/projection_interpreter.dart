@@ -29,16 +29,18 @@
 // an event of a higher major than the registered one is refused before the
 //   fold writes anything.
 import 'package:event_sourcing/src/entry_type_registry.dart';
-import 'package:event_sourcing/src/logging.dart';
 import 'package:event_sourcing/src/projections/integrity_marks.dart';
 import 'package:event_sourcing/src/projections/interpreter/aggregate_fold.dart';
+import 'package:event_sourcing/src/projections/interpreter/fold_failure.dart';
 import 'package:event_sourcing/src/projections/interpreter/table_fold.dart';
 import 'package:event_sourcing/src/projections/projection_registry.dart';
 import 'package:event_sourcing/src/projections/projection_spec.dart';
 import 'package:event_sourcing/src/projections/view_read.dart'
-    show isMarkRefreshingEvent;
+    show isMarkRefreshingEvent, isSecurityFindingEvent;
 import 'package:event_sourcing/src/promoters/promoter_executor.dart';
 import 'package:event_sourcing/src/promoters/promoter_registry.dart';
+import 'package:event_sourcing/src/security/security_finding.dart'
+    show FindingKind;
 import 'package:event_sourcing/src/storage/storage_backend.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
 import 'package:event_sourcing/src/storage/transaction.dart';
@@ -46,21 +48,69 @@ import 'package:event_sourcing/src/storage/view_copy.dart';
 import 'package:event_sourcing/src/versions.dart';
 import 'package:meta/meta.dart' show internal;
 
-/// How [ProjectionInterpreter.applyEvent] treats a throw from one copy's
-/// fold step.
+/// How [ProjectionInterpreter.applyEvent] treats a fold failure from one
+/// copy's fold step.
 @internal
 enum ApplyEventMode {
-  /// A locally-dispatched action's append: a fold throw propagates to the
-  /// caller, so an app-visible append failure is never silently swallowed.
+  /// A caller-invoked append with no always-stored obligation: a
+  /// locally-dispatched action's append, a registry's public operation
+  /// (e.g. `destination_registered`, an app-requested halt), a security-
+  /// context redaction or retention sweep, and the boot. A fold failure
+  /// propagates to the caller as its original cause, and nothing is
+  /// stored, so an app-visible append failure is never silently
+  /// swallowed (`EVS-PRD-ingest/G`, contrast).
   local,
 
-  /// Ingest of a received event, or the sender-succession restore: a fold
-  /// throw from one copy is caught, logged, and leaves that copy behind
-  /// (its watermark not advanced past the event, no row writes of its
-  /// kept), so the rest of the delivery or restore still commits and the
-  /// catch-up driver takes the copy over from there
-  /// (`EVS-PRD-ingest/G`, `EVS-DEV-view-convergence/Q`).
-  ingest,
+  /// An always-stored event (`EVS-DEV-view-convergence` Terms): ingest of a
+  /// received event, a record the library appends in the transaction of an
+  /// ingest, a restore or the drain, or any security finding. A fold failure
+  /// from one copy is isolated to that copy alone: the copy passes over
+  /// the event -- its watermark moves to the event's position, writing no
+  /// row for it -- and the failure is collected in the returned
+  /// [ApplyEventResult.failures] for the caller to record as a
+  /// `fold_failed` finding; the rest of the delivery, restore or record
+  /// still commits (`EVS-PRD-ingest/G`, `EVS-DEV-view-convergence/E`,
+  /// `EVS-DEV-security-findings/S`). A storage failure -- any throw other
+  /// than [FoldFailure] -- propagates unchanged, refusing the whole
+  /// transaction.
+  alwaysStored,
+}
+
+/// One copy's fold failure, collected by [ProjectionInterpreter.applyEvent]
+/// under [ApplyEventMode.alwaysStored] for its caller to record as a
+/// `fold_failed` security finding (`EVS-DEV-security-findings/S`).
+@internal
+class FoldFailureRecord {
+  const FoldFailureRecord({
+    required this.viewName,
+    required this.definitionFingerprint,
+    required this.reason,
+  });
+
+  /// The name of the view whose copy passed over the event.
+  final String viewName;
+
+  /// The fingerprint of the copy's definition
+  /// (`EVS-DEV-security-findings/R`, `fold_failed`'s `definition_fingerprint`).
+  final String definitionFingerprint;
+
+  /// Which of the four computation sites failed.
+  final FoldFailureReason reason;
+}
+
+/// The result of [ProjectionInterpreter.applyEvent]: the row changes the
+/// fold produced, and, under [ApplyEventMode.alwaysStored], the fold
+/// failures it collected rather than propagated.
+@internal
+class ApplyEventResult {
+  const ApplyEventResult({required this.changes, required this.failures});
+
+  /// The change records from every spec that produced a change.
+  final List<AggregateFoldChange> changes;
+
+  /// One record per copy whose fold of the event failed and was passed
+  /// over. Always empty under [ApplyEventMode.local].
+  final List<FoldFailureRecord> failures;
 }
 
 class ProjectionInterpreter {
@@ -74,7 +124,8 @@ class ProjectionInterpreter {
   final EntryTypeRegistry entryTypes;
 
   /// Apply [event] to every registered view whose copy, of [copyIds], is
-  /// current in [txn], and returns the change records the fold produced.
+  /// current in [txn], and returns the row changes the fold produced
+  /// together with any fold failures it collected.
   ///
   /// The fold decides by the event's entry-type version against the
   /// registered version of its entry type: an event of a lower major, or of
@@ -96,34 +147,44 @@ class ProjectionInterpreter {
   /// whether or not it folded the event's data. A copy that is converging
   /// is left entirely unchanged: neither its rows nor its watermark move.
   ///
-  /// Returns the list of [AggregateFoldChange] records from every spec
-  /// that produced a change; null results (e.g. tombstone of non-existent
-  /// row) are excluded. The caller uses this list for post-commit subscriber
-  /// notification via `SubscriptionEngine.publishRowChange`.
+  /// [ApplyEventResult.changes] holds the [AggregateFoldChange] records
+  /// from every spec that produced a change; null results (e.g. tombstone
+  /// of non-existent row) are excluded. The caller uses this list for
+  /// post-commit subscriber notification via
+  /// `SubscriptionEngine.publishRowChange`.
   ///
-  /// Under [ApplyEventMode.ingest], a throw from one copy's fold step is
-  /// caught and logged; that copy's watermark is left where it was, so it
-  /// reads as behind and the catch-up driver retries it, and folding
-  /// continues with the instance's other copies (`EVS-PRD-ingest/G`,
-  /// `EVS-DEV-view-convergence/Q`). Under [ApplyEventMode.local] a throw
-  /// propagates to the caller.
+  /// Under [ApplyEventMode.alwaysStored], a copy's fold runs inside
+  /// [StorageBackend.runInSavepointInTxn]: a [FoldFailure] rolls the
+  /// savepoint back, keeping no write of the failed fold, moves the copy's
+  /// watermark to [event]'s position regardless -- the copy passes over
+  /// the event and stays current -- and is collected into
+  /// [ApplyEventResult.failures] rather than recorded here (the
+  /// interpreter cannot append; its caller records the `fold_failed`
+  /// finding in the same transaction, `EVS-DEV-security-findings/S`). Any
+  /// other throw -- a storage failure -- propagates out of [applyEvent]
+  /// unchanged, so the whole transaction is refused. Under
+  /// [ApplyEventMode.local] a [FoldFailure] propagates to the caller as its
+  /// original cause, and [ApplyEventResult.failures] is always empty.
   // Implements: EVS-DEV-view-convergence/E
   // a current copy folds the event when its definition folds it and moves
-  //   its watermark to the event's position.
+  //   its watermark to the event's position; when that fold meets a fold
+  //   failure under always-stored mode, the copy's fold runs in a
+  //   savepoint, keeps no write of the failed fold, passes over the event
+  //   and stays current.
   // Implements: EVS-DEV-view-convergence/F
   // a copy this transaction does not set to the event's position -- a
   //   converging one -- is left entirely unchanged.
   // Implements: EVS-PRD-ingest/G
-  // a fold throw during ingest is caught per copy so the rest of the
-  //   delivery is still admitted; the event stays stored and the failing
-  //   copy is left behind rather than the whole ingest rolling back.
-  // Implements: EVS-DEV-view-convergence/Q
-  // the failing copy keeps no partial row writes and its watermark is not
-  //   advanced past the event, so it reads as behind; the catch-up
-  //   driver's own retry-and-backoff is what records the failure in the
-  //   copy's progress once it meets the same event.
+  // a fold failure during an always-stored fold is isolated to its copy so
+  //   the rest of the delivery is still admitted; the event stays stored
+  //   and the copy passes over it rather than the whole ingest rolling
+  //   back.
+  // Implements: EVS-PRD-materializer/I
+  // a copy that passes over a stored event whose fold into it fails
+  //   contributes nothing to that copy's rows for the event, and keeps
+  //   folding the copy's later events and serving it.
   @internal
-  Future<List<AggregateFoldChange>> applyEvent({
+  Future<ApplyEventResult> applyEvent({
     required Transaction txn,
     required StorageBackend backend,
     required StoredEvent event,
@@ -150,6 +211,7 @@ class ProjectionInterpreter {
     };
 
     final changes = <AggregateFoldChange>[];
+    final failures = <FoldFailureRecord>[];
     for (final spec in projections.all()) {
       final maybeCopyId = copyIds[spec.viewName];
       final copy = maybeCopyId == null ? null : copiesById[maybeCopyId];
@@ -175,8 +237,51 @@ class ProjectionInterpreter {
       if (!current) continue;
 
       if (mode == ApplyEventMode.local) {
-        changes.addAll(
-          await foldStep(
+        try {
+          changes.addAll(
+            await foldStep(
+              txn: txn,
+              backend: backend,
+              spec: spec,
+              promoters: promoters,
+              event: event,
+              registeredVersion: registeredVersion,
+              copyId: copyId,
+            ),
+          );
+        } on FoldFailure catch (e) {
+          // A locally-dispatched action's fold failure still fails to its
+          // caller with the original exception, not the FoldFailure
+          // wrapper: only ingest and catch-up distinguish fold failures
+          // from other throws (EVS-PRD-ingest/G, contrast).
+          e.rethrowCause();
+        }
+        await backend.setViewCopyWatermarkInTxn(
+          txn,
+          copyId,
+          event.sequenceNumber,
+        );
+        continue;
+      }
+
+      // Always-stored mode: this copy's fold runs in a savepoint, so a
+      // fold failure (a row key or row data function that cannot extract
+      // from the event's payload, a promoter, a derived field, or, on
+      // Postgres, a row write the server rejects for its value with
+      // SQLSTATE class 22, 23 or 54, reclassified by the backend as
+      // RowWriteRejected) rolls back only that fold's writes -- nothing
+      // else in the transaction is touched -- and this copy alone passes
+      // over the event: its watermark still moves to the event's
+      // position, so it stays current, and the failure is collected for
+      // the caller to record as a `fold_failed` finding. Every other copy,
+      // and the rest of the delivery, restore or record, still folds and
+      // commits (`EVS-PRD-ingest/G`). Any other throw -- a storage failure
+      // -- is not caught here and propagates out of applyEvent, refusing
+      // the whole transaction.
+      try {
+        final stepChanges = await backend.runInSavepointInTxn(
+          txn,
+          () => foldStep(
             txn: txn,
             backend: backend,
             spec: spec,
@@ -186,50 +291,47 @@ class ProjectionInterpreter {
             copyId: copyId,
           ),
         );
-        await backend.setViewCopyWatermarkInTxn(
-          txn,
-          copyId,
-          event.sequenceNumber,
-        );
-        continue;
-      }
-
-      // Ingest mode: a throw from this copy's fold (a row key or row data
-      // function that cannot extract from the event's payload, a
-      // promoter, a marks refresh) is this copy's problem alone. It is
-      // caught here, before any watermark write, so the copy keeps no
-      // partial row writes of the failed event and is left behind for the
-      // catch-up driver; every other copy, and the rest of the delivery
-      // or restore, still folds and commits (`EVS-PRD-ingest/G`).
-      try {
-        final stepChanges = await foldStep(
-          txn: txn,
-          backend: backend,
-          spec: spec,
-          promoters: promoters,
-          event: event,
-          registeredVersion: registeredVersion,
-          copyId: copyId,
-        );
-        await backend.setViewCopyWatermarkInTxn(
-          txn,
-          copyId,
-          event.sequenceNumber,
-        );
         changes.addAll(stepChanges);
-      } on Object catch (e, st) {
-        libraryLog(
-          'ingest',
-          'view "${spec.viewName}" could not fold event ${event.eventId}; '
-              'the event is stored and the copy is left behind for the '
-              'catch-up driver',
-          level: LibraryLogLevel.severe,
-          error: e,
-          stackTrace: st,
-        );
+      } on FoldFailure catch (e) {
+        // Implements: EVS-DEV-security-findings/T
+        // when the event being folded is itself a finding of kind
+        //   fold_failed, the copy passes over it (watermark still moves)
+        //   but nothing is collected: recording a further fold_failed
+        //   finding about the failed fold of a fold_failed finding would
+        //   recurse without bound.
+        if (!isFoldFailedFinding(event)) {
+          failures.add(
+            FoldFailureRecord(
+              viewName: spec.viewName,
+              definitionFingerprint: copy.fingerprint,
+              reason: e.reason,
+            ),
+          );
+        }
+      } on RowWriteRejected catch (_) {
+        // The backend classified the row write its savepoint's body
+        // performed as a rejection of the row's value (`EVS-DEV-view-
+        // convergence` Terms), not a storage failure: a fold failure of
+        // reason rowWriteFailed, exactly as a FoldFailure above (same
+        // fold_failed-of-a-fold_failed exemption, EVS-DEV-security-
+        // findings/T).
+        if (!isFoldFailedFinding(event)) {
+          failures.add(
+            FoldFailureRecord(
+              viewName: spec.viewName,
+              definitionFingerprint: copy.fingerprint,
+              reason: FoldFailureReason.rowWriteFailed,
+            ),
+          );
+        }
       }
+      await backend.setViewCopyWatermarkInTxn(
+        txn,
+        copyId,
+        event.sequenceNumber,
+      );
     }
-    return changes;
+    return ApplyEventResult(changes: changes, failures: failures);
   }
 
   /// The one fold step every writer of a copy's rows shares -- an append
@@ -356,14 +458,17 @@ class ProjectionInterpreter {
           TableProjectionSpec() => null,
         };
         eventForFold = event.withData(
-          PromoterExecutor.promote(
-            registry: promoters,
-            viewName: spec.viewName,
-            entryType: event.entryType,
-            fromVersion: event.entryTypeVersion,
-            toVersion: version,
-            payload: event.data,
-            existingRow: existingRow,
+          guardFold(
+            FoldFailureReason.promoterFailed,
+            () => PromoterExecutor.promote(
+              registry: promoters,
+              viewName: spec.viewName,
+              entryType: event.entryType,
+              fromVersion: event.entryTypeVersion,
+              toVersion: version,
+              payload: event.data,
+              existingRow: existingRow,
+            ),
           ),
         );
       }
@@ -475,3 +580,12 @@ class ProjectionInterpreter {
     return true;
   }
 }
+
+/// Whether [event] is itself a security finding of kind `fold_failed`
+/// (`EVS-DEV-security-findings/T`): shared by the inline fold above and the
+/// catch-up driver, which each exempt such an event from collecting a
+/// further `fold_failed` finding about its own failed fold.
+@internal
+bool isFoldFailedFinding(StoredEvent event) =>
+    isSecurityFindingEvent(event) &&
+    event.data['kind'] == FindingKind.foldFailed.wire;

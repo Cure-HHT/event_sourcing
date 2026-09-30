@@ -1051,12 +1051,13 @@ Future<_Delivery> _buildDelivery(
 
 /// How the drainer reads a receiver record returned for a delivery.
 enum _Reading {
-  /// The record names the delivery in flight at the next number: the head
-  /// is marked sent under it.
+  /// The record names the delivery in flight: the head is marked sent
+  /// under it.
   acknowledged,
 
-  /// The record names, at the next number, another delivery the sender
-  /// attempted: the sender adopts it and marks nothing sent.
+  /// The record is above the sender's and names a delivery the sender
+  /// attempted or sent, on the current generation, at another number: the
+  /// sender adopts it and marks nothing sent.
   adopted,
 
   /// The record equals the sender channel record.
@@ -1087,17 +1088,21 @@ enum _Reading {
 /// - A response from another receiver database than the one the sender
 ///   channel record holds, when it holds one, starts a new generation with
 ///   a `channel_unexplained` finding.
-/// - A record numbered one above the sender channel record that names a
-///   delivery the sender attempted (the one the send fence record names,
-///   or one an attempt on a pending, wedged or tombstoned item carries)
-///   becomes the sender channel record, with the responding receiver, and
-///   marks the head sent under it when it names the delivery in flight.
+/// - A record above the sender channel record that names a delivery the
+///   sender attempted or sent on the current generation (the one the send
+///   fence record names, one an attempt on a pending, wedged or
+///   tombstoned item carries, or one a sent item's own delivery fields
+///   carry) is adopted: it becomes the sender channel record, with the
+///   responding receiver, retiring unsent every other pending item whose
+///   resend number is at or below it, and marks the head sent only when
+///   the record names the delivery in flight.
 /// - A record equal to the sender channel record changes nothing.
 /// - A record below the sender channel record, every delivery above it
 ///   retained and the first linking to its hash, resumes the channel.
-/// - A record above the sender channel record naming no delivery the
-///   sender attempted starts a new generation with a `sender_regressed`
-///   finding.
+/// - A record above the sender channel record naming no delivery
+///   attempted, at a number where no item was ever marked sent on the
+///   current generation, starts a new generation with a
+///   `sender_regressed` finding.
 /// - Every other record starts a new generation with a
 ///   `channel_unexplained` finding.
 ///
@@ -1165,10 +1170,15 @@ Future<bool> _readReceiverAnswer(
       case _Reading.acknowledged:
       case _Reading.adopted:
         // Implements: EVS-DEV-delivery-resume/H
-        // a record at the next number naming a delivery the sender
-        //   attempted becomes the sender channel record, with the responding
-        //   receiver, and marks the pending head sent only when it names the
-        //   delivery the send fence record names.
+        // a record above the sender channel record's naming a delivery the
+        //   sender attempted or sent at that number on the current
+        //   generation is adopted, in one transaction and recording no
+        //   finding: it becomes the sender channel record, with the
+        //   responding receiver; the pending head is marked sent only when
+        //   the record names the delivery the send fence record names; and
+        //   every other pending queue item a receiver-behind resume
+        //   enqueued for a delivery number at or below the record's is
+        //   retired unsent.
         // Implements: EVS-DEV-delivery-channel/M
         // the head is marked sent only on a record whose number and hash are
         //   those of the delivery it sent.
@@ -1185,6 +1195,13 @@ Future<bool> _readReceiverAnswer(
             deliveryHash: record.deliveryHash!,
           );
         }
+        await _retirePendingInTxn(
+          backend,
+          txn,
+          destinationId,
+          await backend.listFifoEntriesTxn(txn, destinationId),
+          maxResendsDeliveryNumber: record.deliveryNumber,
+        );
         await backend.writeSenderChannelRecordTxn(
           txn,
           destinationId,
@@ -1258,20 +1275,21 @@ Future<bool> _readReceiverAnswer(
 
 /// Reads [record], returned by [responding] on the channel of [sender],
 /// against the sender's own records: the sender channel record, the send
-/// fence record [fence] and the attempts the registration's queue [items]
-/// carry.
+/// fence record [fence] and the attempts and sent deliveries the
+/// registration's queue [items] carry.
 // Implements: EVS-DEV-delivery-resume/Y
 // a response from another receiver database than the one the sender channel
 //   record holds, and a record that is not the sender's, calls for no
-//   resume, and is not above it or is more than one above it naming an
-//   attempted delivery, is unexplained.
+//   resume, is not above it, or is above it naming a delivery the sender
+//   marked sent there under another hash, is unexplained.
 // Implements: EVS-DEV-delivery-resume/K
 // a record above the sender channel record naming no delivery the sender
-//   attempted is a sender regression.
+//   attempted or sent, at a number where the sender marked no delivery
+//   sent, is a sender regression, both on the current generation.
 // Implements: EVS-PRD-delivery-channel/I
 // a record from the channel's receiver database ahead of the sender's that
-//   names no delivery the sender attempted is recorded as a sender
-//   regression.
+//   names no delivery the sender attempted, at a number where the sender
+//   marked no delivery sent, is recorded as a sender regression.
 Future<_Reading> _readRecord(
   StorageBackend backend,
   Transaction txn, {
@@ -1286,8 +1304,8 @@ Future<_Reading> _readRecord(
   final held = sender.receiverDatabaseId;
   if (held != null && held != responding) return _Reading.unexplained;
   final own = sender.receiverRecord;
-  final attempted = _namesAttempted(record, fence, items);
-  if (record.deliveryNumber == own.deliveryNumber + 1 && attempted) {
+  final attempted = _namesAttempted(record, fence, items, sender.generation);
+  if (record.deliveryNumber > own.deliveryNumber && attempted) {
     return fence != null &&
             fence.entryId == headEntryId &&
             fence.deliveryNumber == record.deliveryNumber &&
@@ -1306,21 +1324,41 @@ Future<_Reading> _readRecord(
       )) {
     return _Reading.receiverBehind;
   }
-  if (record.deliveryNumber > own.deliveryNumber && !attempted) {
+  if (record.deliveryNumber > own.deliveryNumber &&
+      !_markedSentAt(items, sender.generation, record.deliveryNumber)) {
     return _Reading.senderRegressed;
   }
   return _Reading.unexplained;
 }
 
-/// Whether [record] names a delivery the sender attempted: the one the send
-/// fence record names, or one an attempt recorded on a pending, wedged or
-/// tombstoned item of the queue carries. The delivery hash covers the
-/// channel, so a match names a delivery of the same registration and
-/// generation.
+/// Whether the sender marked a delivery sent at [number] on [generation]:
+/// "never reached" for [_Reading.senderRegressed] means no item was ever
+/// marked sent there, whatever hash it carries.
+// Implements: EVS-DEV-delivery-resume/K
+// a number where an item was marked sent, under any hash, was reached: a
+//   record naming a different hash there is unexplained, not a regression.
+bool _markedSentAt(List<FifoEntry> items, int generation, int number) {
+  for (final item in items) {
+    if (item.finalStatus == FinalStatus.sent &&
+        item.deliveryGeneration == generation &&
+        item.deliveryNumber == number) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/// Whether [record] names a delivery the sender attempted or sent on
+/// [generation], the channel's current generation: the one the send fence
+/// record names, one an attempt recorded on a pending, wedged or
+/// tombstoned item of the queue carries, or one a sent item's own
+/// delivery fields carry. The delivery hash covers the channel, so a
+/// match names a delivery of the same registration and generation.
 bool _namesAttempted(
   DeliveryRecord record,
   SendFence? fence,
   List<FifoEntry> items,
+  int generation,
 ) {
   final number = record.deliveryNumber;
   final hash = record.deliveryHash;
@@ -1331,7 +1369,14 @@ bool _namesAttempted(
     return true;
   }
   for (final item in items) {
-    if (item.finalStatus == FinalStatus.sent) continue;
+    if (item.finalStatus == FinalStatus.sent) {
+      if (item.deliveryGeneration == generation &&
+          item.deliveryNumber == number &&
+          item.deliveryHash == hash) {
+        return true;
+      }
+      continue;
+    }
     for (final a in item.attempts) {
       if (a.deliveryNumber == number && a.deliveryHash == hash) return true;
     }
@@ -1395,16 +1440,25 @@ Future<bool> _resendable(
 
 /// Retires [items]' pending ones inside [txn]: deletes each that carries no
 /// attempt and tombstones each that carries attempts. Returns the lowest
-/// event sequence number they carry, or null when none was pending.
+/// event sequence number they carry, or null when none was pending. When
+/// [maxResendsDeliveryNumber] is given, only a pending item that resends a
+/// delivery number at or below it is retired; a pending item that is not a
+/// resend (its `resendsDeliveryNumber` is null) is left alone.
 Future<int?> _retirePendingInTxn(
   StorageBackend backend,
   Transaction txn,
   String destinationId,
-  List<FifoEntry> items,
-) async {
+  List<FifoEntry> items, {
+  int? maxResendsDeliveryNumber,
+}) async {
   int? lowest;
   for (final item in items) {
     if (item.finalStatus != null) continue;
+    if (maxResendsDeliveryNumber != null &&
+        (item.resendsDeliveryNumber == null ||
+            item.resendsDeliveryNumber! > maxResendsDeliveryNumber)) {
+      continue;
+    }
     if (item.attempts.isEmpty) {
       await backend.deleteFifoEntryTxn(txn, destinationId, item.entryId);
     } else {
@@ -1489,6 +1543,7 @@ Future<void> _resumeInTxn(
       destinationId,
       events,
       nativeEnvelope: retained.envelopeMetadata,
+      resendsDeliveryNumber: n,
     );
   }
   await backend.writeSenderChannelRecordTxn(
@@ -1519,6 +1574,10 @@ Future<void> _resumeInTxn(
       'drainer_epoch': lock.epoch,
     },
     initiator: _drainInitiator,
+    // Implements: EVS-DEV-view-convergence/E
+    // the resume event is a record the drainer appends in the drain's own
+    //   transaction, an always-stored event.
+    mode: ApplyEventMode.alwaysStored,
   );
 }
 

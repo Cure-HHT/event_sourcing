@@ -4,7 +4,7 @@
 //   dependency) lives in e2e/permission_test.dart; the
 //   null-on-empty-role parity test below runs here because it exercises
 //   only the snapshot-decode branch, which needs no live server.
-// Verifies: EVS-DEV-converging-view-reads/H
+// Verifies: EVS-PRD-cross-process-event-transport/K
 // an explicit refresh() call
 //   propagates a typed ViewConvergingRefusal on a 503 view_converging
 //   response, not a silently swallowed transport failure.
@@ -297,7 +297,7 @@ void main() {
   test('refresh() throws a typed ViewConvergingRefusal on a 503 '
       'view_converging response; the constructor-triggered initial fetch '
       'stays quiet on the same response', () async {
-    // Verifies: EVS-DEV-converging-view-reads/H
+    // Verifies: EVS-PRD-cross-process-event-transport/K
     final client = _FixedStatusClient(
       503,
       jsonEncode({'error': 'view_converging', 'view': 'user_role_scopes'}),
@@ -338,7 +338,7 @@ void main() {
     'the Authenticated-transition fetch retries a 503 view_converging '
     'with bounded backoff, exposing a typed transient state meanwhile',
     () async {
-      // Verifies: EVS-DEV-converging-view-reads/H
+      // Verifies: EVS-PRD-cross-process-event-transport/L
       // Verifies: EVS-PRD-permission-source/C+E
       final okBody = jsonEncode(
         EffectiveAuthorizationCodec.encode(
@@ -494,12 +494,21 @@ void main() {
     );
   });
 
-  test('retries are bounded: an always-converging server is retried exactly '
-      'the initial fetch plus the fixed attempt bound, then stops', () async {
-    // 1 initial fetch + 5 bounded retries = 6, matching
-    // `_maxRetryAttempts = 5` in remote_permission_source.dart.
-    const expectedTotalCalls = 6;
-    final client = _AlwaysConvergingClient();
+  test('retries are unbounded: a server that refuses with view_converging '
+      'N times (above the old fixed attempt bound of 5) then serves '
+      'delivers the snapshot with no new request from the caller', () async {
+    // Verifies: EVS-PRD-cross-process-event-transport/L
+    const n = 8;
+    final okBody = jsonEncode(
+      EffectiveAuthorizationCodec.encode(
+        EffectiveAuthorization(
+          activeRole: 'clinician',
+          rolePermissions: <Permission>{const Permission('view:patient_diary')},
+          scopeAssignments: const <ScopeAssignment>[],
+        ),
+      ),
+    );
+    final client = _SequencedHttpClient(convergingResponses: n, okBody: okBody);
     final conn = RemoteConnection(
       baseUrl: Uri.parse('http://localhost:0'),
       httpClient: client,
@@ -515,17 +524,18 @@ void main() {
     );
     addTearDown(source.dispose);
 
-    // Pump enough microtask/immediate-timer turns for every bounded
-    // retry to exhaust.
-    for (var i = 0; i < 10; i++) {
+    // Pump enough microtask/immediate-timer turns to ride out all N
+    // refusals; the session never re-transitions and refresh() is
+    // never called again — recovery happens from the constructor's
+    // single Authenticated-triggered fetch.
+    for (var i = 0; i < n + 5; i++) {
       await Future<void>.delayed(const Duration(milliseconds: 5));
     }
-    expect(client.callCount, expectedTotalCalls);
 
-    // No further GETs after the bound is reached, however long we wait.
-    await Future<void>.delayed(const Duration(milliseconds: 50));
-    expect(client.callCount, expectedTotalCalls);
-    expect(source.converging, isNotNull);
+    expect(client.callCount, n + 1);
+    expect(source.current, isNotNull);
+    expect(source.current!.activeRole, 'clinician');
+    expect(source.converging, isNull);
   });
 
   test(
@@ -620,7 +630,8 @@ void main() {
 
   test('refresh() also leaves a retry scheduled after rethrowing the '
       'typed refusal', () async {
-    // Verifies: EVS-DEV-converging-view-reads/H
+    // Verifies: EVS-PRD-cross-process-event-transport/K
+    // Verifies: EVS-PRD-cross-process-event-transport/L
     final client = _AlwaysConvergingClient();
     final conn = RemoteConnection(
       baseUrl: Uri.parse('http://localhost:0'),

@@ -524,6 +524,20 @@ class SembastBackend extends StorageBackend {
     );
   }
 
+  // Implements: EVS-DEV-view-convergence/E
+  // Sembast has no partial-rollback primitive, so the body simply runs;
+  //   the fold-failure ordering (compute before write) means it never
+  //   writes ahead of a failure it then throws.
+  @override
+  @internal
+  Future<T> runInSavepointInTxn<T>(
+    Transaction txn,
+    Future<T> Function() body,
+  ) async {
+    _requireValidTxn(txn);
+    return body();
+  }
+
   @override
   Future<List<StoredEvent>> findEventsForAggregate(String aggregateId) async {
     final db = _database();
@@ -2816,6 +2830,7 @@ class SembastBackend extends StorageBackend {
     int? transformFailures,
     String? wireFormat,
     String? transformVersion,
+    int? resendsDeliveryNumber,
   }) async {
     if (batch.isEmpty) {
       throw ArgumentError.value(
@@ -2950,6 +2965,7 @@ class SembastBackend extends StorageBackend {
       envelopeMetadata: nativeEnvelope,
       transformFailed: transformFailed,
       transformFailures: transformFailed ? transformFailures : null,
+      resendsDeliveryNumber: resendsDeliveryNumber,
     );
     await store.record(assigned).put(t._sembastTxn, entry.toJson());
     await _registerFifoDestinationSembast(t._sembastTxn, destinationId);

@@ -151,6 +151,13 @@ const Map<String, Map<String, Object?>> _validEvidence =
           <String, Object?>{'event_id': 'p', 'event_hash': 'h-p'},
         ],
       },
+      'fold_failed': <String, Object?>{
+        'view': 'notes',
+        'definition_fingerprint': 'fp-1',
+        'event_id': 'e-1',
+        'sealed_hash': 'h-1',
+        'reason': 'row_key_failed',
+      },
     };
 
 /// The closed value lists the evidence of some kinds names: kind, key and
@@ -159,6 +166,7 @@ const Map<(String, String), List<String>> _closedLists =
     <(String, String), List<String>>{
       ('event_malformed', 'reason'): <String>[
         'record_malformed',
+        'unstorable_character',
         'reserved_type_undeclared',
         'audit_identity_invalid',
       ],
@@ -177,6 +185,13 @@ const Map<(String, String), List<String>> _closedLists =
       ('storage_link_break', 'field'): <String>[
         'ingest_sequence_number',
         'previous_ingest_hash',
+      ],
+      ('fold_failed', 'reason'): <String>[
+        'promoter_failed',
+        'row_key_failed',
+        'row_data_failed',
+        'derived_field_failed',
+        'row_write_failed',
       ],
     };
 
@@ -229,6 +244,7 @@ void main() {
           'sequence_missing',
           'parent_invalid',
           'parents_not_stamped',
+          'fold_failed',
         ],
       );
       expect(_validEvidence.keys.toSet(), <String>{
@@ -252,10 +268,10 @@ void main() {
     });
 
     // Verifies: EVS-DEV-security-findings/Q
-    test('a detector role is ingest, restore, sender or walk', () {
+    test('a detector role is ingest, restore, sender, walk or fold', () {
       expect(
         <String>[for (final r in FindingRole.values) r.wire],
-        <String>['ingest', 'restore', 'sender', 'walk'],
+        <String>['ingest', 'restore', 'sender', 'walk', 'fold'],
       );
     });
 
@@ -373,6 +389,63 @@ void main() {
             );
           }
         }
+      }
+    });
+
+    // Verifies: EVS-DEV-security-findings/U
+    test('a received record is an object or its base64 encoding; '
+        'own_event_ingested also admits null', () {
+      const encoded = 'eyJhIjoxfQ==';
+      for (final kindWire in <String>['identity_mismatch', 'event_malformed']) {
+        final kind = FindingKind.fromWire(kindWire);
+        final valid = _validEvidence[kindWire]!;
+        checkFindingEvidence(kind, <String, Object?>{
+          ...valid,
+          'record': encoded,
+        });
+        for (final bad in <Object?>[
+          null,
+          1,
+          true,
+          <Object?>['x'],
+        ]) {
+          expect(
+            () => checkFindingEvidence(kind, <String, Object?>{
+              ...valid,
+              'record': bad,
+            }),
+            throwsArgumentError,
+            reason: '$kindWire.record = $bad',
+          );
+        }
+      }
+      const ownKind = FindingKind.ownEventIngested;
+      final ownValid = _validEvidence['own_event_ingested']!;
+      checkFindingEvidence(ownKind, <String, Object?>{
+        ...ownValid,
+        'record': encoded,
+      });
+      checkFindingEvidence(ownKind, <String, Object?>{
+        ...ownValid,
+        'record': _record,
+      });
+      checkFindingEvidence(ownKind, <String, Object?>{
+        ...ownValid,
+        'record': null,
+      });
+      for (final bad in <Object?>[
+        1,
+        true,
+        <Object?>['x'],
+      ]) {
+        expect(
+          () => checkFindingEvidence(ownKind, <String, Object?>{
+            ...ownValid,
+            'record': bad,
+          }),
+          throwsArgumentError,
+          reason: 'own_event_ingested.record = $bad',
+        );
       }
     });
 

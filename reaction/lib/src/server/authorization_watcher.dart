@@ -28,6 +28,11 @@
 //   subscription for the core (role_permission_grant, user_role_scope)
 //   event types, plus one per opted-in containment projection; per-
 //   connection state lives in WsConnectionRegistry.
+// Implements: EVS-DEV-authz-watcher/G
+// on permission_revoked,
+//   a connected user whose held role cannot be determined (a
+//   converging view, or any other lookup failure) is force-logged-out
+//   along with every confirmed holder of the revoked role.
 
 import 'dart:async';
 import 'dart:convert';
@@ -180,11 +185,13 @@ class AuthorizationWatcher {
     }
   }
 
-  // Implements: EVS-DEV-converging-view-reads/H
-  // (the watcher's own force-logout decision fails closed, per user, on
-  // the policy's typed transient refusal or on any other error reading
-  // its role, rather than aborting the fan-out or treating the user as
-  // unaffected)
+  // Implements: EVS-DEV-authz-watcher/G
+  // on a permission_revoked
+  //   event, a connected user whose role the watcher cannot determine
+  //   (the policy's typed transient refusal, or any other error
+  //   reading their role) is force-logged-out along with every
+  //   confirmed holder of the revoked role, rather than the fan-out
+  //   aborting or treating that user as unaffected.
   Future<void> _forceLogoutAllWithRole(String role) async {
     for (final uid in connectionRegistry.connectedUserIds.toList()) {
       // Synthetic principal to query the policy (activeRole is not

@@ -65,6 +65,7 @@ Future<FifoEntry> enqueueSingle(
   Map<String, Object?>? wirePayload,
   String wireFormat = 'json-v1',
   String? transformVersion = 'json-v1',
+  int? resendsDeliveryNumber,
 }) => backend.transaction(
   (txn) => backend.enqueueFifoTxn(
     txn,
@@ -75,6 +76,7 @@ Future<FifoEntry> enqueueSingle(
       contentType: wireFormat,
       transformVersion: transformVersion,
     ),
+    resendsDeliveryNumber: resendsDeliveryNumber,
   ),
 );
 

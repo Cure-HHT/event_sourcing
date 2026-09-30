@@ -61,6 +61,7 @@ const Map<int, Map<String, List<String>>> _enumeratedValuesByDataFormatMajor =
           'channel_unexplained',
           'delivery_hash_mismatch',
           'event_malformed',
+          'fold_failed',
           'foreign_event',
           'fork_unrecorded',
           'hash_mismatch',

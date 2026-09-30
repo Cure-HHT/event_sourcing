@@ -1,9 +1,9 @@
-// Implements: EVS-DEV-converging-view-reads/H
+// Implements: EVS-PRD-cross-process-event-transport/K
 // Decodes the 503 view_converging response body that action_route.dart
 // and permission_route.dart send for a ViewConvergingRefusal, so every
-// HTTP client of those routes recovers the same typed, transient
-// refusal rather than treating the status code as an opaque transport
-// failure.
+// HTTP client of those routes delivers the same typed, transient
+// condition naming the view rather than treating the status code as
+// an opaque transport failure.
 
 import 'dart:convert';
 

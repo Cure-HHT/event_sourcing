@@ -10,22 +10,21 @@
 //   permissionSource consumers; the composition guarantees a single
 //   source of truth.
 // Implements: EVS-PRD-action-submitter/E
-// composition mirrors the Local
-//   side so source-identical consumer code works against either.
+// composition mirrors the Local side so source-identical consumer code
+//   works against either.
 // Implements: EVS-PRD-view-subscriber/D
-// same.
+// composition mirrors the Local side so source-identical consumer code
+//   works against either, same as EVS-PRD-action-submitter/E.
 // Implements: EVS-PRD-permission-source/D
-// Principal is sourced from the
-//   co-mounted AuthSession (no direct setPrincipal on PermissionSource).
+// Principal is sourced from the co-mounted AuthSession (no direct
+//   setPrincipal on PermissionSource).
 // Implements: EVS-PRD-reaction-scope/A
-// RemoteScope satisfies the
-//   ReactionScope interface (four interface getters + connectionStatus
-//   + connectionStatusStream + dispose).
+// RemoteScope satisfies the ReactionScope interface (four interface
+//   getters + connectionStatus + connectionStatusStream + dispose).
 // Implements: EVS-PRD-reaction-scope/D
-// drives ConnectionStatus
-//   transitions from the underlying RemoteConnection's WS lifecycle by
-//   wiring its onConnectionStatusChanged callback into a broadcast
-//   StreamController.
+// drives ConnectionStatus transitions from the underlying
+//   RemoteConnection's WS lifecycle by wiring its
+//   onConnectionStatusChanged callback into a broadcast StreamController.
 // Implements: EVS-PRD-reaction-scope/E
 // post-dispose, the four
 //   interface getters and the connection-status getters throw
@@ -54,6 +53,7 @@ class RemoteScope implements ReactionScope {
     http.Client? httpClient,
     WebSocketChannel Function(Uri)? wsFactory,
     ExponentialBackoff? reconnectBackoff,
+    this.actionSubmitterMaxConvergingRetries = 0,
   }) : _connection = RemoteConnection(
          baseUrl: baseUrl,
          httpClient: httpClient ?? http.Client(),
@@ -77,6 +77,7 @@ class RemoteScope implements ReactionScope {
     _submitter = RemoteActionSubmitter(
       connection: _connection,
       authSession: _auth,
+      maxConvergingRetries: actionSubmitterMaxConvergingRetries,
     );
     _views = RemoteViewSource(connection: _connection);
     _perms = RemotePermissionSource(
@@ -90,15 +91,15 @@ class RemoteScope implements ReactionScope {
     // without it, the client would only learn about its widened
     // permissions on the next Authenticated transition.
     //
-    // Implements: EVS-DEV-converging-view-reads/H
+    // Implements: EVS-PRD-cross-process-event-transport/L
     // this trigger is fire-and-forget with nothing awaiting it. `refresh()`
-    //   already schedules its own bounded-backoff retry on a 503
-    //   view_converging response (RemotePermissionSource's retry seam),
-    //   so the catchError here exists only to keep that refusal from
-    //   becoming an unhandled async error, not to provide the retry
-    //   itself — there is no other retry path: the view's own next
-    //   catch-up retries nothing here, since RemotePermissionSource is
-    //   not itself a subscribed view.
+    //   already schedules its own capped-backoff, unbounded-attempt
+    //   retry on a 503 view_converging response (RemotePermissionSource's
+    //   retry seam), so the catchError here exists only to keep that
+    //   refusal from becoming an unhandled async error, not to provide
+    //   the retry itself — there is no other retry path: the view's own
+    //   next catch-up retries nothing here, since RemotePermissionSource
+    //   is not itself a subscribed view.
     _connection.onStaleData = (_) => unawaited(
       _perms.refresh().catchError(
         (Object _) {},
@@ -112,6 +113,13 @@ class RemoteScope implements ReactionScope {
     // changes.
     _connection.onConnectionStatusChanged = _statusController.add;
   }
+
+  /// The bound on automatic retries of a `view_converging` refusal on
+  /// an action submission, forwarded to the `RemoteActionSubmitter`
+  /// this scope builds. `0` (the default) opts out: the submitter
+  /// delivers the typed refusal to the caller immediately, with no
+  /// retry, per `EVS-PRD-cross-process-event-transport/K`.
+  final int actionSubmitterMaxConvergingRetries;
 
   final RemoteConnection _connection;
   late final RemoteAuthSession _auth;
@@ -197,6 +205,7 @@ class RemoteScope implements ReactionScope {
     // being silently dropped. Closing the controller AFTER the
     // connection has fully drained is safe.
     await _perms.dispose();
+    await _submitter.dispose();
     await _auth.dispose();
     await _connection.dispose();
     await _statusController.close();

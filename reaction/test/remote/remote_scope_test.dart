@@ -86,6 +86,28 @@ void main() {
     await expectLater(scope.dispose(), completes);
   });
 
+  test('actionSubmitterMaxConvergingRetries reaches the RemoteActionSubmitter '
+      'it builds (default off)', () async {
+    final defaultScope = RemoteScope(baseUrl: Uri.parse('http://localhost:0'));
+    expect(
+      (defaultScope.actionSubmitter as RemoteActionSubmitter)
+          .maxConvergingRetries,
+      0,
+    );
+    await defaultScope.dispose();
+
+    final optedInScope = RemoteScope(
+      baseUrl: Uri.parse('http://localhost:0'),
+      actionSubmitterMaxConvergingRetries: 3,
+    );
+    expect(
+      (optedInScope.actionSubmitter as RemoteActionSubmitter)
+          .maxConvergingRetries,
+      3,
+    );
+    await optedInScope.dispose();
+  });
+
   group('RemoteScope as ReactionScope', () {
     test('implements ReactionScope interface', () async {
       final scope = RemoteScope(baseUrl: Uri.parse('http://test.local'));
@@ -157,7 +179,7 @@ void main() {
     );
 
     test(
-      // Verifies: EVS-DEV-converging-view-reads/H
+      // Verifies: EVS-PRD-cross-process-event-transport/L
       'stale_data refresh retries a 503 view_converging '
       'without another stale_data envelope',
       () async {

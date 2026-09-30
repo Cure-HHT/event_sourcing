@@ -54,6 +54,7 @@ const Map<String, String> _immutableColumns = <String, String>{
   'enqueued_at': "enqueued_at = enqueued_at + interval '1 day'",
   'transform_failed': 'transform_failed = true',
   'transform_failures': 'transform_failures = 5',
+  'resends_delivery_number': 'resends_delivery_number = 100',
 };
 
 /// A recorded attempt, as the drainer writes one.

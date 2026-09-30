@@ -328,6 +328,8 @@ W. The receiver SHALL refuse with refusal `delivery_hash_mismatch` a batch whose
 
 X. The receiver SHALL accept a delivery whatever names its `attributes` object holds, keeping that object as the delivery carried it in the delivery hash it recomputes, in its `ingest.delivery_accepted` audit and in the deliveries its pull serves.
 
+Y. The `attributes` an `ingest.delivery_accepted` audit carries SHALL be the delivery's attributes object when every string of it, keys included, is free of the character U+0000, and otherwise the base64 (RFC 4648 section 4, with padding) of the UTF-8 bytes of that object's canonical JSON (RFC 8785).
+
 ### Rationale
 
 **Why these checks (assertions A to D and W)?** A batch that does not decode or cover its events cannot be tied to a delivery of the channel, so it is a `rejected` refusal. A batch whose delivery hash does not recompute was changed on the way or computed wrongly; the receiver records the finding and refuses it as transient, so the sender sends it again and a copy damaged in transit is replaced by a sound one, the finding recorded once however often the same batch arrives. The channel check runs inside the ingest transaction, so racing deliveries of one channel serialize; a re-presentation of the last accepted delivery is a retry and is acknowledged; the out-of-sequence refusal returns the record the sender realigns to.
@@ -342,10 +344,14 @@ X. The receiver SHALL accept a delivery whatever names its `attributes` object h
 
 **Why keep attributes it does not know (assertion X)?** A later release of the same data-format major adds per-delivery facts as attributes. A receiver that dropped or refused one would break the delivery hash, or the sender's delivery, for a fact it does not need to interpret; keeping the object as carried lets it store and serve that fact until a release that reads it.
 
+**Why encode attributes carrying U+0000 (assertion Y)?** Attributes are the sender's, kept whatever names they hold, and an audit is an event: every string an event holds is free of U+0000 (`EVS-DEV-event-record`), because the Postgres backend cannot store it. Keeping the attributes encoded when they carry it keeps the audit storable on every backend and the delivery admitted, with the attributes still recoverable exactly; a reader tells the two forms apart by type, an object or a string.
+
 **Why a declared audit type (assertion S)?** The public append operations refuse it and ingest checks its shape (`EVS-DEV-destination-drain/L`).
 
 ### Changelog
 
+- 2026-09-30 | d37b43bb | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-09-30 | - | - | Michael Lewis (<michael@anspar.org>) | Add Y: the attributes an ingest.delivery_accepted audit carries are the delivery's attributes object, or, when a string of it carries U+0000, the base64 of the UTF-8 bytes of its canonical JSON. No code or test cites Y yet
 - 2026-09-26 | 21c20c41 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-26 | - | - | Michael Lewis (<michael@anspar.org>) | P: the pull answers that it cannot serve a delivery above its record. No code or test references P
 - 2026-09-25 | cec0f804 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
@@ -361,7 +367,7 @@ X. The receiver SHALL accept a delivery whatever names its `attributes` object h
 - 2026-09-25 | 84eed41c | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-25 | - | - | Michael Lewis (<michael@anspar.org>) | Add A-S: the receiver's side of a delivery channel, split from EVS-DEV-delivery-channel into single-obligation assertions: the envelope checks, the channel check in the ingest transaction, the accepted-delivery audit and per-event stamp, the log-derived record, its working copy and the chain check, the response bodies, authentication by sender identity, the log-derived pull, and a channel listing that covers the sender's succession lineage; remove the refusal audit and the default delivery-channels view
 
-*End* *Delivery channel receiver mechanics* | **Hash**: 21c20c41
+*End* *Delivery channel receiver mechanics* | **Hash**: d37b43bb
 
 ## EVS-DEV-delivery-resume: Channel resume and new generation
 

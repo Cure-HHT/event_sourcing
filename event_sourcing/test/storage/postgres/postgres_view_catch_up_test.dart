@@ -23,6 +23,7 @@
 library;
 
 import 'dart:async';
+import 'dart:math' show Random;
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
@@ -325,7 +326,215 @@ void main() {
       },
     );
   });
+
+  // Verifies: EVS-DEV-view-convergence/Z
+  // Verifies: EVS-DEV-security-findings/F
+  // Verifies: EVS-DEV-security-findings/S
+  // Verifies: EVS-PRD-materializer/I
+  test('a converging copy that cannot key one event records one fold_failed '
+      'finding, passes over it, and becomes current', () async {
+    if (db == null) return;
+    const keyedView = 'view_catch_up_keyed_notes';
+    const keyedSpec = TableProjectionSpec(
+      viewName: keyedView,
+      interest: SubscriptionFilter(entryTypes: <String>{_kType}),
+      insertEventTypes: <String>{'finalized'},
+      removeEventTypes: <String>{'removed'},
+      rowKey: CompositeKey(<String>['data.k']),
+      rowData: WholePayload(),
+    );
+
+    Future<StoredEvent?> appendKeyed(
+      EventStore store,
+      String aggregateId, {
+      required bool keyed,
+    }) => store.runTransaction(
+      (txn, collector) => store.appendInTxn(
+        txn,
+        entryType: _kType,
+        aggregateId: aggregateId,
+        aggregateType: 'note',
+        eventType: 'finalized',
+        data: keyed
+            ? <String, Object?>{'k': aggregateId}
+            : <String, Object?>{'title': aggregateId},
+        initiator: const UserInitiator('view-catch-up-user'),
+        flowToken: null,
+        metadata: null,
+        security: null,
+        checkpointReason: null,
+        changeReason: null,
+        dedupeByContent: false,
+        collector: collector,
+      ),
+    );
+
+    final seeder = await _openStore(await open(), projections: const []);
+    StoredEvent? unkeyable;
+    StoredEvent? last;
+    for (var i = 0; i < 4; i++) {
+      last = await appendKeyed(seeder, 'agg-$i', keyed: i != 2);
+      if (i == 2) unkeyable = last;
+    }
+    await seeder.close();
+
+    final backend = await open();
+    final store = await _openStore(backend, projections: const [keyedSpec]);
+    final copyId = store.copyIdOf(keyedView);
+
+    for (var i = 0; i < 500; i++) {
+      final copy = await _copyOf(backend, keyedView);
+      if (copy.watermark >= last!.sequenceNumber) break;
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+    }
+    final copy = await _copyOf(backend, keyedView);
+    expect(copy.watermark, greaterThanOrEqualTo(last!.sequenceNumber));
+
+    final findings = await store.reader.findAllEvents(
+      entryType: kSecurityFindingEntryType,
+    );
+    expect(findings, hasLength(1));
+    final data = findings.single.data;
+    expect(data['kind'], 'fold_failed');
+    final evidence = data['evidence']! as Map<String, Object?>;
+    expect(evidence['view'], keyedView);
+    expect(evidence['event_id'], unkeyable!.eventId);
+    expect(evidence['reason'], 'row_key_failed');
+
+    final rows = (await store.reader.findViewRows(keyedView)).rows;
+    final keys = rows.map((r) => r['aggregateId']).toSet();
+    expect(keys, containsAll(<String>['agg-0', 'agg-1', 'agg-3']));
+    expect(keys, isNot(contains('agg-2')));
+
+    final progress = await store.reader.viewProgress();
+    expect(
+      progress.singleWhere((p) => p.viewName == keyedView).state,
+      ViewConvergenceState.current,
+    );
+    expect(store.catchUpProgressOf(copyId)?.lastFailure, isNull);
+
+    await store.close();
+  });
+
+  // Verifies: EVS-DEV-view-convergence/Z (RowWriteRejected classified as
+  //   a fold failure in catch-up, not a storage failure)
+  // Verifies: EVS-DEV-view-convergence/E
+  // Verifies: EVS-DEV-view-convergence/Q (no back-off recorded for it)
+  // Verifies: EVS-DEV-view-convergence/Z
+  // Verifies: EVS-DEV-security-findings/S
+  // Verifies: EVS-PRD-materializer/I
+  test('a converging copy whose row write the server rejects (SQLSTATE '
+      '54000, index row too large) inside catch-up records one fold_failed '
+      'finding of reason row_write_failed, passes over the event and '
+      'becomes current', () async {
+    if (db == null) return;
+    const bigKeyView = 'view_catch_up_big_key_notes';
+    const bigKeySpec = TableProjectionSpec(
+      viewName: bigKeyView,
+      interest: SubscriptionFilter(entryTypes: <String>{_kType}),
+      insertEventTypes: <String>{'finalized'},
+      removeEventTypes: <String>{'removed'},
+      rowKey: CompositeKey(<String>['data.k']),
+      rowData: WholePayload(),
+    );
+
+    Future<StoredEvent?> appendKeyed(
+      EventStore store,
+      String aggregateId, {
+      required String key,
+    }) => store.runTransaction(
+      (txn, collector) => store.appendInTxn(
+        txn,
+        entryType: _kType,
+        aggregateId: aggregateId,
+        aggregateType: 'note',
+        eventType: 'finalized',
+        data: <String, Object?>{'k': key},
+        initiator: const UserInitiator('view-catch-up-user'),
+        flowToken: null,
+        metadata: null,
+        security: null,
+        checkpointReason: null,
+        changeReason: null,
+        dedupeByContent: false,
+        collector: collector,
+      ),
+    );
+
+    final seeder = await _openStore(await open(), projections: const []);
+    StoredEvent? huge;
+    StoredEvent? last;
+    for (var i = 0; i < 4; i++) {
+      last = await appendKeyed(
+        seeder,
+        'agg-$i',
+        key: i == 2 ? _incompressibleKey(4000) : 'k-$i',
+      );
+      if (i == 2) huge = last;
+    }
+    await seeder.close();
+
+    final backend = await open();
+    final store = await _openStore(backend, projections: const [bigKeySpec]);
+    final copyId = store.copyIdOf(bigKeyView);
+
+    for (var i = 0; i < 500; i++) {
+      final copy = await _copyOf(backend, bigKeyView);
+      if (copy.watermark >= last!.sequenceNumber) break;
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+    }
+    final copy = await _copyOf(backend, bigKeyView);
+    expect(copy.watermark, greaterThanOrEqualTo(last!.sequenceNumber));
+
+    final findings = await store.reader.findAllEvents(
+      entryType: kSecurityFindingEntryType,
+    );
+    expect(findings, hasLength(1));
+    final data = findings.single.data;
+    expect(data['kind'], 'fold_failed');
+    final evidence = data['evidence']! as Map<String, Object?>;
+    expect(evidence['view'], bigKeyView);
+    expect(evidence['event_id'], huge!.eventId);
+    expect(evidence['reason'], 'row_write_failed');
+
+    final rows = (await store.reader.findViewRows(bigKeyView)).rows;
+    final keys = rows.map((r) => r['k']).toSet();
+    expect(keys, containsAll(<String>['k-0', 'k-1', 'k-3']));
+
+    final progress = await store.reader.viewProgress();
+    expect(
+      progress.singleWhere((p) => p.viewName == bigKeyView).state,
+      ViewConvergenceState.current,
+      reason: 'a copy that passes over a failed fold stays current',
+    );
+    // Verifies: EVS-DEV-view-convergence/Q
+    // a fold failure is excluded from the logged back-off: the copy's last
+    //   recorded failure is left null throughout.
+    expect(
+      store.catchUpProgressOf(copyId)?.lastFailure,
+      isNull,
+      reason: "a fold failure is not logged as the copy's last failure",
+    );
+
+    await store.close();
+  });
 }
 
 void _throwInjected(String copyId, String eventId) =>
     throw const InjectedFailure('paused for this test');
+
+/// A deterministic pseudo-random string of [length] characters, spread over
+/// a 62-symbol alphabet: too irregular for the server's storage compression
+/// to shrink it back under the btree index's row-size limit, unlike a
+/// repeated character (which compresses to almost nothing).
+String _incompressibleKey(int length) {
+  final random = Random(1234567);
+  const alphabet =
+      'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  return String.fromCharCodes(
+    List<int>.generate(
+      length,
+      (_) => alphabet.codeUnitAt(random.nextInt(alphabet.length)),
+    ),
+  );
+}

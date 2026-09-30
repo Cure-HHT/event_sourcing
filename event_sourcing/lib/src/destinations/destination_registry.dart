@@ -1484,6 +1484,10 @@ class DestinationRegistry {
               triggeringEventId: halt!.event.eventId,
             )
           : _drainInitiator,
+      // Implements: EVS-DEV-view-convergence/E
+      // the wedge event is a record the drainer appends in the drain's
+      //   own transaction, an always-stored event.
+      mode: ApplyEventMode.alwaysStored,
     );
     await _backend.writeWedgeRecordTxn(
       txn,
@@ -1541,6 +1545,11 @@ class DestinationRegistry {
   // Implements: EVS-DEV-destination-drain/K
   // every destination audit event the library appends carries the identity
   //   of the database that appends it.
+  // [mode] decides whether this audit's own fold failures are passed over
+  // and recorded (a record the drainer appends in the drain's own
+  // transaction) or fail the append to its caller (a public operation an
+  // app or operator calls directly, outside a drain transaction), per
+  // `EVS-DEV-view-convergence` Terms, "always-stored event".
   Future<StoredEvent> _emitDestinationAuditInTxn(
     Transaction txn,
     PublishCollector collector, {
@@ -1548,6 +1557,7 @@ class DestinationRegistry {
     required String eventType,
     required Map<String, Object?> data,
     required Initiator initiator,
+    ApplyEventMode mode = ApplyEventMode.local,
   }) async {
     final event = await _eventStore._appendReservedInTxn(
       txn,
@@ -1558,6 +1568,7 @@ class DestinationRegistry {
       eventType: eventType,
       data: <String, Object?>{...data, 'database_id': _eventStore.databaseId},
       initiator: initiator,
+      mode: mode,
     );
     // dedupeByContent is off, so the append always stores an event.
     return event!;

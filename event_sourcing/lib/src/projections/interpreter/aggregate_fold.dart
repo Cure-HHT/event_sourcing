@@ -10,7 +10,11 @@
 //   same initial state yields byte-identical results (Merge.applyDeepDelta
 //   is deterministic; metadata stamps are taken from event fields, not wall
 //   clock).
+// A derived field's computation is one of the four computation sites the
+//   fold wraps as a FoldFailure (`EVS-DEV-view-convergence` Terms); it
+//   runs before the row write.
 import 'package:event_sourcing/src/projections/integrity_marks.dart';
+import 'package:event_sourcing/src/projections/interpreter/fold_failure.dart';
 import 'package:event_sourcing/src/projections/primitives/merge.dart';
 import 'package:event_sourcing/src/projections/projection_spec.dart';
 import 'package:event_sourcing/src/storage/storage_backend.dart';
@@ -106,9 +110,12 @@ class AggregateFold {
     next['sequence'] = event.sequenceNumber;
 
     for (final df in spec.derivedFields) {
-      next[df.fieldName] = df.computation.resolve(
-        rowState: next,
-        firstEventTimestamp: firstEventTimestamp,
+      next[df.fieldName] = guardFold(
+        FoldFailureReason.derivedFieldFailed,
+        () => df.computation.resolve(
+          rowState: next,
+          firstEventTimestamp: firstEventTimestamp,
+        ),
       );
     }
     // Implements: EVS-PRD-materializer/F

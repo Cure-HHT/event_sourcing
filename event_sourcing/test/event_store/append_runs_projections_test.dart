@@ -83,9 +83,10 @@ void main() {
   });
 
   // Verifies: EVS-PRD-ingest/G
-  // (contrast) a local append's fold failure is not the ingest case: it
-  //   still fails synchronously to its caller, the local-append behavior
-  //   ApplyEventMode.ingest is never applied to.
+  // (contrast) a local append's fold failure is not the always-stored
+  //   case: it still fails synchronously to its caller, with nothing
+  //   stored, the behavior ApplyEventMode.alwaysStored is never applied
+  //   to.
   test('a local append whose fold cannot key the event still throws to its '
       'caller', () async {
     final backend = await _backend();

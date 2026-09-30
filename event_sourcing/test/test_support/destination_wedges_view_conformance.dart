@@ -1144,12 +1144,16 @@ void runDestinationWedgesViewScenarios(
       for (final missing in <String>['id', 'database_id']) {
         // Verifies: EVS-DEV-destination-drain/L
         // Verifies: EVS-DEV-view-convergence/V
+        // Verifies: EVS-DEV-view-convergence/Z
+        // Verifies: EVS-DEV-security-findings/S
+        // Verifies: EVS-PRD-materializer/I
         // a rebuild of the default view over a log into which a wedge event
         //   missing its destination identifier, or its database identity,
-        //   was written outside the library never converges: the fold
-        //   step refuses the malformed event on every catch-up attempt, so
-        //   `rebuildView`'s deadline passes and the typed timeout names
-        //   the view and the copy's last failure.
+        //   was written outside the library converges anyway: the row key
+        //   this table view derives from those two fields cannot be
+        //   extracted from the malformed event, so the copy's catch-up
+        //   records one fold_failed finding about it, passes over it and
+        //   reaches the tip.
         test('rebuild over a wedge event missing data.$missing', () async {
           if (!available) return;
           await r.wedge(FakeDestination(id: 'ok'));
@@ -1174,51 +1178,41 @@ void runDestinationWedgesViewScenarios(
             return event;
           });
           final deadline = DateTime.now().toUtc().add(
-            const Duration(milliseconds: 500),
+            const Duration(seconds: 5),
           );
-          await expectLater(
-            rebuildView(
-              store: r.store,
-              viewName: defaultDestinationWedgesSpec.viewName,
-              deadline: deadline,
-            ),
-            throwsA(
-              isA<ViewConvergenceTimeout>().having(
-                (e) => e.converging.map((s) => s.viewName),
-                'converging view names',
-                contains(defaultDestinationWedgesSpec.viewName),
-              ),
-            ),
+          await rebuildView(
+            store: r.store,
+            viewName: defaultDestinationWedgesSpec.viewName,
+            deadline: deadline,
           );
-          // The malformed event lies past the replacement copy's
-          // watermark, matches the table view's interest and can never be
-          // folded, so the copy stays converging forever, and the
-          // convergence-aware reader reports no row (EVS-DEV-converging-
-          // view-reads/B: a table view has no settled row while it
-          // converges).
-          expect(await wedgesViewRows(r.store), isEmpty);
-          // The driver may key its first attempt's failure by the
-          // fingerprint rather than the copy id when its discovery pass
-          // raced this call's create, so poll until the failure lands
-          // under the instance's current copy id, which every later
-          // attempt uses.
-          ViewCopyStatus? progress;
-          for (var i = 0; i < 200; i++) {
-            progress = (await r.store.reader.viewProgress()).singleWhere(
-              (s) => s.viewName == defaultDestinationWedgesSpec.viewName,
-            );
-            if (progress.lastFailure != null) break;
-            await Future<void>.delayed(const Duration(milliseconds: 20));
-          }
-          expect(progress!.state, ViewConvergenceState.converging);
+          // The malformed event cannot be keyed, so the copy passes over
+          // it, contributing no row of its own (EVS-PRD-materializer/I),
+          // while the earlier "ok" wedge -- keyable, folded before it --
+          // still shows in the now-current view.
+          final rows = await wedgesViewRows(r.store);
+          expect(rows, hasLength(1));
+          expect(rows.values.single['id'], 'ok');
+          final progress = (await r.store.reader.viewProgress()).singleWhere(
+            (s) => s.viewName == defaultDestinationWedgesSpec.viewName,
+          );
+          expect(progress.state, ViewConvergenceState.current);
           expect(
             progress.lastFailure,
-            isA<StateError>().having(
-              (e) => e.message,
-              'message',
-              contains(written.eventId),
-            ),
+            isNull,
+            reason: 'a fold failure never records a copy failure (Q)',
           );
+          final findings = await r.store.reader.findAllEvents(
+            entryType: kSecurityFindingEntryType,
+          );
+          final ownFinding = findings.singleWhere(
+            (f) =>
+                (f.data['evidence']! as Map<String, Object?>)['event_id'] ==
+                written.eventId,
+          );
+          expect(ownFinding.data['kind'], 'fold_failed');
+          final evidence = ownFinding.data['evidence']! as Map<String, Object?>;
+          expect(evidence['view'], defaultDestinationWedgesSpec.viewName);
+          expect(evidence['reason'], 'row_key_failed');
         });
       }
     });

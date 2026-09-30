@@ -8,7 +8,7 @@
 // Verifies: EVS-PRD-cross-process-event-transport/D
 // SubscribeMsg
 //   carries the client-chosen subscriptionId.
-// Verifies: EVS-DEV-converging-view-reads/H
+// Verifies: EVS-PRD-cross-process-event-transport/K
 // ErrorMsg's view_converging code round-trips and carries the
 //   converging view's name.
 
@@ -84,7 +84,7 @@ void main() {
   });
 
   test('round-trips ErrorMsg with view_converging code naming the view', () {
-    // Verifies: EVS-DEV-converging-view-reads/H
+    // Verifies: EVS-PRD-cross-process-event-transport/K
     const original = ErrorMsg(
       code: WireErrorCode.viewConverging,
       message: 'participant_site_index',
@@ -99,7 +99,7 @@ void main() {
   });
 
   test('round-trips ErrorMsg carrying a subscriptionId', () {
-    // Verifies: EVS-DEV-converging-view-reads/H
+    // Verifies: EVS-PRD-cross-process-event-transport/K
     // A subscription-scoped refusal (e.g. view_converging during
     // _handleSubscribe) names the subscriptionId it refuses so the
     // client can route it to that subscription's stream instead of

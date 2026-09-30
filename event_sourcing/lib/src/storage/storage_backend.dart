@@ -189,6 +189,33 @@ abstract class StorageBackend {
   @internal
   Future<AppendResult> appendEvent(Transaction txn, StoredEvent event);
 
+  /// Runs [body] as an inner unit of work nested inside [txn], isolating a
+  /// server-side error [body] raises from the rest of [txn].
+  ///
+  /// On Postgres this issues `SAVEPOINT` on the transaction's session
+  /// before running [body]; on [body]'s normal return it issues `RELEASE
+  /// SAVEPOINT`, and on any throw it issues `ROLLBACK TO SAVEPOINT` before
+  /// rethrowing the original error unchanged, so a server-side error inside
+  /// [body] (a constraint violation, for example) leaves [txn] usable for
+  /// further reads and writes rather than aborting it. On Sembast, which
+  /// runs one transaction with no partial-rollback primitive, [body] simply
+  /// runs as given: the fold-failure ordering that always precedes a call
+  /// here (compute before write) means [body] never writes ahead of a
+  /// failure it then throws on that backend.
+  ///
+  /// A value [body] returns commits with the rest of [txn]. A throw from
+  /// [body] propagates to the caller, wrapped as [RowWriteRejected] when a
+  /// backend recognizes the error as a rejection of a row write's value
+  /// (`EVS-DEV-view-convergence` Terms): on Postgres, a `ServerException`
+  /// whose SQLSTATE is class 22, 23 or 54. Every other backend, and every
+  /// other error, is rethrown as [body] raised it.
+  // Implements: EVS-DEV-view-convergence/E
+  // on Postgres, an always-stored event's fold into a copy runs in a
+  //   savepoint, so a fold failure's server-side error does not abort the
+  //   storing transaction.
+  @internal
+  Future<T> runInSavepointInTxn<T>(Transaction txn, Future<T> Function() body);
+
   /// Events for one aggregate, sorted by `sequence_number` ascending.
   // Implements: EVS-PRD-event-log/C
   // per-aggregate-per-authority order.
@@ -575,6 +602,11 @@ abstract class StorageBackend {
   /// with a non-null [wirePayload] or [nativeEnvelope], a null
   /// [wireFormat], or a [transformFailures] below one, with
   /// `ArgumentError`.
+  /// [resendsDeliveryNumber], when given, marks the enqueued row as a
+  /// resend item for a receiver-behind resume
+  /// (`EVS-DEV-delivery-resume/M`): the delivery number it resends, held
+  /// immutable thereafter. Null (the default) for an ordinary item the
+  /// fill enqueues.
   @internal
   Future<FifoEntry> enqueueFifoTxn(
     Transaction txn,
@@ -586,6 +618,7 @@ abstract class StorageBackend {
     int? transformFailures,
     String? wireFormat,
     String? transformVersion,
+    int? resendsDeliveryNumber,
   });
 
   /// Return the head row of [destinationId]'s FIFO — the first row in
@@ -1592,4 +1625,29 @@ abstract class StorageBackend {
   /// connection). Not safe to call concurrently with an in-flight transaction.
   /// Callers MUST await all outstanding operations before calling close.
   Future<void> close();
+}
+
+/// Thrown from [StorageBackend.runInSavepointInTxn]'s body, in place of the
+/// original error, by a backend that classifies it as a rejection of a row
+/// write's value rather than a storage failure (`EVS-DEV-view-convergence`
+/// Terms: on Postgres, a `ServerException` whose SQLSTATE is class 22, 23
+/// or 54). [cause] and [causeStackTrace] preserve the original error and
+/// its stack trace for a catcher that logs or reports it; the fold_failed
+/// finding the interpreter records carries only the failure reason
+/// (`EVS-DEV-security-findings/R`), not the cause. No backend throws this
+/// outside a savepoint's body: a `runInSavepointInTxn` caller is the only
+/// intended catcher.
+@internal
+class RowWriteRejected implements Exception {
+  @internal
+  const RowWriteRejected(this.cause, this.causeStackTrace);
+
+  /// The original error the backend classified.
+  final Object cause;
+
+  /// [cause]'s stack trace.
+  final StackTrace causeStackTrace;
+
+  @override
+  String toString() => 'RowWriteRejected: $cause';
 }

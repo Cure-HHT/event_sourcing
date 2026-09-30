@@ -88,6 +88,21 @@ created by an earlier release is dropped and provisioned again with
 - The default destination-wedges view folds no event whose originating
   database is the holding database and that the holding database does not
   hold as authored.
+- A copy of a view whose fold of an always-stored event fails (a promoter,
+  a row key, row data or a derived field of that copy's definition)
+  records a `fold_failed` finding under the new detector role `fold`
+  (evidence `view`, `definition_fingerprint`, `event_id`, `sealed_hash`
+  and `reason`, one of `promoter_failed`, `row_key_failed`,
+  `row_data_failed` or `derived_field_failed`) and passes over the event
+  in that copy, keeping the copy current and serving; a local append whose
+  fold fails still throws to its caller with nothing stored. On Postgres
+  each always-stored event's fold into each copy runs in a savepoint, so
+  the failure rolls back only that fold, not the storing transaction. In
+  catch-up, the failure ends the transaction without writing, the finding
+  is appended in a transaction of its own, and a later catch-up pass
+  passes over the event once the finding is held. No finding is recorded
+  about the failed fold of an event that is itself a `fold_failed`
+  finding. `StorageBackend` gains `runInSavepointInTxn`.
 - The reserved entry-type namespace is every id beginning with `system.`
   plus six fixed ids (`isReservedEntryType`,
   `kReservedFixedEntryTypeIds`): the public appends refuse, and an open
@@ -163,6 +178,12 @@ created by an earlier release is dropped and provisioned again with
   inserted with a delivery, a change to the delivery outside the change
   that marks the item sent, pending to tombstoned for an item carrying no
   attempt, and the deletion of an item carrying attempts.
+- `FifoEntry` gains `resendsDeliveryNumber`, the delivery number a resend
+  item enqueued by a receiver-behind resume resends, held immutable once
+  set. Postgres schema version 8 (minimum 8) adds the queue table's
+  `resends_delivery_number` column and extends `fifo_entries_guard` to
+  hold it immutable; adoption of a receiver record uses it to retire,
+  unsent, exactly the resend items at or below the adopted number.
 
 ### Delivery channel: receiver accept path
 
@@ -225,16 +246,22 @@ created by an earlier release is dropped and provisioned again with
 - The receiver's record returned with every answer decides the outcome: a
   record naming the delivery in flight marks the head sent under its
   generation, number and hash (a lost acknowledgement is recognised when
-  the retry is answered `represented`); a record at the next number naming
-  another delivery the sender attempted is adopted and marks nothing sent;
-  a receiver behind whose missing deliveries are all retained gets them
-  again exactly as first sent, recorded in one
-  `system.destination_channel_resumed` event; a record ahead naming no
-  attempted delivery records a `sender_regressed` finding, and any other
-  record, or an answer from another receiver database, a
-  `channel_unexplained` finding, each starting a new generation of the
-  registration from delivery 1 with the fill rewound to the start of the
-  log.
+  the retry is answered `represented`); a record above the sender's,
+  naming a delivery the sender attempted (sent included) at that number on
+  the current generation, is adopted in one transaction, with no finding
+  and no new generation: the sender's record advances to it, the pending
+  head is marked sent when the record names the delivery the send fence
+  names for it, and every resend item at or below the adopted number is
+  retired unsent; a receiver behind whose missing deliveries are all
+  retained gets them again exactly as first sent, recorded in one
+  `system.destination_channel_resumed` event, each resend item recording
+  the delivery number it resends; a record ahead of the sender's, naming
+  no delivery the sender attempted, at a number where the sender marked no
+  delivery sent on the current generation, records a `sender_regressed`
+  finding, and any other record, or an answer from another receiver
+  database, a `channel_unexplained` finding, each starting a new
+  generation of the registration from delivery 1 with the fill rewound to
+  the start of the log.
 - A `SendOk` from a destination that serializes natively (an acceptance
   carrying no receiver record) wedges the head with cause
   `acknowledgement_invalid`. `NativeDemoDestination` in the example answers
@@ -747,6 +774,16 @@ created by an earlier release is dropped and provisioned again with
     every path that retires a row (`deleteViewRowInTxn`, `clearViewInTxn`,
     `deleteViewCopyRowsInTxn`, `deleteViewCopyRecordInTxn`) retires its
     index entry with it.
+  - `runInSavepointInTxn` is a new abstract member: a copy's fold of an
+    always-stored event runs inside it, so a fold failure rolls back only
+    that fold, not the transaction storing the event. `PostgresBackend`
+    implements it with a SQL savepoint; `SembastBackend` and a third-party
+    backend with no native savepoint run the body directly, since a
+    Sembast transaction has no partial-rollback primitive to isolate.
+  - `enqueueFifoTxn` gains an optional `resendsDeliveryNumber` parameter:
+    a receiver-behind resume's resend item records the delivery number it
+    resends, held immutable thereafter, so an adopted receiver record can
+    retire exactly the resend items at or below it.
 - On Postgres, an ordinary append's and an ingest batch's throughput each
   stay at least half of the data-format-2 build's on the same workload and
   host; a conformance test gated on `PG_TEST_URL` plus an opt-in variable

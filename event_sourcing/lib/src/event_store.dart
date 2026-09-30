@@ -115,6 +115,8 @@ import 'package:event_sourcing/src/lifecycle/version_check.dart';
 import 'package:event_sourcing/src/logging.dart';
 import 'package:event_sourcing/src/permissions/wait_for_current_views.dart';
 import 'package:event_sourcing/src/projections/interpreter/aggregate_fold.dart';
+import 'package:event_sourcing/src/projections/interpreter/fold_failure.dart'
+    show FoldFailureReason, foldFailedFindingEvidence;
 import 'package:event_sourcing/src/projections/interpreter/projection_interpreter.dart';
 import 'package:event_sourcing/src/projections/projection_registry.dart';
 import 'package:event_sourcing/src/projections/projection_spec.dart';
@@ -141,6 +143,7 @@ import 'package:event_sourcing/src/storage/generation.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/postgres/postgres_backend.dart';
 import 'package:event_sourcing/src/storage/queue_records.dart';
+import 'package:event_sourcing/src/storage/record_characters.dart';
 import 'package:event_sourcing/src/storage/send_result.dart';
 import 'package:event_sourcing/src/storage/source.dart';
 import 'package:event_sourcing/src/storage/storage_backend.dart';
@@ -336,15 +339,21 @@ class EventStore {
        _storage = storage,
        _registration = registration,
        _clock = clock,
-       _uuid = uuid ?? const Uuid(),
-       _catchUp = ViewCatchUpDriver(
-         backend: backend,
-         entryTypes: entryTypes,
-         projections: projections ?? ProjectionRegistry(),
-         promoters: promoters ?? PromoterRegistry(),
-         viewCopyIds: viewCopyIds,
-         clock: clock,
-       );
+       _uuid = uuid ?? const Uuid() {
+    // _catchUp's recordFoldFailedFinding callback closes over this
+    // instance's _recordCatchUpFoldFailedFinding, which is only legal once
+    // construction has reached the constructor body.
+    _catchUp = ViewCatchUpDriver(
+      backend: backend,
+      entryTypes: entryTypes,
+      projections: projections ?? ProjectionRegistry(),
+      promoters: promoters ?? PromoterRegistry(),
+      viewCopyIds: viewCopyIds,
+      databaseId: databaseId,
+      recordFoldFailedFinding: _recordCatchUpFoldFailedFinding,
+      clock: clock,
+    );
+  }
 
   /// The storage this store appends to and reads from. It is private to
   /// the event store's Dart library: the library's own writers (the
@@ -365,7 +374,7 @@ class EventStore {
   /// deletes copies marked for deletion, in transactions bounded to run
   /// after this store's construction and before it closes
   /// (EVS-DEV-view-convergence).
-  final ViewCatchUpDriver _catchUp;
+  late final ViewCatchUpDriver _catchUp;
 
   /// The copy id of [viewName]'s current copy for this instance. Throws
   /// [StateError] for a view no registered [ProjectionSpec] names.
@@ -1935,6 +1944,12 @@ class EventStore {
   // Implements: EVS-PRD-storage-barrier/C
   // the reserved append is private to the event store's library; only its
   //   public operations append reserved events.
+  // Implements: EVS-DEV-security-findings/S
+  // [mode] decides whether this reserved append's own fold failures are
+  //   passed over and recorded (a record of an ingest, a restore or the
+  //   drain, and every security finding) or fail the append to its caller
+  //   (a public local operation such as destination_registered, an
+  //   app-requested halt, or the boot).
   Future<StoredEvent?> _appendReservedInTxn(
     Transaction txn,
     PublishCollector collector, {
@@ -1945,6 +1960,7 @@ class EventStore {
     required Map<String, Object?> data,
     required Initiator initiator,
     bool dedupeByContent = false,
+    ApplyEventMode mode = ApplyEventMode.local,
   }) {
     checkReservedAppend(
       entryType: entryType,
@@ -1967,6 +1983,7 @@ class EventStore {
       checkpointReason: null,
       changeReason: null,
       dedupeByContent: dedupeByContent,
+      mode: mode,
     );
   }
 
@@ -2038,6 +2055,24 @@ class EventStore {
     return verdict;
   }
 
+  /// [evidence] with its `record` key, when it holds a record (an
+  /// `identity_mismatch`, `event_malformed` or `own_event_ingested`
+  /// finding), replaced by [findingRecordEvidence]'s encoding; [evidence]
+  /// unchanged otherwise (no `record` key, or one already null).
+  // Implements: EVS-DEV-security-findings/U
+  // a finding's record evidence is the record itself when it is free of
+  //   U+0000, otherwise its base64 encoding.
+  static Map<String, Object?> _withStorableRecord(
+    Map<String, Object?> evidence,
+  ) {
+    final record = evidence['record'];
+    if (record is! Map) return evidence;
+    return <String, Object?>{
+      ...evidence,
+      'record': findingRecordEvidence(Map<String, Object?>.from(record)),
+    };
+  }
+
   /// Record, inside [txn], the security finding of [kind] with [evidence]
   /// that this database detected in [role], naming [aggregates]: append a
   /// `system.security_finding` event, whose aggregate is the finding's
@@ -2068,12 +2103,20 @@ class EventStore {
     required Map<String, Object?> evidence,
     required Iterable<String> aggregates,
   }) async {
-    checkFindingEvidence(kind, evidence);
+    // Implements: EVS-DEV-security-findings/U
+    // every finding's `record` evidence is the received record itself when
+    //   it is free of U+0000, otherwise its base64 encoding, computed once
+    //   here for every kind that carries one (identity_mismatch,
+    //   event_malformed, own_event_ingested), so the finding is itself an
+    //   event free of U+0000 (EVS-DEV-event-record/L) and its identity is
+    //   deterministic across redeliveries of one record.
+    final storableEvidence = _withStorableRecord(evidence);
+    checkFindingEvidence(kind, storableEvidence);
     final findingId = securityFindingId(
       databaseId: databaseId,
       role: role,
       kind: kind,
-      evidence: evidence,
+      evidence: storableEvidence,
     );
     if (await _backend.holdsAuthoredSecurityFindingInTxn(
       txn,
@@ -2092,13 +2135,20 @@ class EventStore {
       data: securityFindingData(
         findingId: findingId,
         kind: kind,
-        evidence: evidence,
+        evidence: storableEvidence,
         aggregates: aggregates,
         databaseId: databaseId,
         role: role,
         libraryVersion: _build().version,
       ),
       initiator: _kSecurityFindingInitiator,
+      // Implements: EVS-DEV-view-convergence/E
+      // every security finding is an always-stored event: a fold failure
+      //   folding the finding event itself passes over and is recorded.
+      // Implements: EVS-DEV-security-findings/T
+      // (for a finding that is itself of kind fold_failed, the interpreter
+      //   collects no failure to record.)
+      mode: ApplyEventMode.alwaysStored,
     );
   }
 
@@ -2141,6 +2191,9 @@ class EventStore {
       // the redaction subject moves into `data.subject_event_id` so callers
       // can query "all redactions of event X" by filtering on entry_type
       // AND data.subject_event_id.
+      // A caller-invoked operation, not an ingest, restore or drain
+      // transaction: stays local (default mode), so a fold failure fails
+      // to clearSecurityContext's caller with nothing stored.
       await _appendReservedInTxn(
         txn,
         collector,
@@ -2192,6 +2245,9 @@ class EventStore {
         await _securityContexts.deleteInTxn(txn, row.eventId);
       }
 
+      // The retention sweep is an operator-invoked operation, its own
+      // transaction, not an ingest, restore or drain transaction: every
+      // append below stays local (default mode).
       if (compactCandidates.isNotEmpty) {
         await _appendReservedInTxn(
           txn,
@@ -2289,6 +2345,24 @@ class EventStore {
         );
       }
     }
+  }
+
+  /// Throws [ArgumentError], naming the top-level field, when some string of
+  /// [record] -- a key included, at any depth -- carries the character
+  /// U+0000: no storage backend the library supports can hold every event
+  /// the library holds unless every one is free of it.
+  // Implements: EVS-DEV-event-record/L+M
+  // an append carrying U+0000 in any string of the record is refused before
+  //   any write, naming the top-level field.
+  static void _refuseUnstorableCharacter(Map<String, Object?> record) {
+    final field = recordFieldWithNulCharacter(record);
+    if (field == null) return;
+    throw ArgumentError.value(
+      field,
+      field,
+      'a string of the event, a key included, carries the character '
+      'U+0000; no storage backend the library supports can hold it',
+    );
   }
 
   /// Transactional companion to [append]: appends inside the transaction
@@ -2390,6 +2464,7 @@ class EventStore {
     required String? changeReason,
     required bool dedupeByContent,
     required PublishCollector collector,
+    ApplyEventMode mode = ApplyEventMode.local,
   }) async {
     if (!collector._open || !identical(collector._transaction, txn)) {
       throw StateError(
@@ -2405,6 +2480,29 @@ class EventStore {
       eventType: eventType,
     );
     _refuseReservedDataKey(data);
+    // Implements: EVS-DEV-event-record/L+M
+    // an append carrying U+0000 in any string of the record, a key
+    //   included, at any depth, is refused before any write (before the
+    //   sequence number and the causal record are reserved), naming the
+    //   top-level field. Checked over the caller's own inputs, shaped as
+    //   their top-level field ends up in the stored record (data and
+    //   checkpoint_reason share the `data` field, metadata and
+    //   change_reason the `metadata` field); the library's own
+    //   sequence_number, causal record, hashes and timestamps are never
+    //   caller-supplied strings.
+    _refuseUnstorableCharacter(<String, Object?>{
+      'aggregate_id': aggregateId,
+      'aggregate_type': aggregateType,
+      'entry_type': entryType,
+      'event_type': eventType,
+      'data': <String, Object?>{...data, 'checkpoint_reason': checkpointReason},
+      'metadata': <String, Object?>{
+        ...?metadata,
+        'change_reason': changeReason,
+      },
+      'initiator': initiator.toJson(),
+      'flow_token': flowToken,
+    });
 
     final def = entryTypes.byId(entryType)!;
     // Implements: EVS-DEV-append-stamps-registered-version
@@ -2521,14 +2619,28 @@ class EventStore {
     // materialize atomically with the append. Action-emitted events (via
     // ActionDispatcher → appendInTxn) MUST update views in-tx so subsequent
     // dispatches in the same flow read the new view rows.
-    final rowChanges = await _interpreter.applyEvent(
+    final applied = await _interpreter.applyEvent(
       txn: txn,
       backend: _backend,
       event: event,
       copyIds: _viewCopyIds,
+      mode: mode,
     );
-    if (rowChanges.isNotEmpty) {
-      collector._addRowChanges(rowChanges);
+    if (applied.changes.isNotEmpty) {
+      collector._addRowChanges(applied.changes);
+    }
+    // Implements: EVS-DEV-security-findings/S
+    // every always-stored append records the fold_failed findings its own
+    //   fold collected, in the same transaction (a reserved record of an
+    //   ingest, a restore or the drain, and every security finding go
+    //   through this shared append path under always-stored mode).
+    if (mode == ApplyEventMode.alwaysStored && applied.failures.isNotEmpty) {
+      await _recordFoldFailedFindingsInTxn(
+        txn,
+        collector,
+        event,
+        applied.failures,
+      );
     }
     return event;
   }
@@ -2700,11 +2812,21 @@ class EventStore {
     final isOwn = originator == databaseId;
 
     // 1. Parse, and decide whether the library can store the record as an
-    //    event.
+    //    event. The U+0000 check runs over the raw record, before any
+    //    parse attempt: a parse of a record carrying it could otherwise
+    //    succeed (the character does not break a record's shape) or, were
+    //    a parser ever taught to refuse it too, would misclassify the
+    //    record as record_malformed instead of unstorable_character.
+    // Implements: EVS-DEV-security-findings/O
+    // a received or restored record a string of which, a key included,
+    //   carries U+0000 is stored as no event and kept in a finding of
+    //   reason unstorable_character.
     StoredEvent? event;
     String? unstorable;
     if (originator == null) {
       unstorable = _kRecordMalformed;
+    } else if (recordFieldWithNulCharacter(record) != null) {
+      unstorable = _kUnstorableCharacter;
     } else {
       try {
         event = (parsed ?? StoredEvent.fromMap(record, 0))
@@ -2868,22 +2990,34 @@ class EventStore {
     collector._add(updatedEvent);
 
     // The projection interpreter runs inside the same transaction, as on
-    // the local-append path. In ingest mode a fold throw is this copy's
-    // problem alone: the copy is left behind for the catch-up driver and
-    // the rest of the delivery still commits (`EVS-PRD-ingest/G`,
-    // `EVS-DEV-view-convergence/Q`).
-    final rowChanges = await _interpreter.applyEvent(
+    // the local-append path. This is an always-stored event
+    // (`EVS-DEV-view-convergence` Terms): a fold failure is this copy's
+    // problem alone -- the copy passes over the event and stays current --
+    // and is collected for the finding recorded below; the rest of the
+    // delivery still commits (`EVS-PRD-ingest/G`).
+    final applied = await _interpreter.applyEvent(
       txn: txn,
       backend: _backend,
       event: updatedEvent,
       copyIds: _viewCopyIds,
-      mode: ApplyEventMode.ingest,
+      mode: ApplyEventMode.alwaysStored,
     );
-    if (rowChanges.isNotEmpty) collector._addRowChanges(rowChanges);
+    if (applied.changes.isNotEmpty) collector._addRowChanges(applied.changes);
 
     // 6. The findings about the stored event, recorded after it so that
     //    each names its aggregate.
     final stored = <String>[updatedEvent.aggregateId];
+    // Implements: EVS-DEV-security-findings/S
+    // one fold_failed finding is recorded, in the storing transaction, for
+    //   each copy that passed over the stored event.
+    findingIds.addAll(
+      await _recordFoldFailedFindingsInTxn(
+        txn,
+        collector,
+        updatedEvent,
+        applied.failures,
+      ),
+    );
     for (final evidence in hashEvidence) {
       await find(FindingKind.hashMismatch, evidence, stored);
     }
@@ -3004,6 +3138,80 @@ class EventStore {
       kind: kind,
       evidence: evidence,
     );
+  }
+
+  /// Records, inside [txn], one `fold_failed` finding under detector role
+  /// [FindingRole.fold] for each of [failures], naming [event]'s aggregate:
+  /// the shared recording every always-stored append uses for the fold
+  /// failures its own fold collected (`EVS-DEV-security-findings/S`), and
+  /// ingest and the raw internal audit fold use for the failures collected
+  /// folding the event or audit they just stored. Never called for an
+  /// [event] that is itself a finding of kind `fold_failed`
+  /// (`EVS-DEV-security-findings/T`): the interpreter collects no
+  /// failures for one, so [failures] is always empty in that case and this
+  /// method is never reached with a non-empty list.
+  // Implements: EVS-DEV-security-findings/S
+  // one fold_failed finding is recorded, in the transaction that stores or
+  //   appends the event, for each copy that passed over it.
+  Future<List<String>> _recordFoldFailedFindingsInTxn(
+    Transaction txn,
+    PublishCollector collector,
+    StoredEvent event,
+    List<FoldFailureRecord> failures,
+  ) async {
+    final ids = <String>[];
+    final aggregates = <String>[event.aggregateId];
+    for (final failure in failures) {
+      ids.add(
+        await _recordIngestFindingInTxn(
+          txn,
+          collector,
+          kind: FindingKind.foldFailed,
+          evidence: foldFailedFindingEvidence(
+            viewName: failure.viewName,
+            definitionFingerprint: failure.definitionFingerprint,
+            event: event,
+            reason: failure.reason,
+          ),
+          aggregates: aggregates,
+          role: FindingRole.fold,
+        ),
+      );
+    }
+    return ids;
+  }
+
+  /// The [FoldFailedFindingRecorder] the catch-up driver calls once its own
+  /// catch-up transaction has rolled back unwritten on a fold failure
+  /// (`EVS-DEV-view-convergence/Z`): appends the `fold_failed` finding, under
+  /// detector role [FindingRole.fold], in a transaction of its own, committing
+  /// before the catch-up transaction that then passes over the event
+  /// (`EVS-DEV-security-findings/F`).
+  Future<void> _recordCatchUpFoldFailedFinding({
+    required String viewName,
+    required String definitionFingerprint,
+    required StoredEvent event,
+    required FoldFailureReason reason,
+  }) async {
+    if (DeliveryTestHooks.current?.failCatchUpFoldFindingAppend?.call() ??
+        false) {
+      throw const InjectedFailure('catch_up_fold_finding_append');
+    }
+    await _runInTxnWithPublish<void>((txn, collector) async {
+      await _recordFindingInTxn(
+        txn,
+        collector,
+        role: FindingRole.fold,
+        kind: FindingKind.foldFailed,
+        evidence: foldFailedFindingEvidence(
+          viewName: viewName,
+          definitionFingerprint: definitionFingerprint,
+          event: event,
+          reason: reason,
+        ),
+        aggregates: <String>[event.aggregateId],
+      );
+    });
   }
 
   /// Throws, before the record is written, when [incoming]'s entry-type
@@ -3224,19 +3432,34 @@ class EventStore {
   // a copy this call does not set to the event's position is left
   //   entirely unchanged: this call touches only the copies the
   //   interpreter's own applyEvent decides are current.
+  // Implements: EVS-DEV-security-findings/S
+  // one fold_failed finding is recorded, in the same transaction, for each
+  //   copy that passed over this raw internal audit.
   Future<void> _foldRawInternalEventInTxn(
     Transaction txn,
     StoredEvent event,
     PublishCollector? collector,
   ) async {
-    final rowChanges = await _interpreter.applyEvent(
+    final applied = await _interpreter.applyEvent(
       txn: txn,
       backend: _backend,
       event: event,
       copyIds: _viewCopyIds,
-      mode: ApplyEventMode.ingest,
+      mode: ApplyEventMode.alwaysStored,
     );
-    if (rowChanges.isNotEmpty) collector?._addRowChanges(rowChanges);
+    if (applied.changes.isNotEmpty) collector?._addRowChanges(applied.changes);
+    if (applied.failures.isEmpty) return;
+    assert(
+      collector != null,
+      '_foldRawInternalEventInTxn: a fold failure on a raw internal audit '
+      'needs a collector to record its fold_failed finding.',
+    );
+    await _recordFoldFailedFindingsInTxn(
+      txn,
+      collector!,
+      event,
+      applied.failures,
+    );
   }
 }
 
@@ -3250,6 +3473,12 @@ const _kLibVersionInitiator = AutomationInitiator(service: 'event_sourcing');
 /// The reason an `event_malformed` finding names for a record that is not
 /// an event record of this data format.
 const String _kRecordMalformed = 'record_malformed';
+
+/// The reason an `event_malformed` finding names for a record some string
+/// of which, a key included, carries the character U+0000.
+// Implements: EVS-DEV-security-findings/R
+// the event_malformed reason unstorable_character.
+const String _kUnstorableCharacter = 'unstorable_character';
 
 /// The initiator of every security finding the library records.
 const _kSecurityFindingInitiator = AutomationInitiator(

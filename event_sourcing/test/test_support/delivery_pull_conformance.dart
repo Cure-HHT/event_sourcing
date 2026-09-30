@@ -231,6 +231,38 @@ void runDeliveryPullScenarios({
       }
     });
 
+    // Verifies: EVS-DEV-delivery-receiver/Y
+    test('a delivery whose attributes carry U+0000 is served with its '
+        'original attributes object and a hash that recomputes', () async {
+      final store = await open();
+      final delivery = sealedDelivery(
+        attributes: <String, Object?>{'note': 'x\u0000y', 'x\u0000y': 'value'},
+      );
+      final carried = DeliveryEnvelope.decode(delivery.encode());
+      await accept(store, delivery);
+
+      final range =
+          await pullThroughDecoder(
+                store,
+                DeliveryRangePull(
+                  channel: delivery.channel,
+                  fromDeliveryNumber: 1,
+                  toDeliveryNumber: 1,
+                ),
+              )
+              as DeliveryRange;
+
+      final served = range.deliveries.single;
+      expect(served.attributes, carried.attributes);
+      expect(
+        recomputedHashOf(served, delivery.channel, store.databaseId),
+        delivery.deliveryHash,
+        reason:
+            'the delivery hash recomputes from the decoded attributes '
+            'the pull serves',
+      );
+    });
+
     // Verifies: EVS-DEV-delivery-receiver/P
     test('a delivery above the record cannot be served, and is named, after '
         'the deliveries below it', () async {

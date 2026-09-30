@@ -63,6 +63,7 @@ class FifoEntry {
     this.deliveryHash,
     this.transformFailed = false,
     this.transformFailures,
+    this.resendsDeliveryNumber,
   }) {
     // Explicit ArgumentError rather than assert so the invariant is
     // enforced in release builds too, not just debug.
@@ -221,6 +222,12 @@ class FifoEntry {
         'FifoEntry: "transform_failures" must be an int when present',
       );
     }
+    final resendsDeliveryNumber = json['resends_delivery_number'];
+    if (resendsDeliveryNumber != null && resendsDeliveryNumber is! int) {
+      throw const FormatException(
+        'FifoEntry: "resends_delivery_number" must be an int when present',
+      );
+    }
 
     final attempts = List<AttemptResult>.unmodifiable(
       attemptsRaw.map(
@@ -253,6 +260,7 @@ class FifoEntry {
       deliveryHash: deliveryHash as String?,
       transformFailed: (transformFailedRaw as bool?) ?? false,
       transformFailures: transformFailures as int?,
+      resendsDeliveryNumber: resendsDeliveryNumber as int?,
     );
   }
 
@@ -352,6 +360,16 @@ class FifoEntry {
   //   is the transform failures the fill recorded on the item.
   final int? transformFailures;
 
+  /// The delivery number this item resends, for a resend item a
+  /// receiver-behind resume enqueues (`EVS-DEV-delivery-resume/M`); null
+  /// for an ordinary item the fill enqueues. Set only at enqueue time and
+  /// held immutable thereafter, so adoption can retire exactly the resend
+  /// items at or below an adopted record's number.
+  // Implements: EVS-DEV-delivery-resume/M
+  // a resend item also records the delivery number it resends, so
+  //   adoption can retire exactly those items.
+  final int? resendsDeliveryNumber;
+
   /// Encode to snake_case JSON. Optional fields emit explicit null.
   Map<String, Object?> toJson() => <String, Object?>{
     'entry_id': entryId,
@@ -374,6 +392,7 @@ class FifoEntry {
     'delivery_hash': deliveryHash,
     'transform_failed': transformFailed,
     'transform_failures': transformFailures,
+    'resends_delivery_number': resendsDeliveryNumber,
   };
 
   @override
@@ -399,7 +418,8 @@ class FifoEntry {
           deliveryNumber == other.deliveryNumber &&
           deliveryHash == other.deliveryHash &&
           transformFailed == other.transformFailed &&
-          transformFailures == other.transformFailures;
+          transformFailures == other.transformFailures &&
+          resendsDeliveryNumber == other.resendsDeliveryNumber;
 
   @override
   int get hashCode => Object.hash(
@@ -420,6 +440,7 @@ class FifoEntry {
     deliveryHash,
     transformFailed,
     transformFailures,
+    resendsDeliveryNumber,
   );
 
   /// Renders every field `==` compares. A conformance failure on whole-value
@@ -439,7 +460,8 @@ class FifoEntry {
       'deliveryGeneration: $deliveryGeneration, '
       'deliveryNumber: $deliveryNumber, deliveryHash: $deliveryHash, '
       'transformFailed: $transformFailed, '
-      'transformFailures: $transformFailures)';
+      'transformFailures: $transformFailures, '
+      'resendsDeliveryNumber: $resendsDeliveryNumber)';
 }
 
 const DeepCollectionEquality _deepEquals = DeepCollectionEquality();

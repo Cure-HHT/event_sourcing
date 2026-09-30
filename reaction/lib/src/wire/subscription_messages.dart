@@ -97,11 +97,11 @@ class SubscriptionDeniedMsg extends ServerMessage {
 enum WireErrorCode {
   internalError,
   protocolError,
-  // Implements: EVS-DEV-converging-view-reads/H
+  // Implements: EVS-PRD-cross-process-event-transport/K
   // the wire code a subscription refusal carries when computing its
   //   scoped aggregate set reads a still-converging view; the client
-  //   sees a typed, transient refusal rather than internal_error or a
-  //   silently narrowed subscription.
+  //   delivers a typed, transient condition naming the view rather
+  //   than internal_error or a silently narrowed subscription.
   viewConverging;
 
   String toWire() {
@@ -138,11 +138,12 @@ class ErrorMsg extends ServerMessage {
   final WireErrorCode code;
   final String message;
 
-  // Implements: EVS-DEV-converging-view-reads/H
+  // Implements: EVS-PRD-cross-process-event-transport/K
   // names the subscription a view_converging refusal from
   //   _handleSubscribe refuses, so the client can route it to that
-  //   subscription's stream instead of dropping it as unaddressed.
-  //   `null` for a connection-scoped error (e.g. malformed frames).
+  //   subscription's stream and deliver the typed condition to its
+  //   caller instead of dropping it as unaddressed. `null` for a
+  //   connection-scoped error (e.g. malformed frames).
   final String? subscriptionId;
 }
 

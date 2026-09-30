@@ -26,6 +26,13 @@ class ThirdPartyBackend extends StorageBackend {
   Future<AppendResult> appendEvent(Transaction txn, StoredEvent event) =>
       throw UnimplementedError();
 
+  @internal
+  @override
+  Future<T> runInSavepointInTxn<T>(
+    Transaction txn,
+    Future<T> Function() body,
+  ) => body();
+
   @override
   Future<List<StoredEvent>> findEventsForAggregate(String aggregateId) =>
       throw UnimplementedError();
@@ -201,6 +208,7 @@ class ThirdPartyBackend extends StorageBackend {
     int? transformFailures,
     String? wireFormat,
     String? transformVersion,
+    int? resendsDeliveryNumber,
   }) => throw UnimplementedError();
 
   @override

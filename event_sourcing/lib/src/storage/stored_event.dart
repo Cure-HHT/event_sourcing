@@ -1,6 +1,7 @@
 import 'package:event_sourcing/src/causal_record.dart';
 import 'package:event_sourcing/src/lifecycle/lib_version.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
+import 'package:event_sourcing/src/storage/record_characters.dart';
 import 'package:event_sourcing/src/versions.dart';
 import 'package:meta/meta.dart' show internal, visibleForTesting;
 import 'package:provenance/provenance.dart';
@@ -121,6 +122,18 @@ class StoredEvent {
   // Implements: EVS-DEV-event-record/J
   // the causal object is kept exactly as the record carries it.
   factory StoredEvent.fromMap(Map<String, Object?> map, int key) {
+    // Implements: EVS-DEV-event-record/L
+    // a read refuses a stored record some string of which, a key included,
+    //   carries U+0000, naming the top-level field, the same as it refuses
+    //   a malformed timestamp: no build of this data format writes one, so
+    //   one can only have been written by an earlier build.
+    final nulField = recordFieldWithNulCharacter(map);
+    if (nulField != null) {
+      throw FormatException(
+        'StoredEvent: "$nulField" carries the character U+0000, which no '
+        'record this data format writes may carry',
+      );
+    }
     final eventId = _requireString(map, 'event_id');
     final aggregateId = _requireString(map, 'aggregate_id');
     final aggregateType = _requireString(map, 'aggregate_type');

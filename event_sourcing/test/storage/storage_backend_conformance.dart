@@ -90,6 +90,7 @@ void runStorageBackendConformanceTests(
     });
 
     _registerTransactionTests(() => backend, () => initialized, factory);
+    _registerSavepointTests(() => backend, () => initialized);
     _registerEventLogTests(() => backend, () => initialized);
     _registerFindAllEventsFilterTests(() => backend, () => initialized);
     _registerOriginatorFilterTests(() => backend, () => initialized);
@@ -333,6 +334,110 @@ void _registerTransactionTests(
         });
       },
     );
+  });
+}
+
+// -------- Savepoint subgroup --------
+//
+// runInSavepointInTxn: on Postgres, a SAVEPOINT that RELEASEs on success
+// and ROLLBACK TOs on a throw, leaving the outer transaction usable after a
+// server-side error inside the body; on Sembast, the body runs as-is.
+void _registerSavepointTests(
+  StorageBackend Function() backendOf,
+  bool Function() initializedOf,
+) {
+  group('runInSavepointInTxn', () {
+    // Verifies: EVS-DEV-view-convergence/E
+    test(
+      'a server error inside the savepoint leaves the transaction usable',
+      () async {
+        if (!initializedOf()) return;
+        final backend = backendOf();
+        if (backend is! PostgresBackend) {
+          markTestSkipped(
+            'ROLLBACK TO SAVEPOINT recovery from a server-side error is '
+            'Postgres-specific; Sembast runs the body as-is',
+          );
+          return;
+        }
+        await backend.transaction((txn) async {
+          final s0 = await backend.nextSequenceNumber(txn);
+          await backend.appendEvent(txn, _event('ev-savepoint-pre', s0));
+
+          await expectLater(
+            backend.runInSavepointInTxn(txn, () async {
+              await backend.upsertViewRowInTxn(
+                txn,
+                'v_savepoint_fail',
+                'k-sp',
+                {'x': 1},
+              );
+              final s1 = await backend.nextSequenceNumber(txn);
+              // Re-appending the same event_id trips the events table's
+              // UNIQUE(event_id) constraint: a genuine server-side error,
+              // not a Dart-side precondition check.
+              await backend.appendEvent(txn, _event('ev-savepoint-pre', s1));
+            }),
+            throwsA(anything),
+          );
+
+          final s2 = await backend.nextSequenceNumber(txn);
+          await backend.appendEvent(txn, _event('ev-savepoint-post', s2));
+        });
+
+        final stored = await backend.findAllEvents();
+        expect(stored.map((e) => e.eventId), [
+          'ev-savepoint-pre',
+          'ev-savepoint-post',
+        ]);
+        final row = await backend.transaction(
+          (txn) async =>
+              backend.readViewRowInTxn(txn, 'v_savepoint_fail', 'k-sp'),
+        );
+        expect(row, isNull);
+      },
+    );
+
+    // Verifies: EVS-DEV-view-convergence/E
+    test('a savepoint body that returns a value commits its writes with the '
+        'outer transaction and returns the value', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      late final int result;
+      await backend.transaction((txn) async {
+        result = await backend.runInSavepointInTxn(txn, () async {
+          await backend.upsertViewRowInTxn(txn, 'v_savepoint_ok', 'k1', {
+            'x': 42,
+          });
+          return 7;
+        });
+      });
+      expect(result, 7);
+      final row = await backend.transaction(
+        (txn) async => backend.readViewRowInTxn(txn, 'v_savepoint_ok', 'k1'),
+      );
+      expect(row, {'x': 42});
+    });
+
+    // Verifies: EVS-DEV-view-convergence/E
+    test('a throw from the body propagates unchanged to the caller', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      await expectLater(
+        backend.transaction((txn) async {
+          await backend.runInSavepointInTxn(txn, () async {
+            throw StateError('boom-from-savepoint');
+          });
+        }),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            'boom-from-savepoint',
+          ),
+        ),
+      );
+    });
   });
 }
 
@@ -1802,6 +1907,33 @@ void _registerFifoTests(
       // hand-listed fields makes that divergence a test failure instead of
       // something a reviewer has to notice.
       expect(head, equals(enqueued));
+    });
+
+    // Verifies: EVS-DEV-delivery-resume/M
+    test('enqueueFifoTxn with resendsDeliveryNumber persists and '
+        'round-trips it; an ordinary item reads it as null', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final ordinary = await enqueueSingle(
+        backend,
+        'primary',
+        eventId: 'e1',
+        sequenceNumber: 1,
+      );
+      expect(ordinary.resendsDeliveryNumber, isNull);
+
+      final resend = await enqueueSingle(
+        backend,
+        'primary',
+        eventId: 'e2',
+        sequenceNumber: 2,
+        resendsDeliveryNumber: 8,
+      );
+      expect(resend.resendsDeliveryNumber, 8);
+      final head = (await backend.listFifoEntries('primary')).last;
+      expect(head.entryId, resend.entryId);
+      expect(head.resendsDeliveryNumber, 8);
+      expect(head, equals(resend));
     });
 
     test('enqueueFifoTxn rejects an empty batch with ArgumentError', () async {

@@ -31,6 +31,14 @@ class _PostgresTxn extends Transaction {
   /// writers.
   bool _wroteBackendState = false;
 
+  /// Counter for [PostgresBackend.runInSavepointInTxn]'s unique savepoint
+  /// names within this transaction's lifetime, so repeated calls (e.g.,
+  /// once per always-stored event's fold) never collide.
+  int _savepointCounter = 0;
+
+  /// A fresh, unique Postgres savepoint identifier for this transaction.
+  String _nextSavepointName() => 'evs_sp_${_savepointCounter++}';
+
   /// The underlying postgres session. Throws [StateError] when read
   /// outside the `transaction()` body that produced this handle.
   TxSession get _session {

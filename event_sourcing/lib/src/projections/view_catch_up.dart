@@ -24,11 +24,17 @@
 //   shows 200 ms have passed since the transaction began.
 // Implements: EVS-DEV-view-convergence/O
 // the step loop is a do-while: the first step always runs, whatever the
-//   clock reads.
+//   clock reads; a fold failure ends the transaction on the event it met,
+//   performing no step of its own.
 // Implements: EVS-DEV-view-convergence/Q
-// a throw from a step is logged, recorded as the copy's last failure, and
-//   backed off from 1 s, doubling to a 5-minute cap, without stopping the
-//   driver or the catch-up of its other copies.
+// a throw from a step other than a fold failure is logged, recorded as the
+//   copy's last failure, and backed off from 1 s, doubling to a 5-minute
+//   cap, without stopping the driver or the catch-up of its other copies.
+// Implements: EVS-DEV-view-convergence/Z
+// a fold failure ends the catch-up transaction without writing; the driver
+//   appends the fold_failed finding in a transaction of its own, committing
+//   before it reschedules the copy's catch-up at once (no back-off), whose
+//   retry passes over the event once the finding is held.
 // Implements: EVS-DEV-view-convergence/S
 // copies marked for deletion are found by the driver's discovery pass and
 //   worked the same way: up to 500 rows per step, then the copy's own
@@ -41,17 +47,59 @@ import 'dart:async';
 
 import 'package:event_sourcing/src/entry_type_registry.dart';
 import 'package:event_sourcing/src/logging.dart';
+import 'package:event_sourcing/src/projections/interpreter/fold_failure.dart';
 import 'package:event_sourcing/src/projections/interpreter/projection_interpreter.dart';
 import 'package:event_sourcing/src/projections/projection_registry.dart';
 import 'package:event_sourcing/src/projections/view_fingerprint.dart';
 import 'package:event_sourcing/src/promoters/promoter_registry.dart';
+import 'package:event_sourcing/src/security/security_finding.dart'
+    show FindingKind, FindingRole, securityFindingId;
 import 'package:event_sourcing/src/storage/drain_lock.dart' show libraryTimer;
 import 'package:event_sourcing/src/storage/storage_backend.dart';
+import 'package:event_sourcing/src/storage/stored_event.dart';
 import 'package:event_sourcing/src/storage/transaction.dart';
 import 'package:event_sourcing/src/storage/view_copy.dart';
 import 'package:event_sourcing/src/storage/view_copy_lock.dart';
 import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:meta/meta.dart' show internal;
+
+/// Appends, in a transaction of its own, one `fold_failed` finding under
+/// detector role [FindingRole.fold] for a catch-up transaction's fold
+/// failure -- the shared recording every always-stored fold uses
+/// (`EVS-DEV-security-findings/S`), invoked by [ViewCatchUpDriver] once its
+/// own catch-up transaction has rolled back unwritten
+/// (`EVS-DEV-view-convergence/Z`). Commits before the catch-up transaction
+/// that then passes over the event (`EVS-DEV-security-findings/F`).
+@internal
+typedef FoldFailedFindingRecorder =
+    Future<void> Function({
+      required String viewName,
+      required String definitionFingerprint,
+      required StoredEvent event,
+      required FoldFailureReason reason,
+    });
+
+/// Thrown out of a catch-up transaction's body when its step meets a fold
+/// failure that is neither itself a `fold_failed` finding
+/// (`EVS-DEV-security-findings/T`) nor one this database already holds a
+/// finding for: the transaction rolls back unwritten
+/// (`EVS-DEV-view-convergence/Z`), and [ViewCatchUpDriver] catches this
+/// signal to append the finding outside it, rather than treating the fold
+/// failure as a storage failure (`EVS-DEV-view-convergence/Q` excludes fold
+/// failures from the logged back-off).
+class _CatchUpFoldFailureSignal implements Exception {
+  _CatchUpFoldFailureSignal({
+    required this.viewName,
+    required this.definitionFingerprint,
+    required this.event,
+    required this.reason,
+  });
+
+  final String viewName;
+  final String definitionFingerprint;
+  final StoredEvent event;
+  final FoldFailureReason reason;
+}
 
 // Implements: EVS-DEV-view-convergence/W
 // a catch-up step holds the appends it orders against for at most this
@@ -148,6 +196,8 @@ class ViewCatchUpDriver {
     required ProjectionRegistry projections,
     required PromoterRegistry promoters,
     required Map<String, String> viewCopyIds,
+    required String databaseId,
+    required FoldFailedFindingRecorder recordFoldFailedFinding,
     DateTime Function()? clock,
     this.onCaughtUp,
   }) : _backend = backend,
@@ -155,6 +205,8 @@ class ViewCatchUpDriver {
        _projections = projections,
        _promoters = promoters,
        _viewCopyIds = viewCopyIds,
+       _databaseId = databaseId,
+       _recordFoldFailedFinding = recordFoldFailedFinding,
        _clock = clock ?? DateTime.now,
        _targets = [
          for (final spec in projections.all())
@@ -169,6 +221,8 @@ class ViewCatchUpDriver {
   final ProjectionRegistry _projections;
   final PromoterRegistry _promoters;
   final Map<String, String> _viewCopyIds;
+  final String _databaseId;
+  final FoldFailedFindingRecorder _recordFoldFailedFinding;
   final DateTime Function() _clock;
   final List<_ViewTarget> _targets;
 
@@ -267,10 +321,12 @@ class ViewCatchUpDriver {
         if (_stopping) return;
         final outcome = await _attemptView(target, copies);
         // Implements: EVS-DEV-view-convergence/Q
-        // a failure backs off; it is not progress, so it must not skip the
-        //   idle wait below -- a copy that fails every attempt (a missing
-        //   copy folding a poisoned event, among others) would otherwise
-        //   spin the discovery loop with no delay at all.
+        // a failure other than a fold failure backs off; it is not
+        //   progress, so it must not skip the idle wait below -- a copy
+        //   that fails every attempt on a storage error would otherwise
+        //   spin the discovery loop with no delay at all. A fold failure
+        //   counts as progress (EVS-DEV-view-convergence/Z) and reschedules
+        //   at once instead.
         if (outcome == _Outcome.progressed) progressed = true;
       }
       for (final copyId in _deletionCopyIds.toList()) {
@@ -359,9 +415,10 @@ class ViewCatchUpDriver {
     final knownCopyId = existing.isEmpty ? null : existing.single.copyId;
     // Implements: EVS-DEV-view-convergence/Q
     // backoff applies whether or not an unmarked copy of the fingerprint
-    //   exists yet: a missing copy's fold failing (a poisoned event, a
-    //   transient storage error) leaves no copy behind for the next pass
-    //   to key off, so this keys the check by the fingerprint instead.
+    //   exists yet: a missing copy meeting a transient storage error before
+    //   it is created leaves no copy behind for the next pass to key off,
+    //   so this keys the check by the fingerprint instead. A fold failure
+    //   does not reach this backoff (EVS-DEV-view-convergence/Z).
     final lockKey = knownCopyId ?? target.fingerprint;
     if (!_dueNow(lockKey)) return _Outcome.idle;
 
@@ -435,15 +492,70 @@ class ViewCatchUpDriver {
         final def = _entryTypes.byId(event.entryType);
         final registeredVersion =
             def?.registeredVersion ?? event.entryTypeVersion;
-        await ProjectionInterpreter.foldStep(
-          txn: txn,
-          backend: _backend,
-          spec: spec,
-          promoters: _promoters,
-          event: event,
-          registeredVersion: registeredVersion,
-          copyId: copy.copyId,
-        );
+        // Implements: EVS-DEV-view-convergence/Z
+        // the fold runs in a savepoint, exactly as the always-stored path's
+        //   applyToAllCopies does, so a row write the server rejects for its
+        //   value (on Postgres, SQLSTATE class 22, 23 or 54, reclassified
+        //   as RowWriteRejected) rolls back only the fold's own writes: the
+        //   transaction stays usable to run the held check and, if needed,
+        //   to end unwritten by throwing out of this savepoint's caller.
+        FoldFailureReason? failureReason;
+        try {
+          await _backend.runInSavepointInTxn(
+            txn,
+            () => ProjectionInterpreter.foldStep(
+              txn: txn,
+              backend: _backend,
+              spec: spec,
+              promoters: _promoters,
+              event: event,
+              registeredVersion: registeredVersion,
+              copyId: copy.copyId,
+            ),
+          );
+        } on FoldFailure catch (e) {
+          failureReason = e.reason;
+        } on RowWriteRejected catch (_) {
+          // Implements: EVS-DEV-security-findings/T (reason rowWriteFailed)
+          failureReason = FoldFailureReason.rowWriteFailed;
+        }
+        if (failureReason != null) {
+          // Implements: EVS-DEV-security-findings/T
+          // a fold_failed finding this copy cannot fold is passed over at
+          //   once: no further fold_failed finding is authored about it.
+          if (!isFoldFailedFinding(event)) {
+            final evidence = foldFailedFindingEvidence(
+              viewName: target.viewName,
+              definitionFingerprint: copy.fingerprint,
+              event: event,
+              reason: failureReason,
+            );
+            final findingId = securityFindingId(
+              databaseId: _databaseId,
+              role: FindingRole.fold,
+              kind: FindingKind.foldFailed,
+              evidence: evidence,
+            );
+            // Implements: EVS-DEV-view-convergence/Z
+            // a later catch-up passes over the event once its finding is
+            //   held; until then, the transaction ends unwritten.
+            final held = await _backend.holdsAuthoredSecurityFindingInTxn(
+              txn,
+              databaseId: _databaseId,
+              findingId: findingId,
+            );
+            if (!held) {
+              throw _CatchUpFoldFailureSignal(
+                viewName: target.viewName,
+                definitionFingerprint: copy.fingerprint,
+                event: event,
+                reason: failureReason,
+              );
+            }
+          }
+          // Passed over: the watermark still advances below, as any other
+          // step's does, and this counts as a step.
+        }
         watermark = event.sequenceNumber;
         steps++;
       } while (_effectiveClock().difference(start) < kCatchUpStepBound);
@@ -484,6 +596,27 @@ class ViewCatchUpDriver {
       return result.steps == 0
           ? _Outcome.idle
           : (result.reachedTip ? _Outcome.done : _Outcome.progressed);
+    } on _CatchUpFoldFailureSignal catch (signal) {
+      // Implements: EVS-DEV-view-convergence/Z
+      // Implements: EVS-DEV-security-findings/F
+      // Implements: EVS-DEV-security-findings/S
+      // the catch-up transaction rolled back unwritten above; the finding
+      //   is appended in a transaction of its own, committing before the
+      //   catch-up transaction that then passes over the event, and the
+      //   copy is rescheduled at once rather than backed off (Q excludes
+      //   fold failures from the logged back-off).
+      try {
+        await _recordFoldFailedFinding(
+          viewName: signal.viewName,
+          definitionFingerprint: signal.definitionFingerprint,
+          event: signal.event,
+          reason: signal.reason,
+        );
+      } catch (e, st) {
+        _onFailure(lockKey, e, st);
+        return _Outcome.failed;
+      }
+      return _Outcome.progressed;
     } catch (e, st) {
       _onFailure(lockKey, e, st);
       return _Outcome.failed;

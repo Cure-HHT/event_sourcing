@@ -307,15 +307,19 @@ final class ReceiverEndpoint {
       }
       // Implements: EVS-DEV-delivery-receiver/X
       // the pull serves the attributes object as the delivery carried it,
-      //   as the audit keeps it.
+      //   decoded back from however the audit keeps it.
+      // Implements: EVS-DEV-delivery-receiver/Y
+      // an audit's base64-encoded attributes is decoded back to the object
+      //   it carries before it is served.
       served.add(
         ServedDelivery(
           deliveryNumber: n,
           previousDeliveryHash:
               audit!.data['previous_delivery_hash'] as String?,
           deliveryHash: audit.data['delivery_hash']! as String,
-          attributes: (audit.data['attributes']! as Map)
-              .cast<String, Object?>(),
+          attributes: decodeNulSafeEncoding(
+            audit.data['attributes']! as Object,
+          ),
           events: events,
         ),
       );
@@ -623,7 +627,11 @@ final class ReceiverEndpoint {
     //   previous_delivery_hash, event_ids, event_hashes and attributes.
     // Implements: EVS-DEV-delivery-receiver/X
     // the audit keeps the attributes object as the delivery carried it,
-    //   whatever names it holds.
+    //   whatever names it holds, subject to assertion Y's encoding.
+    // Implements: EVS-DEV-delivery-receiver/Y
+    // the audit carries the attributes object itself when every string of
+    //   it, keys included, is free of U+0000, and otherwise the base64 of
+    //   its canonical JSON.
     final auditEvent = await _appendRawInternalEventInTxn(
       txn,
       _store._backend,
@@ -647,7 +655,7 @@ final class ReceiverEndpoint {
         'previous_delivery_hash': delivery.previousDeliveryHash,
         'event_ids': <Object?>[for (final e in events) e['event_id']],
         'event_hashes': delivery.eventHashes,
-        'attributes': delivery.attributes,
+        'attributes': nulSafeEncoding(delivery.attributes),
       },
       initiator: const AutomationInitiator(service: 'ingest'),
       uuid: _store._uuid,
@@ -724,6 +732,10 @@ final class _FindingEvidence {
     return records[(eventId, eventHash)];
   }
 
+  // Implements: EVS-DEV-security-findings/U
+  // a finding's `record` evidence -- an object, or, for a record carrying
+  //   U+0000, its base64 encoding -- is decoded back to the record it was
+  //   built from before it is served.
   Future<Map<(Object?, Object?), Map<String, Object?>>> _read() async {
     final records = <(Object?, Object?), Map<String, Object?>>{};
     for (final finding in await _store._backend.findSecurityFindingsInTxn(
@@ -731,12 +743,13 @@ final class _FindingEvidence {
     )) {
       if (!finding.isHeldAsAuthoredBy(_store.databaseId)) continue;
       final evidence = finding.data['evidence'];
-      final record = evidence is Map ? evidence['record'] : null;
-      if (record is! Map) continue;
+      final recordEvidence = evidence is Map ? evidence['record'] : null;
+      if (recordEvidence is! Map && recordEvidence is! String) continue;
+      final record = decodeFindingRecordEvidence(recordEvidence as Object);
       records.putIfAbsent((
         record['event_id'],
         record['event_hash'],
-      ), () => record.cast<String, Object?>());
+      ), () => record);
     }
     return records;
   }
