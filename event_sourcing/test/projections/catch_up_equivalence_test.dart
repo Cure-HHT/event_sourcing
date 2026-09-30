@@ -1,9 +1,5 @@
 // The catch-up equivalence check (test_support/catch_up_equivalence_
 // conformance.dart) on an in-memory Sembast backend.
-//
-// Verifies: EVS-DEV-view-convergence/K
-// a copy caught up through the buffered catch-up equals an event-by-event
-//   replay of the log through the fold step appends use.
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart' show pumpEventQueue;
