@@ -23,6 +23,7 @@ import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing/src/event_store.dart' show PublishCollector;
 import 'package:test/test.dart';
 
+import 'postgres_schema_snapshot.dart';
 import 'test_postgres_url.dart';
 
 const _kType = 'measured_note';
@@ -133,7 +134,11 @@ Future<void> _appendNote(
 
 /// Seeds [store] with the measured database: [_kAggregates] aggregates of
 /// [_kEventsPerAggregate] events each, all of [_kType], in transactions of
-/// 1,000 events so the seed fits well inside the test's time budget.
+/// 1,000 events so the seed fits well inside the test's time budget. Runs
+/// once, in `setUpAll`; a snapshot taken right after this returns is what
+/// each scenario restores before it opens its own instances, so the three
+/// scenarios measure against one identically seeded database instead of
+/// each paying the seed's cost itself.
 Future<void> _seed(EventStore store) async {
   final clock = Stopwatch()..start();
   const chunk = 100;
@@ -299,6 +304,27 @@ void main() {
   if (db != null) tearDownAll(db.drop);
   final backends = <PostgresBackend>[];
 
+  // The measured database is seeded once for the whole file and snapshotted
+  // so every scenario restores the identical starting point instead of
+  // seeding it itself. Whichever scenario runs first pays for the seed (a
+  // `setUpAll` would work too, but package:test fixes its timeout at 12
+  // minutes with no way to raise it; a scenario's own `timeout:` is under
+  // this file's control instead). Later scenarios just await the already
+  // resolved future and restore.
+  Future<PostgresSchemaSnapshot>? seedFuture;
+  Future<PostgresSchemaSnapshot> measuredSnapshot() => seedFuture ??= () async {
+    await db!.reset(provision: true);
+    final backend = await db.open();
+    final store = await _open(backend);
+    await _seed(store);
+    await store.close();
+    final clock = Stopwatch()..start();
+    final snapshot = await PostgresSchemaSnapshot.take(db);
+    // ignore: avoid_print, the measurement is the point of this file
+    print('snapshot taken in ${clock.elapsed}');
+    return snapshot;
+  }();
+
   Future<PostgresBackend> openBackend({bool provision = false}) async {
     final backend = await db!.open(provision: provision);
     backends.add(backend);
@@ -310,7 +336,15 @@ void main() {
       markTestSkipped('PG_TEST_URL unset');
       return;
     }
-    await db.reset();
+    final snapshot = await measuredSnapshot();
+    // Restores the tables (view_copies, generation records and
+    // backend_state included, since the snapshot covers every base table
+    // of the schema) to the seeded database, so nothing a previous
+    // scenario registered or converged leaks into this one.
+    final clock = Stopwatch()..start();
+    await snapshot.restore();
+    // ignore: avoid_print, the measurement is the point of this file
+    print('restored the measured database in ${clock.elapsed}');
   });
 
   tearDown(() async {
@@ -329,7 +363,6 @@ void main() {
       if (db == null) return;
       final servingBackend = await openBackend(provision: true);
       final serving = await _open(servingBackend);
-      await _seed(serving);
 
       final clock = Stopwatch()..start();
       final loop = _ServingLoop(serving, clock);
@@ -371,7 +404,7 @@ void main() {
       await converged;
       _checkServingBound(loop, windowStart, _kWindow, _kAppendBound);
     },
-    timeout: const Timeout(Duration(minutes: 8)),
+    timeout: const Timeout(Duration(minutes: 15)),
   );
 
   // Verifies: EVS-DEV-view-convergence/W
@@ -382,7 +415,6 @@ void main() {
     if (db == null) return;
     final servingBackend = await openBackend(provision: true);
     final serving = await _open(servingBackend);
-    await _seed(serving);
 
     final clock = Stopwatch()..start();
     final loop = _ServingLoop(serving, clock);
@@ -422,7 +454,7 @@ void main() {
     final rows = await canaryBackend.findViewRows(copyId);
     expect(rows, hasLength(_kAggregates));
     expect(rows.every((r) => r['b'] == 0), isTrue);
-  }, timeout: const Timeout(Duration(minutes: 8)));
+  }, timeout: const Timeout(Duration(minutes: 15)));
 
   // Verifies: EVS-DEV-view-convergence/W
   // Verifies: EVS-DEV-view-convergence/X
@@ -432,9 +464,6 @@ void main() {
     () async {
       if (db == null) return;
       final backend = await openBackend(provision: true);
-      final first = await _open(backend);
-      await _seed(first);
-      await first.close();
 
       final clock = Stopwatch()..start();
       final windowStart = clock.elapsedMicroseconds;
@@ -474,6 +503,6 @@ void main() {
       expect(rows, hasLength(_kAggregates));
       expect(rows.every((r) => r['b'] == 0), isTrue);
     },
-    timeout: const Timeout(Duration(minutes: 8)),
+    timeout: const Timeout(Duration(minutes: 15)),
   );
 }
