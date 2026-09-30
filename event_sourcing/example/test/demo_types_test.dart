@@ -116,7 +116,10 @@ void main() {
           ),
         );
       final datastore = await bootstrapEventStore(
-        backend: backend,
+        storage: ApplicationSuppliedStorage(
+          backend,
+          SembastSecurityContextStore(backend: backend),
+        ),
         source: const Source(
           hopId: 'demo-types-test',
           identifier: '33333333-3333-4333-8333-333333333333',
@@ -152,7 +155,9 @@ void main() {
         );
       }
 
-      final rows = await backend.findViewRows('notes');
+      final rows = await backend.findViewRows(
+        datastore.eventStore.copyIdOf('notes'),
+      );
       expect(rows, hasLength(1));
       expect(rows.single['aggregateId'], 'note-1');
 

@@ -1,4 +1,11 @@
 // Verifies: EVS-DEV-destination-drain-lock/F
+// Verifies: EVS-DEV-storage-capability/K
+// Verifies: EVS-PRD-storage-barrier/J
+//
+// The test-only open refuses without assertions: the probe calls
+// `EventStore.openForTest` over a fresh in-memory database, which without
+// assertions throws `StateError` before touching it (the database holds no
+// record afterwards), and with assertions opens it.
 //
 // The test seams have no effect without assertions: the probe in
 // `tool/hooks_release_probe.dart` installs the seams listed in the
@@ -37,6 +44,9 @@ Map<String, Object?> _lastJsonLine(String stdout) {
 
 void _expectInert(ProcessResult result) {
   final outcome = _lastJsonLine('${result.stdout}');
+  // The test-only open refused and left its database untouched.
+  expect(outcome['open_for_test'], 'refused', reason: '${result.stdout}');
+  expect(outcome['open_for_test_writes'], 0, reason: '${result.stdout}');
   expect(outcome['fired_seams'], isEmpty, reason: '${result.stdout}');
   expect(outcome['delivered'], 1, reason: '${result.stdout}');
   // The injection was ignored, so the registry operation committed.
@@ -131,6 +141,9 @@ void main() {
     'with assertions enabled the same probe body fires every installed seam',
     () async {
       final outcome = await runHooksReleaseProbe();
+      // With assertions the test-only open opens and writes its records.
+      expect(outcome.openForTest, 'opened');
+      expect(outcome.openForTestWrites, greaterThan(0));
       expect(
         outcome.firedSeams,
         containsAll(<Matcher>[
@@ -162,6 +175,7 @@ void main() {
           startsWith('afterSendBeforeOutcome'),
           equals('timerFactory'),
           equals('afterCommitBeforePublish'),
+          equals('onDeliveryWake false'),
         ]),
       );
       // The substituted build declaration decided the boot and is what the

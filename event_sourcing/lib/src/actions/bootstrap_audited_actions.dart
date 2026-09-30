@@ -3,12 +3,11 @@
 // Implements: EVS-PRD-library-charter/C
 // (composes the authorization-checked action dispatch pipeline)
 
-import 'package:event_sourcing/event_sourcing.dart' show EventStore;
 import 'package:event_sourcing/src/actions/action.dart';
-import 'package:event_sourcing/src/actions/action_dispatcher.dart';
 import 'package:event_sourcing/src/actions/action_registry.dart';
 import 'package:event_sourcing/src/actions/authorization_policy.dart';
 import 'package:event_sourcing/src/actions/idempotency_store.dart';
+import 'package:event_sourcing/src/event_store.dart';
 
 /// Compose a ready [ActionDispatcher] from its dependencies.
 ///

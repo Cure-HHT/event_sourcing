@@ -77,7 +77,10 @@ final class WebTab {
     return event!.eventId;
   }
 
-  Future<void> close() => store.close();
+  Future<void> close() async {
+    await store.close();
+    await backend.close();
+  }
 }
 
 /// Reads [read] through a backend over a fresh read-only handle of [name],
@@ -130,14 +133,16 @@ Future<WebTab> openWebTab(
   );
   try {
     final store = await EventStore.open(
-      storage: backend,
+      storage: ApplicationSuppliedStorage(
+        backend,
+        SembastSecurityContextStore(backend: backend),
+      ),
       entryTypes: entryTypes,
       source: const Source(
         hopId: 'web-hop',
         identifier: 'web-install',
         softwareVersion: 'web-test',
       ),
-      securityContexts: SembastSecurityContextStore(backend: backend),
       projections: projections,
       promoters: promoters,
     );

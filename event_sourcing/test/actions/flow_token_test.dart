@@ -31,6 +31,7 @@
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
+import '../test_support/deliveries.dart';
 
 import 'fixtures/test_actions.dart' show AlwaysAllowPolicy, HelloAction;
 import 'test_support/event_store_helper.dart' show bootstrapTestEventStore;
@@ -172,7 +173,7 @@ void main() {
       );
       expect(result, isA<DispatchSuccess<Object?>>());
 
-      final events = await eventStore.backend.findAllEvents(
+      final events = await eventStore.reader.findAllEvents(
         entryType: 'greeting',
       );
       expect(events, isNotEmpty);
@@ -198,7 +199,7 @@ void main() {
       );
       expect(result, isA<DispatchSuccess<Object?>>());
 
-      final events = await eventStore.backend.findAllEvents(
+      final events = await eventStore.reader.findAllEvents(
         entryType: 'greeting',
       );
       expect(events, isNotEmpty);
@@ -226,7 +227,7 @@ void main() {
       );
       expect(result, isA<DispatchAuthorizationDenied<Object?>>());
 
-      final denials = await eventStore.backend.findAllEvents(
+      final denials = await eventStore.reader.findAllEvents(
         entryType: 'action_denial',
       );
       expect(denials, isNotEmpty);
@@ -258,7 +259,7 @@ void main() {
         _ctx(),
       );
 
-      final denials = await eventStore.backend.findAllEvents(
+      final denials = await eventStore.reader.findAllEvents(
         entryType: 'action_denial',
       );
       final unknownDenials = denials
@@ -300,7 +301,7 @@ void main() {
       expect(result, isA<DispatchSuccess<Object?>>());
 
       // D: round-trip through Sembast storage — token must be identical.
-      final stored = await eventStore.backend.findAllEvents(
+      final stored = await eventStore.reader.findAllEvents(
         entryType: 'greeting',
       );
       expect(stored, isNotEmpty);
@@ -319,7 +320,7 @@ void main() {
       // flow_token is an identity-level field on StoredEvent and must survive.
       final second = await _openSecondStore();
       try {
-        final outcome = await second.store.ingestEvent(evt);
+        final outcome = await ingestEventForTest(second.store, evt);
         expect(outcome.outcome, IngestOutcome.ingested);
 
         final ingestedEvents = await second.backend.findAllEvents(

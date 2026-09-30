@@ -1,11 +1,10 @@
-// Implements: EVS-DEV-event-store-open/G+H+J+K+L+M
+// Implements: EVS-DEV-event-store-open/G+J+K+L+M
 // the boot's progress, reported to an optional observer that decides
-//   nothing: phases, units counted before each phase's work, elapsed time;
-//   the observer is not awaited, what it throws is logged, and a call from
-//   it, or from work it started, into an event store or a shipped storage
+//   nothing: its phase and the elapsed time since the open began; the
+//   observer is not awaited, what it throws is logged, and a call from it,
+//   or from work it started, into an event store or a shipped storage
 //   backend while the boot runs is refused.
 import 'dart:async';
-import 'dart:math' as math;
 
 import 'package:event_sourcing/src/logging.dart';
 import 'package:meta/meta.dart';
@@ -23,14 +22,6 @@ enum BootPhase {
   /// lock) the last report of the discarded run stands.
   checks,
 
-  /// Snapshot promotion: the re-derivation of the rows of views whose
-  /// stored target versions lag the registered entry-type versions.
-  promotion,
-
-  /// View catch-up: the re-derivation of views that are behind the log for
-  /// an entry type in their interest.
-  catchUp,
-
   /// The boot committed and the open is about to return the store. It counts
   /// no units (`done` and `total` are 0).
   complete,
@@ -39,21 +30,10 @@ enum BootPhase {
 /// One report of the progress of the boot of `EventStore.open`, delivered
 /// to the observer passed as `onBootProgress`.
 ///
-/// [done] and [total] count the units of work of [phase]. The total is
-/// counted before the phase's work starts and does not change while the
-/// phase runs; [done] starts at 0, never falls within the phase, and equals
-/// [total] at the phase's last report. A unit is one aggregate whose row an
-/// aggregate view re-derives, or one event of the log a table view's refold
-/// reads (a table view is refolded whole, over the events the log holds when
-/// the phase starts). The phases [BootPhase.checks] and [BootPhase.complete]
-/// count no units.
-///
-/// The two kinds of unit cost different amounts of work: re-deriving an
-/// aggregate reads every event of that aggregate, reading one event of a
-/// table refold reads one. A phase that re-derives both an aggregate view
-/// and a table view adds both kinds into one [total], so `done / total` is
-/// then a fraction of the units, not of the phase's time, and an estimate
-/// of the time left extrapolated from it is approximate.
+/// The boot's two phases, [BootPhase.checks] and [BootPhase.complete],
+/// count no units: [done] and [total] are always 0. A view's own
+/// convergence after the open is reported separately, per view
+/// (`EVS-DEV-converging-view-reads`), not through this type.
 ///
 /// [elapsed] is the time since the open began, read from a monotonic clock.
 @immutable
@@ -93,11 +73,6 @@ class BootProgress {
       'BootProgress(${phase.name} $done/$total, '
       '${elapsed.inMilliseconds} ms)';
 }
-
-/// The units a phase finishes between two reports: a phase reports when it
-/// starts, each time it has finished this many more units, and when it ends.
-@internal
-const int kBootProgressChunk = 500;
 
 /// Private zone key marking code that runs from a boot progress observer.
 final Object _observerScopeKey = Object();
@@ -184,51 +159,7 @@ class BootProgressReporter {
     _bodyRuns += 1;
   }
 
-  /// Starts [phase] over [total] units. A phase with no units reports
-  /// nothing.
-  BootPhaseProgress startPhase(BootPhase phase, int total) =>
-      BootPhaseProgress._(this, phase, total);
-
   /// Marks the boot finished: from here on, calls the observer started are
   /// no longer refused.
   void bootFinished() => _scope.bootRunning = false;
-}
-
-/// The progress of one phase of the boot.
-@internal
-class BootPhaseProgress {
-  BootPhaseProgress._(this._reporter, this.phase, this.total) {
-    if (total > 0) _emit();
-  }
-
-  final BootProgressReporter _reporter;
-
-  /// The phase this progress reports.
-  final BootPhase phase;
-
-  /// The units of the phase, counted before it started.
-  final int total;
-
-  int _done = 0;
-  int _reported = 0;
-
-  /// Records [units] more units finished; reports when a chunk's worth has
-  /// finished since the last report. Never exceeds [total].
-  void add(int units) {
-    if (total == 0 || units <= 0) return;
-    _done = math.min(total, _done + units);
-    if (_done - _reported >= kBootProgressChunk) _emit();
-  }
-
-  /// Ends the phase: every unit is done, reported unless already reported.
-  void end() {
-    if (total == 0) return;
-    _done = total;
-    if (_reported != _done) _emit();
-  }
-
-  void _emit() {
-    _reported = _done;
-    _reporter.report(phase, _done, total);
-  }
 }

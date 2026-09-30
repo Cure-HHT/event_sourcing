@@ -5,7 +5,7 @@
 
 ## Purpose
 
-How the substrate's storage-backend query surface supports the boot-time snapshot-promotion pass and richer audit-stream UX. `StorageBackend.findAllEvents` and `findAllEventsInTxn` accept three optional filters in addition to the existing pagination/origin parameters. Filters AND-compose; an unspecified filter matches all values.
+How the substrate's storage-backend query surface supports richer audit-stream UX. `StorageBackend.findAllEvents` and `findAllEventsInTxn` accept three optional filters in addition to the existing pagination/origin parameters. Filters AND-compose; an unspecified filter matches all values.
 
 ## Assertions
 
@@ -19,12 +19,14 @@ D. The reference `SembastBackend` implementation SHALL realize the composed filt
 
 ## Rationale
 
-**Why these three filters?** The boot-time snapshot-promotion pass (see EVS-DEV-snapshot-promotion-on-open) needs to enumerate "all events of a given entry type" to derive the aggregate-scope for promotion; that is the `entryType` filter. Audit-stream UX often wants windows of events bracketed by client-supplied timestamps (e.g., "show events between yesterday's midnight and now"); that is the timestamp pair.
+**Why these three filters?** Callers enumerating "all events of a given entry type", such as audit-stream readers, use the `entryType` filter. Audit-stream UX often wants windows of events bracketed by client-supplied timestamps (e.g., "show events between yesterday's midnight and now"); that is the timestamp pair.
 
 **Why AND-compose rather than OR?** Coverage queries always narrow; broadening would require a separate union API. AND-composition matches the substrate's existing convention for filter parameters and gives callers a predictable model.
 
 ## Changelog
 
+- 2026-09-25 | 3248479c | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: sync changelog hash
+- 2026-09-26 | - | - | Michael Lewis (<michael@anspar.org>) | Purpose and Rationale: the entryType filter serves callers enumerating one entry type's events; no boot-time promotion pass
 - 2026-08-10 | 3248479c | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-07-02 | f24ffdf5 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 

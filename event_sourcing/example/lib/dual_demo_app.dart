@@ -15,7 +15,6 @@ const double _kMinPaneHeight = 120;
 class DemoPaneConfig {
   const DemoPaneConfig({
     required this.datastore,
-    required this.backend,
     required this.appState,
     required this.dbPath,
     required this.policyNotifier,
@@ -23,7 +22,6 @@ class DemoPaneConfig {
   });
 
   final EventStoreBundle datastore;
-  final SembastBackend backend;
   final AppState appState;
   final String dbPath;
   final ValueNotifier<SyncPolicy> policyNotifier;
@@ -108,7 +106,6 @@ class _DualDemoAppState extends State<DualDemoApp> {
   Widget _paneFor(DemoPaneConfig cfg) {
     return DemoPane(
       datastore: cfg.datastore,
-      backend: cfg.backend,
       appState: cfg.appState,
       dbPath: cfg.dbPath,
       policyNotifier: cfg.policyNotifier,

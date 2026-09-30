@@ -16,14 +16,17 @@ import 'dart:convert';
 import 'dart:math' show Random;
 
 import 'package:event_sourcing/event_sourcing.dart';
+import 'package:event_sourcing/src/event_store.dart' show wedgeHeadInTxnForTest;
 import 'package:event_sourcing/src/logging.dart';
 import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'fake_destination.dart';
+import 'manual_timers.dart' show neverFiringTimer;
 import 'queue_registry_conformance.dart' show QueueTestDatabase;
 import 'queue_test_support.dart'
     show TestCycle, drainForTest, fillForTest, wedgeHeadForTest;
+import 'test_backends.dart';
 import 'wedges_view_invariant.dart';
 
 const Initiator _init = AutomationInitiator(service: 'wedge-scenarios');
@@ -47,6 +50,7 @@ const Set<String> declaredWedgeEventKeys = <String>{
   'cause',
   'attempt_count',
   'max_attempts',
+  'max_retry_ms',
   'last_outcome',
   'http_status',
   'wire_format',
@@ -68,6 +72,19 @@ SyncPolicy budget(int maxAttempts) => SyncPolicy(
   maxAttempts: maxAttempts,
 );
 
+/// A policy with no backoff, an attempt bound high enough to never bind,
+/// and a time bound of [maxRetryTime]. With no backoff every gap's cap
+/// (`EVS-DEV-destination-retry-budget/A`) is exactly the delivery cycle's
+/// cadence, which the scenario passes to `drainForTest` itself.
+SyncPolicy timeBudget(Duration maxRetryTime) => SyncPolicy(
+  initialBackoff: Duration.zero,
+  backoffMultiplier: 1.0,
+  maxBackoff: Duration.zero,
+  jitterFraction: 0.0,
+  maxAttempts: 1000000,
+  maxRetryTime: maxRetryTime,
+);
+
 DateTime _fillNow() => DateTime.utc(2027, 1, 1);
 
 /// Every destination audit event this store's install appended naming
@@ -76,7 +93,7 @@ Future<List<StoredEvent>> _destinationAudits(
   EventStore store,
   String destinationId,
 ) async => <StoredEvent>[
-  for (final e in await store.backend.findAllEvents())
+  for (final e in await store.reader.findAllEvents())
     if (e.aggregateType == 'system_destination' &&
         e.aggregateId == store.source.identifier &&
         e.data['id'] == destinationId)
@@ -100,7 +117,7 @@ Future<void> _expectWedgeRecordMatchesLog(
   EventStore store,
   String destinationId,
 ) async {
-  final backend = store.backend;
+  final backend = testBackendOf(store);
   StoredEvent? open;
   for (final audit in await _destinationAudits(store, destinationId)) {
     switch (audit.eventType) {
@@ -165,7 +182,9 @@ Future<void> expectChainIntact(StorageBackend backend) async {
 }
 
 class _Process {
-  _Process(this.backend, this.store, this.registry);
+  _Process(this.backend, this.store, this.registry) {
+    trackTestBackend(store, backend);
+  }
   final StorageBackend backend;
   final EventStore store;
   final DestinationRegistry registry;
@@ -181,7 +200,7 @@ class _World {
   EventStore get store => a.store;
   DestinationRegistry get registry => a.registry;
 
-  Future<_Process> openProcess() async {
+  Future<_Process> openProcess({ProjectionRegistry? projections}) async {
     final backend = await db.openBackend();
     final entryTypes = EntryTypeRegistry();
     for (final d in kSystemEntryTypes) {
@@ -200,6 +219,7 @@ class _World {
       source: _source,
       securityContexts: db.securityFor(backend),
       clock: () => eventTime,
+      projections: projections,
     );
     return _Process(backend, store, DestinationRegistry(eventStore: store));
   }
@@ -309,6 +329,29 @@ void runDrainWedgeScenarios(
       return (await w.backend.readFifoHead(d.id))!;
     }
 
+    /// Register and activate [d], append one note, and enqueue it as a
+    /// transform-failed item through the backend seam directly (the fill's
+    /// own retry-and-enqueue path is out of scope here): no payload, no
+    /// envelope, `transformFailed: true` and [failures] recorded transform
+    /// failures.
+    Future<FifoEntry> queuedTransformFailed(
+      FakeDestination d, {
+      int failures = 3,
+    }) async {
+      await w.activate(d);
+      final note = await w.note('${d.id}-tf');
+      return w.backend.transaction(
+        (txn) => w.backend.enqueueFifoTxn(
+          txn,
+          d.id,
+          <StoredEvent>[note],
+          transformFailed: true,
+          transformFailures: failures,
+          wireFormat: 'fake-v1',
+        ),
+      );
+    }
+
     // ------------------------------------------------------------------
     // Fields
     // ------------------------------------------------------------------
@@ -349,6 +392,7 @@ void runDrainWedgeScenarios(
           'cause': 'permanent_refusal',
           'attempt_count': 1,
           'max_attempts': 7,
+          'max_retry_ms': const Duration(hours: 24).inMilliseconds,
           'last_outcome': 'permanent',
           'http_status': null,
           'wire_format': head.wireFormat,
@@ -370,6 +414,93 @@ void runDrainWedgeScenarios(
         );
         await expectWedgeRecordMatchesLog(w.store, 'x');
       });
+
+      // Verifies: EVS-DEV-view-convergence/E
+      // Verifies: EVS-DEV-security-findings/S
+      test(
+        'a view whose fold cannot key the wedge event stores it and '
+        'records a fold_failed finding instead of failing the drain',
+        () async {
+          if (!available) return;
+          const view = 'unkeyable_wedges';
+          const spec = TableProjectionSpec(
+            viewName: view,
+            interest: SubscriptionFilter(
+              entryTypes: <String>{kDestinationWedgedEntryType},
+              includeSystemEvents: true,
+            ),
+            insertEventTypes: <String>{kDestinationWedgedEventType},
+            removeEventTypes: <String>{},
+            rowKey: CompositeKey(<String>['data.no_such_field']),
+            rowData: WholePayload(),
+          );
+          final begins = <String>[];
+          late FakeDestination d;
+          late FifoEntry head;
+          await runWithDeliveryTestHooks(
+            DeliveryTestHooks(
+              timerFactory: neverFiringTimer,
+              onCatchUpTransactionBegin: begins.add,
+            ),
+            () async {
+              w.a = await w.openProcess(
+                projections: ProjectionRegistry()..register(spec),
+              );
+              // The view's interest admits every system event
+              // (includeSystemEvents), so its initial catch-up pass (over
+              // the boot's own lib_version_initialized) must settle
+              // before the drain, or the copy reads converging and the
+              // wedge event's fold is left to a later catch-up instead of
+              // failing inline, in the drain's own transaction.
+              for (var i = 0; i < 400; i++) {
+                if (begins.isNotEmpty) break;
+                await Future<void>.delayed(const Duration(milliseconds: 5));
+              }
+              if (begins.isEmpty) {
+                fail(
+                  'the catch-up driver never began a pass before the '
+                  'timeout',
+                );
+              }
+              await Future<void>.delayed(const Duration(milliseconds: 50));
+              for (var i = 0; i < 400; i++) {
+                final progress = await w.store.reader.viewProgress();
+                final state = progress
+                    .singleWhere((p) => p.viewName == view)
+                    .state;
+                if (state == ViewConvergenceState.current) break;
+                await Future<void>.delayed(const Duration(milliseconds: 5));
+              }
+              d = FakeDestination(
+                id: 'x',
+                script: <SendResult>[const SendPermanent(error: 'refused')],
+              );
+              head = await queued(d);
+              // The wedge event's own append runs under always-stored
+              // mode, so this fold failure is passed over and recorded
+              // rather than propagating out of the drain cycle.
+              await drainForTest(d, registry: w.registry, policy: budget(7));
+            },
+          );
+          final row = (await w.backend.readFifoRow('x', head.entryId))!;
+          expect(row.finalStatus, FinalStatus.wedged);
+          final event = (await w.wedgeEvents()).single;
+          final findings = <StoredEvent>[
+            for (final e in await w.backend.findAllEvents())
+              if (e.entryType == kSecurityFindingEntryType) e,
+          ];
+          expect(findings, hasLength(1));
+          expect(findings.single.data['kind'], 'fold_failed');
+          expect(
+            findings.single.data['evidence'],
+            containsPair('event_id', event.eventId),
+          );
+          expect(
+            (findings.single.data['detector']! as Map<String, Object?>)['role'],
+            'fold',
+          );
+        },
+      );
 
       // Verifies: EVS-DEV-destination-drain/I
       // an exhausted budget's wedge event
@@ -422,6 +553,65 @@ void runDrainWedgeScenarios(
         expect(event.data['http_status'], isNull);
         expect(event.data['attempt_count'], 1);
         expect(event.data['max_attempts'], 1);
+      });
+    });
+
+    // ------------------------------------------------------------------
+    // Transform-failed head
+    // ------------------------------------------------------------------
+
+    group('transform-failed head', () {
+      // Verifies: EVS-DEV-destination-drain/Z
+      // the drainer wedges a pending head marked transform-failed with
+      //   cause transform_failed, without a send.
+      // Verifies: EVS-DEV-destination-drain/I
+      // attempt_count is the transform failures the fill recorded;
+      //   last_outcome is null.
+      // Verifies: EVS-PRD-destinations/Q
+      // the wedge event records the cause transform_failed.
+      test('wedges without a send', () async {
+        if (!available) return;
+        final d = FakeDestination(id: 'x', script: const <SendResult>[]);
+        final head = await queuedTransformFailed(d, failures: 5);
+        await drainForTest(d, registry: w.registry, policy: budget(7));
+        expect(d.sent, isEmpty, reason: 'no send is attempted');
+        final row = (await w.backend.readFifoRow('x', head.entryId))!;
+        expect(row.finalStatus, FinalStatus.wedged);
+        expect(row.attempts, isEmpty);
+        final event = (await w.wedgeEvents()).single;
+        expect(event.data.keys.toSet(), declaredWedgeEventKeys);
+        expect(event.data['cause'], 'transform_failed');
+        expect(event.data['attempt_count'], 5);
+        expect(event.data['last_outcome'], isNull);
+        expect(event.data['http_status'], isNull);
+        expect(event.data['max_attempts'], 7);
+        expect(event.data['wire_format'], head.wireFormat);
+        expect(event.data['halt_request_event_id'], isNull);
+        await expectWedgeRecordMatchesLog(w.store, 'x');
+      });
+
+      // Verifies: EVS-DEV-destination-drain/Z
+      // the check runs before any halt honour.
+      // Verifies: EVS-DEV-destination-drain/O
+      // a wedge of any cause consumes the open halt request of its
+      //   destination.
+      test('an open halt request is still wedged with cause '
+          'transform_failed, and the request is consumed', () async {
+        if (!available) return;
+        final d = FakeDestination(id: 'x', script: const <SendResult>[]);
+        await queuedTransformFailed(d, failures: 2);
+        final requestEventId = await w.registry.requestHalt(
+          'x',
+          initiator: _init,
+          purpose: HaltPurpose.pause,
+        );
+        await drainForTest(d, registry: w.registry, policy: budget(7));
+        expect(d.sent, isEmpty, reason: 'no send is attempted');
+        final event = (await w.wedgeEvents()).single;
+        expect(event.data['cause'], 'transform_failed');
+        expect(event.data['attempt_count'], 2);
+        expect(event.data['halt_request_event_id'], requestEventId);
+        await expectWedgeRecordMatchesLog(w.store, 'x');
       });
     });
 
@@ -743,6 +933,156 @@ void runDrainWedgeScenarios(
         final event = (await w.wedgeEvents()).single;
         expect(event.data['cause'], 'retry_budget_exhausted');
         expect(event.data['attempt_count'], 2);
+        await expectWedgeRecordMatchesLog(w.store, 'x');
+      });
+
+      // Verifies: EVS-DEV-destination-retry-budget/A
+      // the time bound is spent by
+      //   the sum of the gaps between recorded attempts, each capped at the
+      //   retry curve's longest delay plus the delivery cycle's cadence.
+      // Verifies: EVS-PRD-destinations/W
+      // a retry policy's time bound wedges
+      //   an item whose retryable failures have held it at the head for
+      //   that time.
+      // Verifies: EVS-DEV-destination-drain/I
+      // max_retry_ms is the time bound in
+      //   effect at the wedge.
+      test(
+        'capped gaps that sum past the time bound wedge (post-attempt)',
+        () async {
+          if (!available) return;
+          final d = FakeDestination(
+            id: 'x',
+            script: <SendResult>[
+              const SendTransient(error: 'busy'),
+              const SendTransient(error: 'busy'),
+              const SendTransient(error: 'busy'),
+            ],
+          );
+          await queued(d);
+          final policy = timeBudget(const Duration(seconds: 60));
+          const cadence = Duration(seconds: 30);
+          var now = DateTime.utc(2027, 6, 1);
+          Future<void> pass() => drainForTest(
+            d,
+            registry: w.registry,
+            policy: policy,
+            cadence: cadence,
+            clock: () => now,
+          );
+          await pass();
+          now = now.add(const Duration(seconds: 30));
+          await pass();
+          expect(d.sent, hasLength(2), reason: 'not yet spent');
+          expect(await w.wedgeEvents(), isEmpty);
+          now = now.add(const Duration(seconds: 30));
+          await pass();
+          expect(d.sent, hasLength(3));
+          final event = (await w.wedgeEvents()).single;
+          expect(event.data['cause'], 'retry_budget_exhausted');
+          expect(event.data['attempt_count'], 3);
+          expect(event.data['max_retry_ms'], 60000);
+          await expectWedgeRecordMatchesLog(w.store, 'x');
+        },
+      );
+
+      // Verifies: EVS-DEV-destination-retry-budget/A
+      // a gap longer than the retry
+      //   curve's delay plus the cadence (a device asleep, or no drainer
+      //   running) counts only the capped value toward the time bound.
+      test('a gap longer than the cap counts only the cap', () async {
+        if (!available) return;
+        final d = FakeDestination(
+          id: 'x',
+          script: <SendResult>[
+            const SendTransient(error: 'busy'),
+            const SendTransient(error: 'busy'),
+          ],
+        );
+        await queued(d);
+        final policy = timeBudget(const Duration(seconds: 100));
+        const cadence = Duration(seconds: 30);
+        var now = DateTime.utc(2027, 6, 1);
+        await drainForTest(
+          d,
+          registry: w.registry,
+          policy: policy,
+          cadence: cadence,
+          clock: () => now,
+        );
+        // A night off: ten hours pass with the device asleep.
+        now = now.add(const Duration(hours: 10));
+        await drainForTest(
+          d,
+          registry: w.registry,
+          policy: policy,
+          cadence: cadence,
+          clock: () => now,
+        );
+        expect(d.sent, hasLength(2));
+        expect(await w.wedgeEvents(), isEmpty);
+        final row = (await w.backend.readFifoHead('x'))!;
+        expect(row.finalStatus, isNull);
+        expect(row.attempts, hasLength(2));
+      });
+
+      // Verifies: EVS-DEV-destination-retry-budget/A
+      // the status derivation at the
+      //   start of a pass reaches the same decision the drainer reached
+      //   when it recorded the attempt: a lowered time bound wedges an item
+      //   whose recorded attempts already spend it, before any send.
+      // Verifies: EVS-DEV-destination-drain/J
+      // the status derivation runs
+      //   before any send, wedging a pending head whose recorded attempts
+      //   spend the time bound without a further attempt.
+      test('a lowered time budget wedges without a send', () async {
+        if (!available) return;
+        final d = FakeDestination(
+          id: 'x',
+          script: <SendResult>[
+            const SendTransient(error: 'busy'),
+            const SendTransient(error: 'busy'),
+          ],
+        );
+        await queued(d);
+        const cadence = Duration(seconds: 30);
+        var now = DateTime.utc(2027, 6, 1);
+        // Two attempts, 30 s apart, under a budget too large to spend.
+        await drainForTest(
+          d,
+          registry: w.registry,
+          policy: timeBudget(const Duration(days: 1)),
+          cadence: cadence,
+          clock: () => now,
+        );
+        now = now.add(const Duration(seconds: 30));
+        await drainForTest(
+          d,
+          registry: w.registry,
+          policy: timeBudget(const Duration(days: 1)),
+          cadence: cadence,
+          clock: () => now,
+        );
+        expect(d.sent, hasLength(2));
+        expect(await w.wedgeEvents(), isEmpty);
+        // The single 30 s gap, capped at 0 (no backoff) + the 30 s cadence,
+        // already spends a 30 s bound: the lowered budget wedges at pass
+        // start, with no third send (the script holds no third result).
+        await drainForTest(
+          d,
+          registry: w.registry,
+          policy: timeBudget(const Duration(seconds: 30)),
+          cadence: cadence,
+          clock: () => now,
+        );
+        expect(d.sent, hasLength(2), reason: 'no send at the lowered budget');
+        final head = (await w.backend.readFifoHead('x'))!;
+        expect(head.finalStatus, FinalStatus.wedged);
+        expect(head.attempts, hasLength(2));
+        final event = (await w.wedgeEvents()).single;
+        expect(event.data['cause'], 'retry_budget_exhausted');
+        expect(event.data['attempt_count'], 2);
+        expect(event.data['max_retry_ms'], 30000);
         await expectWedgeRecordMatchesLog(w.store, 'x');
       });
 
@@ -1242,13 +1582,15 @@ void runDrainWedgeScenarios(
           final before = await w.snapshot(destId);
           await expectLater(
             w.store.runTransaction(
-              (txn, collector) => w.registry.wedgeHeadInTxn(
+              (txn, collector) => wedgeHeadInTxnForTest(
+                w.registry,
                 txn,
                 collector,
                 destinationId: destId,
                 rowId: rowId,
                 cause: cause,
                 maxAttempts: maxAttempts,
+                maxRetryMs: null,
                 drainerEpoch: 1,
                 configuration: null,
                 configurationFingerprint: null,
@@ -1355,13 +1697,15 @@ void runDrainWedgeScenarios(
           final before = await w.snapshot('x');
           await expectLater(
             w.store.runTransaction(
-              (txn, collector) => w.registry.wedgeHeadInTxn(
+              (txn, collector) => wedgeHeadInTxnForTest(
+                w.registry,
                 txn,
                 collector,
                 destinationId: 'x',
                 rowId: head.entryId,
                 cause: WedgeCause.permanentRefusal,
                 maxAttempts: 3,
+                maxRetryMs: null,
                 drainerEpoch: 1,
                 configuration: null,
                 configurationFingerprint: null,
@@ -1398,6 +1742,7 @@ void runDrainWedgeScenarios(
             source: _source,
             securityContexts: w.db.securityFor(backend),
           );
+          trackTestBackend(store, backend);
           expect(
             identical(
               store.entryTypes.byId(kDestinationWedgedEntryType),
@@ -1583,6 +1928,14 @@ class UncheckedPolicy implements SyncPolicy {
   @override
   double get jitterFraction => 0.0;
 
+  // Large enough that no conformance scenario's attempts span it, so a
+  // scenario testing the attempt bound never also wedges on time.
+  @override
+  Duration get maxRetryTime => const Duration(days: 365);
+
   @override
   Duration backoffFor(int attemptCount, {Random? random}) => Duration.zero;
+
+  @override
+  Duration longestDelayAfter(int attemptCount) => Duration.zero;
 }

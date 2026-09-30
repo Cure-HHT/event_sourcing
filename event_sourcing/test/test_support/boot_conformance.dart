@@ -9,13 +9,14 @@ import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing/src/lifecycle/lib_version.dart'
     show LibVersionEvents;
 import 'package:event_sourcing/src/security/security_context_store.dart';
-import 'package:event_sourcing/src/security/system_entry_types.dart'
-    show kViewSnapshotPromotedEntryType;
 import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
+import 'deliveries.dart';
 
 import 'lib_version_seed.dart';
+import 'manual_timers.dart' show neverFiringTimer;
+import 'test_backends.dart';
 import 'wedges_view_invariant.dart' show expectReservedShapes;
 
 /// One database the boot scenarios open several backends over, as several
@@ -35,6 +36,13 @@ abstract class BootTestDatabase {
   /// stored version shapes are single integers. Called before any backend
   /// is opened.
   Future<void> writeEarlierFormatShape();
+
+  /// Rewrites every stored event, bypassing the library, as a build of data
+  /// format 2.0 stored it: its `lib_format_version` is 2.0, its provenance
+  /// entries carry no `database_id` and no `library_version`, and it
+  /// carries no `causal` object. With [keepFields], only its
+  /// `lib_format_version` is rewritten.
+  Future<void> rewriteEventsAsDataFormat2({bool keepFields = false});
 
   /// Stops the instance [store] belongs to, as a stop-then-start deployment
   /// stops the old revision before the new one opens: on Postgres, where
@@ -57,7 +65,10 @@ const _kSpec = AggregateProjectionSpec(
 );
 
 /// The newer build of the same data-format major every scenario plays.
-const _kNewer = (version: '0.6.0', dataFormat: DataFormatVersion(2, 1));
+final _kNewer = (version: '0.6.0', dataFormat: LibVersion.dataFormat.nextMinor);
+
+/// The data format of the next major, which no build of this one opens.
+final _kNextMajor = DataFormatVersion(LibVersion.dataFormat.major + 1, 0);
 
 /// The compiled build.
 const _kCompiled = (
@@ -118,10 +129,19 @@ Future<EventStore> _open(
     buildDeclaration: build == _kCompiled ? null : build,
     afterBootVersionEvent: afterBootVersionEvent,
     onBootBodyRun: onBootBodyRun,
+    // These scenarios read a store's storage as a whole (a before/after
+    // snapshot expected unchanged, or a transaction count) and this suite
+    // never exercises the catch-up driver itself (view_catch_up_test.dart
+    // does): a never-firing timer factory means the driver's one,
+    // harmless initial discovery pass runs and then its idle wait never
+    // completes, so it never runs a background transaction that could
+    // land inside a scenario's read window.
+    timerFactory: neverFiringTimer,
   );
-  return runWithDeliveryTestHooks(hooks, () {
+  return runWithDeliveryTestHooks(hooks, () async {
+    final EventStore store;
     if (forTest) {
-      return EventStore.openForTest(
+      store = await EventStore.openForTest(
         storage: backend,
         entryTypes: _registry(noteVersion),
         source: _source(identifier),
@@ -129,15 +149,23 @@ Future<EventStore> _open(
         projections: ProjectionRegistry()..register(_kSpec),
         promoters: promoters,
       );
+    } else {
+      store = await EventStore.open(
+        storage: ApplicationSuppliedStorage(backend, db.securityFor(backend)),
+        entryTypes: _registry(noteVersion),
+        source: _source(identifier),
+        projections: ProjectionRegistry()..register(_kSpec),
+        promoters: promoters,
+      );
     }
-    return EventStore.open(
-      storage: backend,
-      entryTypes: _registry(noteVersion),
-      source: _source(identifier),
-      securityContexts: db.securityFor(backend),
-      projections: ProjectionRegistry()..register(_kSpec),
-      promoters: promoters,
-    );
+    trackTestBackend(store, backend);
+    // Let the catch-up driver's bounded initial burst (a discovery pass,
+    // plus one no-op attempt on the registered view: fresh, it is already
+    // current) finish before returning: with the never-firing timer
+    // factory above, it then never runs another transaction, so a
+    // scenario's later snapshot or transaction count never races it.
+    await pumpEventQueue(times: 50);
+    return store;
   });
 }
 
@@ -170,16 +198,15 @@ class _Snapshot {
     this.eventIds,
     this.databaseId,
     this.bootCheck,
-    this.targets,
-    this.rows,
+    this.copies,
   );
 
   static Future<_Snapshot> of(StorageBackend backend) async {
-    final (databaseId, bootCheck, targets) = await backend.transaction(
+    final (databaseId, bootCheck, copies) = await backend.transaction(
       (txn) async => (
         await backend.readDatabaseIdTxn(txn),
         await backend.readBootCheckTxn(txn),
-        await backend.readAllViewTargetVersionsInTxn(txn, _kView),
+        await backend.readViewCopiesInTxn(txn),
       ),
     );
     return _Snapshot._(
@@ -187,8 +214,7 @@ class _Snapshot {
       [for (final e in await backend.findAllEvents()) e.eventId],
       databaseId,
       bootCheck,
-      targets,
-      await backend.findViewRows(_kView),
+      copies,
     );
   }
 
@@ -196,16 +222,14 @@ class _Snapshot {
   final List<String> eventIds;
   final String? databaseId;
   final BootCheck? bootCheck;
-  final Map<String, EntryTypeVersion> targets;
-  final List<Map<String, dynamic>> rows;
+  final List<ViewCopy> copies;
 
   void expectUnchangedIn(_Snapshot after) {
     expect(after.counter, counter, reason: 'sequence counter');
     expect(after.eventIds, eventIds, reason: 'events');
     expect(after.databaseId, databaseId, reason: 'database identity');
     expect(after.bootCheck, bootCheck, reason: 'boot record');
-    expect(after.targets, targets, reason: 'view target versions');
-    expect(after.rows, rows, reason: 'view rows');
+    expect(after.copies, copies, reason: 'view copies');
   }
 }
 
@@ -232,6 +256,10 @@ class _MemoryPeerDatabase implements BootTestDatabase {
 
   @override
   Future<void> writeEarlierFormatShape() => throw UnimplementedError();
+
+  @override
+  Future<void> rewriteEventsAsDataFormat2({bool keepFields = false}) =>
+      throw UnimplementedError();
 
   @override
   Future<void> stop(EventStore store) async {}
@@ -274,7 +302,7 @@ void runBootScenarios(
         expect(b.databaseId, a.databaseId);
         final reopened = await _open(db!, await db!.openBackend());
         expect(reopened.databaseId, a.databaseId);
-        final events = await _libVersionEvents(a.backend);
+        final events = await _libVersionEvents(testBackendOf(a));
         expect(events, hasLength(1));
         expect(events.single.eventType, LibVersionEvents.initialized);
         expect(events.single.data['database_id'], a.databaseId);
@@ -332,7 +360,7 @@ void runBootScenarios(
         await seedLibVersionEventForTest(
           backend,
           version: '9.0.0',
-          dataFormat: const DataFormatVersion(3, 0),
+          dataFormat: _kNextMajor,
           databaseId: 'not-the-stored-one',
         );
         final before = await _Snapshot.of(backend);
@@ -353,15 +381,15 @@ void runBootScenarios(
           await db!.openBackend(),
           forTest: true,
         );
-        expect(await _libVersionEvents(forTest.backend), isEmpty);
+        expect(await _libVersionEvents(testBackendOf(forTest)), isEmpty);
         final opened = await _open(db!, await db!.openBackend());
         expect(opened.databaseId, forTest.databaseId);
-        final events = await _libVersionEvents(opened.backend);
+        final events = await _libVersionEvents(testBackendOf(opened));
         expect(events, hasLength(1));
         expect(events.single.data['database_id'], forTest.databaseId);
         final again = await _open(db!, await db!.openBackend());
         expect(again.databaseId, forTest.databaseId);
-        expect(await _libVersionEvents(again.backend), hasLength(1));
+        expect(await _libVersionEvents(testBackendOf(again)), hasLength(1));
       });
     });
 
@@ -382,13 +410,13 @@ void runBootScenarios(
           build: _kNewer,
           identifier: 'm',
         );
-        final forwarded = (await _libVersionEvents(m.backend)).single;
+        final forwarded = (await _libVersionEvents(testBackendOf(m))).single;
         expect(forwarded.data['version'], _kNewer.version);
 
         // H: the compiled build, opened after M, ingests M's initialization.
         final h = await _open(db!, await db!.openBackend(), identifier: 'h');
-        await h.ingestEvent(forwarded);
-        final hEvents = await _libVersionEvents(h.backend);
+        await ingestEventForTest(h, forwarded);
+        final hEvents = await _libVersionEvents(testBackendOf(h));
         expect(hEvents, hasLength(2));
         expect(
           hEvents.map((e) => e.data['version']),
@@ -398,7 +426,7 @@ void runBootScenarios(
         final reopened = await _open(db!, await db!.openBackend());
         expect(reopened.databaseId, h.databaseId);
         expect(reopened.databaseId, isNot(m.databaseId));
-        final after = await _libVersionEvents(reopened.backend);
+        final after = await _libVersionEvents(testBackendOf(reopened));
         expect(after, hasLength(2), reason: 'no lib_version_changed');
         expect(
           after.where((e) => e.eventType == LibVersionEvents.changed),
@@ -421,7 +449,7 @@ void runBootScenarios(
           await peerDb.openBackend(),
           identifier: 'm',
         );
-        final forwarded = (await _libVersionEvents(m.backend)).single;
+        final forwarded = (await _libVersionEvents(testBackendOf(m))).single;
 
         // H: minted its identity through openForTest, so its log holds no
         // initialization of its own when it ingests M's.
@@ -431,14 +459,14 @@ void runBootScenarios(
           identifier: 'h',
           forTest: true,
         );
-        await h.ingestEvent(forwarded);
-        expect(await _libVersionEvents(h.backend), hasLength(1));
+        await ingestEventForTest(h, forwarded);
+        expect(await _libVersionEvents(testBackendOf(h)), hasLength(1));
 
         final opened = await _open(db!, await db!.openBackend());
         expect(opened.databaseId, h.databaseId);
         expect(opened.databaseId, isNot(m.databaseId));
         final initializations = (await _libVersionEvents(
-          opened.backend,
+          testBackendOf(opened),
         )).where((e) => e.data['database_id'] == h.databaseId).toList();
         expect(initializations, hasLength(1));
         expect(initializations.single.eventType, LibVersionEvents.initialized);
@@ -451,15 +479,15 @@ void runBootScenarios(
           'appends no event', () async {
         if (db == null) return;
         final first = await _open(db!, await db!.openBackend());
-        final firstCheck = await _bootCheck(first.backend);
+        final firstCheck = await _bootCheck(testBackendOf(first));
         expect(firstCheck, isNotNull);
         expect(firstCheck!.packageVersion, LibVersion.version);
         expect(firstCheck.dataFormat, LibVersion.dataFormat);
-        final counter = await first.backend.readSequenceCounter();
+        final counter = await first.reader.readSequenceCounter();
         await Future<void>.delayed(const Duration(milliseconds: 5));
         final second = await _open(db!, await db!.openBackend());
-        expect(await second.backend.readSequenceCounter(), counter);
-        final secondCheck = await _bootCheck(second.backend);
+        expect(await second.reader.readSequenceCounter(), counter);
+        final secondCheck = await _bootCheck(testBackendOf(second));
         expect(secondCheck, isNotNull);
         expect(secondCheck!.at.isAfter(firstCheck.at), isTrue);
       });
@@ -468,19 +496,19 @@ void runBootScenarios(
       test('openForTest writes the boot record too', () async {
         if (db == null) return;
         final store = await _open(db!, await db!.openBackend(), forTest: true);
-        expect(await _bootCheck(store.backend), isNotNull);
+        expect(await _bootCheck(testBackendOf(store)), isNotNull);
       });
 
       // Verifies: EVS-DEV-event-store-open/E
       test('a refused open leaves the boot record as it was', () async {
         if (db == null) return;
         final first = await _open(db!, await db!.openBackend());
-        final before = await _bootCheck(first.backend);
+        final before = await _bootCheck(testBackendOf(first));
         await seedLibVersionEventForTest(
-          first.backend,
+          testBackendOf(first),
           eventType: LibVersionEvents.changed,
           version: '9.0.0',
-          dataFormat: const DataFormatVersion(3, 0),
+          dataFormat: _kNextMajor,
         );
         final backend = await db!.openBackend();
         await expectLater(
@@ -616,6 +644,53 @@ void runBootScenarios(
       });
     });
 
+    group('a database a build of data format 2 wrote', () {
+      for (final generation in <String, (bool, bool)>{
+        'its latest event': (false, false),
+        'its latest event and its generation record': (true, false),
+        'its latest event, carrying every field this data format reads,': (
+          false,
+          true,
+        ),
+      }.entries) {
+        // Verifies: EVS-DEV-version-compatibility/O
+        test('${generation.key} in data format 2 refuses the open with '
+            'DatabaseResetRequiredError, before any write', () async {
+          if (db == null) return;
+          final first = await _open(db!, await db!.openBackend());
+          await _appendNote(first, 'n1');
+          final (writeGeneration, keepFields) = generation.value;
+          if (writeGeneration) {
+            final backend = testBackendOf(first);
+            await backend.transaction(
+              (txn) => backend.writeDataGenerationTxn(
+                txn,
+                GenerationRecord(
+                  dataFormatMajor: 2,
+                  entryTypeMajors: const <String, int>{_kType: 1},
+                ),
+              ),
+            );
+          }
+          await db!.stop(first);
+          await db!.rewriteEventsAsDataFormat2(keepFields: keepFields);
+          final backend = await db!.openBackend();
+          final counter = await backend.readSequenceCounter();
+          await expectLater(
+            _open(db!, backend),
+            throwsA(
+              isA<DatabaseResetRequiredError>().having(
+                (e) => e.message,
+                'message',
+                contains('data format'),
+              ),
+            ),
+          );
+          expect(await backend.readSequenceCounter(), counter);
+        });
+      }
+    });
+
     group('data-format compatibility', () {
       // Verifies: EVS-DEV-event-store-open/C
       // Verifies: EVS-DEV-event-store-open/D
@@ -632,7 +707,7 @@ void runBootScenarios(
           await _appendNote(newer, 'n1');
           final older = await _open(db!, await db!.openBackend());
           await _appendNote(older, 'o1');
-          final events = await _libVersionEvents(older.backend);
+          final events = await _libVersionEvents(testBackendOf(older));
           expect(events.map((e) => e.eventType), <String>[
             LibVersionEvents.initialized,
             LibVersionEvents.changed,
@@ -642,9 +717,9 @@ void runBootScenarios(
           expect(change['toVersion'], LibVersion.version);
           expect(change['fromDataFormat'], _kNewer.dataFormat.toJson());
           expect(change['toDataFormat'], LibVersion.dataFormat.toJson());
-          expect(await older.backend.findViewRows(_kView), hasLength(2));
+          expect((await older.reader.findViewRows(_kView)).rows, hasLength(2));
           final again = await _open(db!, await db!.openBackend());
-          expect(await _libVersionEvents(again.backend), hasLength(2));
+          expect(await _libVersionEvents(testBackendOf(again)), hasLength(2));
         },
       );
 
@@ -654,15 +729,15 @@ void runBootScenarios(
         if (db == null) return;
         await _open(db!, await db!.openBackend());
         final newer = await _open(db!, await db!.openBackend(), build: _kNewer);
-        final events = await _libVersionEvents(newer.backend);
+        final events = await _libVersionEvents(testBackendOf(newer));
         expect(events, hasLength(2));
         expect(events.last.data['toVersion'], _kNewer.version);
         expect(events.last.data['toDataFormat'], _kNewer.dataFormat.toJson());
       });
 
       for (final recorded in <DataFormatVersion>[
-        const DataFormatVersion(3, 0),
-        const DataFormatVersion(1, 4),
+        _kNextMajor,
+        DataFormatVersion(LibVersion.dataFormat.major - 1, 4),
       ]) {
         // Verifies: EVS-DEV-event-store-open/D
         test('a latest recorded data format $recorded is refused with both '
@@ -671,7 +746,7 @@ void runBootScenarios(
           final first = await _open(db!, await db!.openBackend());
           await _appendNote(first, 'n1');
           await seedLibVersionEventForTest(
-            first.backend,
+            testBackendOf(first),
             eventType: LibVersionEvents.changed,
             version: '7.0.0',
             dataFormat: recorded,
@@ -727,7 +802,7 @@ void runBootScenarios(
           backend,
           eventType: LibVersionEvents.changed,
           version: '7.0.0',
-          dataFormat: const DataFormatVersion(3, 0),
+          dataFormat: _kNextMajor,
         );
         final before = await _Snapshot.of(backend);
         await expectLater(
@@ -737,7 +812,7 @@ void runBootScenarios(
         before.expectUnchangedIn(await _Snapshot.of(backend));
       });
 
-      // Verifies: EVS-DEV-entry-type-downgrade-refusal/B
+      // Verifies: EVS-DEV-entry-type-downgrade-refusal/A
       // Verifies: EVS-DEV-event-store-open/E
       test('an entry-type refusal leaves no library-version event', () async {
         if (db == null) return;
@@ -770,13 +845,8 @@ void runBootScenarios(
       });
 
       // Verifies: EVS-DEV-event-store-open/E
-      // Verifies: EVS-DEV-destination-drain/L
-      // the library-version change and the snapshot-promotion audit the boot
-      //   appends carry the aggregate type and an event type the library
-      //   declares for their entry types.
       test('a boot that fails after its library-version event writes '
-          'nothing; a clean reopen appends exactly one change and '
-          'promotes', () async {
+          'nothing; a clean reopen appends exactly one change', () async {
         if (db == null) return;
         final older = await _open(db!, await db!.openBackend());
         await _appendNote(older, 'n1');
@@ -801,29 +871,9 @@ void runBootScenarios(
           noteVersion: const EntryTypeVersion(1, 1),
         );
         final changes = (await _libVersionEvents(
-          newer.backend,
+          testBackendOf(newer),
         )).where((e) => e.eventType == LibVersionEvents.changed);
         expect(changes, hasLength(1));
-        final row = (await newer.backend.findViewRows(_kView)).single;
-        expect(row['b'], 0);
-        final audits = await newer.backend.findAllEvents(
-          entryType: kViewSnapshotPromotedEntryType,
-        );
-        expect(audits, hasLength(1));
-        final all = await newer.backend.findAllEvents();
-        final changeIndex = all.indexWhere(
-          (e) => e.eventId == changes.single.eventId,
-        );
-        final auditIndex = all.indexWhere(
-          (e) => e.eventId == audits.single.eventId,
-        );
-        expect(changeIndex, greaterThanOrEqualTo(0));
-        expect(auditIndex, greaterThanOrEqualTo(0));
-        expect(
-          changeIndex,
-          lessThan(auditIndex),
-          reason: 'the version change precedes the promotion it causes',
-        );
         await expectReservedShapes(newer);
       });
     });

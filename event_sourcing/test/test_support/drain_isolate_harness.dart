@@ -109,8 +109,8 @@ final class SpawnedDrainer {
   /// Its warning and severe log lines.
   final List<String> log = <String>[];
 
-  /// Spawns a drainer over the provisioned database at [url] that
-  /// registers [destinations] and starts a delivery cycle with [cadence].
+  /// Spawns a drainer over the provisioned database at [url], whose library
+  /// tables are in [schema], that registers [destinations] and starts a delivery cycle with [cadence].
   /// Its backend's probe runs every hour, so its lock session is not
   /// probed during a test. [hooks] names the seams it installs:
   /// `holdFirstBump` holds its first epoch raise between the write and the
@@ -118,6 +118,7 @@ final class SpawnedDrainer {
   /// [releaseSends].
   static Future<SpawnedDrainer> spawn(
     String url, {
+    required String schema,
     Duration cadence = const Duration(milliseconds: 100),
     List<String> destinations = const <String>['x'],
     Set<String> hooks = const <String>{},
@@ -126,6 +127,7 @@ final class SpawnedDrainer {
     final isolate = await Isolate.spawn(_drainerMain, <Object?>[
       fromIsolate.sendPort,
       url,
+      schema,
       cadence.inMilliseconds,
       destinations,
       hooks.toList(),
@@ -207,9 +209,10 @@ final class SpawnedDrainer {
 Future<void> _drainerMain(List<Object?> args) async {
   final out = args[0]! as SendPort;
   final url = args[1]! as String;
-  final cadence = Duration(milliseconds: args[2]! as int);
-  final destinations = (args[3]! as List<Object?>).cast<String>();
-  final hookNames = (args[4]! as List<Object?>).cast<String>().toSet();
+  final schema = args[2]! as String;
+  final cadence = Duration(milliseconds: args[3]! as int);
+  final destinations = (args[4]! as List<Object?>).cast<String>();
+  final hookNames = (args[5]! as List<Object?>).cast<String>().toSet();
   final commands = ReceivePort();
   out.send(<String, Object?>{'type': 'commands', 'port': commands.sendPort});
 
@@ -237,6 +240,7 @@ Future<void> _drainerMain(List<Object?> args) async {
   await runWithDeliveryTestHooks(hooks, () async {
     final backend = await PostgresBackend.open(
       url: url,
+      schema: schema,
       sslMode: SslMode.disable,
       lockHeartbeat: const Duration(hours: 1),
     );

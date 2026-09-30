@@ -17,6 +17,7 @@
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
+import '../test_support/deliveries.dart';
 
 // ---------------------------------------------------------------------------
 // Test fixture helpers
@@ -98,7 +99,7 @@ void main() {
         final h0 = original!.eventHash;
 
         // 2. Ingest at destination.
-        final outcome = await dest.store.ingestEvent(original);
+        final outcome = await ingestEventForTest(dest.store, original);
         expect(outcome.outcome, equals(IngestOutcome.ingested));
         expect(outcome.eventId, equals(original.eventId));
 
@@ -164,7 +165,7 @@ void main() {
           );
           expect(original, isNotNull);
 
-          final outcome = await dest.store.ingestEvent(original!);
+          final outcome = await ingestEventForTest(dest.store, original!);
 
           expect(outcome.outcome, equals(IngestOutcome.ingested));
           expect(outcome.eventId, equals(original.eventId));
@@ -201,8 +202,8 @@ void main() {
           initiator: const UserInitiator('u1'),
         );
 
-        final outcome1 = await dest.store.ingestEvent(e1!);
-        final outcome2 = await dest.store.ingestEvent(e2!);
+        final outcome1 = await ingestEventForTest(dest.store, e1!);
+        final outcome2 = await ingestEventForTest(dest.store, e2!);
 
         expect(outcome1.outcome, equals(IngestOutcome.ingested));
         expect(outcome2.outcome, equals(IngestOutcome.ingested));

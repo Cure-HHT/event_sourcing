@@ -12,7 +12,8 @@ import 'package:crypto/crypto.dart';
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
-import 'package:uuid/uuid.dart';
+
+import '../test_support/deliveries.dart';
 
 // ---------------------------------------------------------------------------
 // Fixture helpers
@@ -57,24 +58,6 @@ Future<_Fixture> _openStore({
     securityContexts: securityContexts,
   );
   return _Fixture(store: store, backend: backend);
-}
-
-BatchEnvelope _buildEnvelope(
-  List<StoredEvent> events, {
-  required String senderHop,
-  required String senderIdentifier,
-  required String senderSoftwareVersion,
-  DateTime? sentAt,
-}) {
-  return BatchEnvelope(
-    batchFormatVersion: '2',
-    batchId: const Uuid().v4(),
-    senderHop: senderHop,
-    senderIdentifier: senderIdentifier,
-    senderSoftwareVersion: senderSoftwareVersion,
-    sentAt: sentAt ?? DateTime.now().toUtc(),
-    events: events.map((e) => Map<String, Object?>.from(e.toMap())).toList(),
-  );
 }
 
 /// Recursively rekey a deserialized value so all Map spines are
@@ -130,21 +113,13 @@ void main() {
         }
 
         // 2. Build envelope and encode → bytes.
-        final envelope = _buildEnvelope(
-          events,
-          senderHop: 'mobile-device',
-          senderIdentifier: 'device-1',
-          senderSoftwareVersion: 'my_app@1.0.0',
-        );
-        final bytes = envelope.encode();
+        final delivery = await deliverEventsTo(dest.store, events);
+        final envelope = delivery.envelope;
+        final bytes = delivery.bytes;
         final wireBytesHash = sha256.convert(bytes).toString();
 
         // 3. Ingest at destination.
-        final result = await dest.store.ingestBatch(
-          bytes,
-          wireFormat: BatchEnvelope.wireFormat,
-        );
-        expect(result.events, hasLength(3));
+        expect(await recordOutcomes(dest.store, delivery), hasLength(3));
 
         // 4. Query stored subjects and extract batchContext from each.
         final storedBatchContexts = <BatchContext>[];
@@ -176,7 +151,7 @@ void main() {
             equals(wireBytesHash),
             reason: 'batchWireBytesHash must match for all events',
           );
-          expect(bc.batchWireFormat, equals(BatchEnvelope.wireFormat));
+          expect(bc.batchWireFormat, equals(DeliveryEnvelope.wireFormat));
           expect(bc.batchSize, equals(3));
         }
 
@@ -193,7 +168,7 @@ void main() {
 
     test('batchWireBytesHash is sha256(encoded bytes)', () async {
       // This test directly verifies the hash value stored in batchContext
-      // equals sha256 of the exact bytes passed to ingestBatch.
+      // equals sha256 of the exact bytes presented to the receiver endpoint.
       final orig = await _openStore(hopId: 'mobile-device');
       final dest = await _openStore(
         hopId: 'control-server',
@@ -212,19 +187,9 @@ void main() {
         );
         expect(e, isNotNull);
 
-        final envelope = _buildEnvelope(
-          [e!],
-          senderHop: 'mobile-device',
-          senderIdentifier: 'device-1',
-          senderSoftwareVersion: 'my_app@1.0.0',
-        );
-        final bytes = envelope.encode();
+        final delivery = await deliverEventsTo(dest.store, [e!]);
+        final bytes = delivery.bytes;
         final expectedHash = sha256.convert(bytes).toString();
-
-        await dest.store.ingestBatch(
-          bytes,
-          wireFormat: BatchEnvelope.wireFormat,
-        );
 
         final stored = await dest.backend.transaction(
           (txn) async => dest.backend.findEventByIdInTxn(txn, e.eventId),
@@ -247,16 +212,15 @@ void main() {
       // This test performs the complete reconstruction to confirm that
       // JCS canonicalization is stable across the sembast storage
       // round-trip. Approach:
-      //   1. Build envelope with N events + fixed sentAt → encode → sha256.
-      //   2. ingestBatch at destination.
+      //   1. Seal a delivery of N events → encode → sha256.
+      //   2. Deliver it to the destination.
       //   3. Query stored subjects in batch_position order.
       //   4. Strip each event's receiver-hop provenance entry and restore
       //      event_hash = arrival_hash (= the originator's event_hash).
-      //   5. Re-encode into a new BatchEnvelope with the original envelope
+      //   5. Re-encode into a new delivery envelope with the original envelope
       //      metadata (batchId, senderHop, sentAt captured in step 1).
       //   6. Assert sha256(reconstructed) == stored batchWireBytesHash.
       const n = 3;
-      final sentAt = DateTime.utc(2026, 4, 21, 12, 0, 0);
       final orig = await _openStore(hopId: 'mobile-device');
       final dest = await _openStore(
         hopId: 'control-server',
@@ -282,24 +246,15 @@ void main() {
           events.add(e!);
         }
 
-        // 2. Build envelope with fixed sentAt so reconstruction is
+        // 2. Seal the delivery (the helper fixes sent_at) so reconstruction is
         //    deterministic.
-        final envelope = _buildEnvelope(
-          events,
-          senderHop: 'mobile-device',
-          senderIdentifier: 'device-1',
-          senderSoftwareVersion: 'my_app@1.0.0',
-          sentAt: sentAt,
-        );
-        final originalBytes = envelope.encode();
+        final delivery = await deliverEventsTo(dest.store, events);
+        final envelope = delivery.envelope;
+        final originalBytes = delivery.bytes;
         final expectedWireBytesHash = sha256.convert(originalBytes).toString();
 
         // 3. Ingest at destination.
-        final result = await dest.store.ingestBatch(
-          originalBytes,
-          wireFormat: BatchEnvelope.wireFormat,
-        );
-        expect(result.events, hasLength(n));
+        expect(await recordOutcomes(dest.store, delivery), hasLength(n));
 
         // 4. Query stored subjects ordered by batch_position.
         //    We query by event_id from the original events list, then sort.
@@ -377,15 +332,19 @@ void main() {
           );
         }
 
-        // 6. Reconstruct the BatchEnvelope.
-        final reconstructed = BatchEnvelope(
-          batchFormatVersion: '2',
+        // 6. Reconstruct the delivery envelope.
+        final reconstructed = DeliveryEnvelope(
           batchId: envelope.batchId,
           senderHop: envelope.senderHop,
           senderIdentifier: envelope.senderIdentifier,
           senderSoftwareVersion: envelope.senderSoftwareVersion,
           sentAt: envelope.sentAt,
+          channel: envelope.channel,
+          deliveryNumber: envelope.deliveryNumber,
+          previousDeliveryHash: envelope.previousDeliveryHash,
+          deliveryHash: envelope.deliveryHash,
           events: reconstructedEventMaps,
+          attributes: envelope.attributes,
         );
 
         // 7. Encode and compute sha256.

@@ -5,9 +5,12 @@
 // Implements: EVS-PRD-provenance/C
 // (JSON serialization and
 //   deserialization without loss of information)
+// Implements: EVS-PRD-provenance/E
+// (a decoded entry re-encodes exactly its decoded keys and values)
 
 import 'package:provenance/src/batch_context.dart';
 import 'package:provenance/src/iso8601_instant.dart';
+import 'package:provenance/src/provenance_delivery.dart';
 
 /// One hop's attribution in a cross-system event's chain-of-custody.
 ///
@@ -33,7 +36,7 @@ import 'package:provenance/src/iso8601_instant.dart';
 // received_at timestamp form enforced at the JSON boundary;
 // identifier and software_version shapes are caller obligations by design.
 // arrival_hash, previous_ingest_hash, ingest_sequence_number, batch_context,
-// origin_sequence_number.
+// origin_sequence_number, delivery.
 class ProvenanceEntry {
   const ProvenanceEntry({
     required this.hop,
@@ -46,7 +49,27 @@ class ProvenanceEntry {
     this.ingestSequenceNumber,
     this.batchContext,
     this.originSequenceNumber,
-  });
+    this.libraryVersion,
+    this.databaseId,
+    this.delivery,
+  }) : _source = null;
+
+  const ProvenanceEntry._decoded({
+    required this.hop,
+    required this.receivedAt,
+    required this.identifier,
+    required this.softwareVersion,
+    required this.transformVersion,
+    required this.arrivalHash,
+    required this.previousIngestHash,
+    required this.ingestSequenceNumber,
+    required this.batchContext,
+    required this.originSequenceNumber,
+    required this.libraryVersion,
+    required this.databaseId,
+    required this.delivery,
+    required Map<String, Object?> source,
+  }) : _source = source;
 
   // missing any required field, with wrong types, or with a received_at that
   // parseIso8601Instant refuses. An offsetless string would be read as local
@@ -80,6 +103,8 @@ class ProvenanceEntry {
     final previousIngestHash = _optionalString(json, 'previous_ingest_hash');
     final ingestSequenceNumber = _optionalInt(json, 'ingest_sequence_number');
     final originSequenceNumber = _optionalInt(json, 'origin_sequence_number');
+    final libraryVersion = _optionalString(json, 'library_version');
+    final databaseId = _optionalString(json, 'database_id');
     final batchContextRaw = json['batch_context'];
     BatchContext? batchContext;
     if (batchContextRaw != null) {
@@ -90,7 +115,17 @@ class ProvenanceEntry {
       }
       batchContext = BatchContext.fromJson(batchContextRaw);
     }
-    return ProvenanceEntry(
+    final deliveryRaw = json['delivery'];
+    ProvenanceDelivery? delivery;
+    if (deliveryRaw != null) {
+      if (deliveryRaw is! Map<String, Object?>) {
+        throw const FormatException(
+          'ProvenanceEntry: "delivery" must be an object when present',
+        );
+      }
+      delivery = ProvenanceDelivery.fromJson(deliveryRaw);
+    }
+    return ProvenanceEntry._decoded(
       hop: hop,
       receivedAt: receivedAt,
       identifier: identifier,
@@ -101,6 +136,10 @@ class ProvenanceEntry {
       ingestSequenceNumber: ingestSequenceNumber,
       batchContext: batchContext,
       originSequenceNumber: originSequenceNumber,
+      libraryVersion: libraryVersion,
+      databaseId: databaseId,
+      delivery: delivery,
+      source: _deepCopy(json) as Map<String, Object?>,
     );
   }
 
@@ -111,12 +150,9 @@ class ProvenanceEntry {
   /// Parsed from the `received_at` string by [parseIso8601Instant], which
   /// UTC-normalizes the offsetful ISO 8601 timestamp: the absolute instant
   /// is preserved but the original offset is not retained on this field.
-  /// `toJson()` therefore re-emits the value as a `Z`-suffixed UTC string
-  /// via `toIso8601String()`, not as the original offset string.
-  ///
-  /// Consumers that need the source-side clock offset (e.g., an audit-trail
-  /// inspector displaying "which wall clock wrote this?") must read the raw
-  /// JSON string before parsing; it is not recoverable from this field.
+  /// A decoded entry's `toJson()` re-emits the string as it was decoded; an
+  /// entry built with the constructor emits a `Z`-suffixed UTC string via
+  /// `toIso8601String()`.
   final DateTime receivedAt;
   final String identifier;
   final String softwareVersion;
@@ -131,7 +167,7 @@ class ProvenanceEntry {
   // ingested at this hop, starting at 0.
   final int? ingestSequenceNumber;
 
-  // received as part of an ingestBatch call.
+  // received as part of a delivery.
   final BatchContext? batchContext;
 
   // the receiver-hop entry. Receivers reassign a fresh local sequence_number
@@ -141,9 +177,36 @@ class ProvenanceEntry {
   // field set. Null on originator entries.
   final int? originSequenceNumber;
 
-  // `received_at` string that preserves the source timezone (Z suffix for
-  // UTC). Receiver-only fields are omitted when null.
-  Map<String, Object?> toJson() => <String, Object?>{
+  /// The version of the library that stamped this entry, when a library
+  /// stamped it.
+  final String? libraryVersion;
+
+  /// The identity of the database that stamped this entry, when a library
+  /// stamped it.
+  final String? databaseId;
+
+  /// The delivery the stamping receiver ingested the event from, on a
+  /// receiver-hop entry of an event ingested from a native delivery; null
+  /// otherwise.
+  final ProvenanceDelivery? delivery;
+
+  /// The JSON this entry was decoded from, deep-copied at decode; null for
+  /// an entry built with the constructor.
+  final Map<String, Object?>? _source;
+
+  // A decoded entry encodes exactly the keys it was decoded from, each value
+  // unchanged (received_at keeps its original spelling), so a decode and
+  // re-encode preserves the bytes its sender hashed. An entry built with the
+  // constructor encodes its fields with snake_case keys, received_at as a
+  // `Z`-suffixed UTC string and transform_version always present; the other
+  // optional fields are omitted when null.
+  Map<String, Object?> toJson() {
+    final source = _source;
+    if (source != null) return _deepCopy(source) as Map<String, Object?>;
+    return _encodeFields();
+  }
+
+  Map<String, Object?> _encodeFields() => <String, Object?>{
     'hop': hop,
     'received_at': receivedAt.toIso8601String(),
     'identifier': identifier,
@@ -156,6 +219,9 @@ class ProvenanceEntry {
     if (batchContext != null) 'batch_context': batchContext!.toJson(),
     if (originSequenceNumber != null)
       'origin_sequence_number': originSequenceNumber,
+    if (libraryVersion != null) 'library_version': libraryVersion,
+    if (databaseId != null) 'database_id': databaseId,
+    if (delivery != null) 'delivery': delivery!.toJson(),
   };
 
   @override
@@ -171,7 +237,10 @@ class ProvenanceEntry {
           previousIngestHash == other.previousIngestHash &&
           ingestSequenceNumber == other.ingestSequenceNumber &&
           batchContext == other.batchContext &&
-          originSequenceNumber == other.originSequenceNumber;
+          originSequenceNumber == other.originSequenceNumber &&
+          libraryVersion == other.libraryVersion &&
+          databaseId == other.databaseId &&
+          delivery == other.delivery;
 
   @override
   int get hashCode => Object.hash(
@@ -185,6 +254,9 @@ class ProvenanceEntry {
     ingestSequenceNumber,
     batchContext,
     originSequenceNumber,
+    libraryVersion,
+    databaseId,
+    delivery,
   );
 
   @override
@@ -199,7 +271,10 @@ class ProvenanceEntry {
       'previousIngestHash: $previousIngestHash, '
       'ingestSequenceNumber: $ingestSequenceNumber, '
       'batchContext: $batchContext, '
-      'originSequenceNumber: $originSequenceNumber)';
+      'originSequenceNumber: $originSequenceNumber, '
+      'libraryVersion: $libraryVersion, '
+      'databaseId: $databaseId, '
+      'delivery: $delivery)';
 }
 
 String _requireString(Map<String, Object?> json, String key) {
@@ -228,6 +303,25 @@ int? _optionalInt(Map<String, Object?> json, String key) {
     throw FormatException(
       'ProvenanceEntry: "$key" must be an int when present',
     );
+  }
+  return value;
+}
+
+/// Copies a JSON value with fresh maps and lists at every level, so the
+/// copy shares no mutable structure with the original.
+Object? _deepCopy(Object? value) {
+  if (value is Map<String, Object?>) {
+    return <String, Object?>{
+      for (final e in value.entries) e.key: _deepCopy(e.value),
+    };
+  }
+  if (value is Map) {
+    return <Object?, Object?>{
+      for (final e in value.entries) e.key: _deepCopy(e.value),
+    };
+  }
+  if (value is List) {
+    return <Object?>[for (final v in value) _deepCopy(v)];
   }
   return value;
 }

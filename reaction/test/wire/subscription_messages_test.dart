@@ -8,6 +8,9 @@
 // Verifies: EVS-PRD-cross-process-event-transport/D
 // SubscribeMsg
 //   carries the client-chosen subscriptionId.
+// Verifies: EVS-PRD-cross-process-event-transport/K
+// ErrorMsg's view_converging code round-trips and carries the
+//   converging view's name.
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -78,6 +81,52 @@ void main() {
     final j = SubscriptionMessages.encodeServer(original);
     expect(j['type'], 'error');
     expect(j['code'], 'protocol_error');
+  });
+
+  test('round-trips ErrorMsg with view_converging code naming the view', () {
+    // Verifies: EVS-PRD-cross-process-event-transport/K
+    const original = ErrorMsg(
+      code: WireErrorCode.viewConverging,
+      message: 'participant_site_index',
+    );
+    final j = SubscriptionMessages.encodeServer(original);
+    expect(j['type'], 'error');
+    expect(j['code'], 'view_converging');
+    expect(j['message'], 'participant_site_index');
+    final decoded = SubscriptionMessages.decodeServer(j) as ErrorMsg;
+    expect(decoded.code, WireErrorCode.viewConverging);
+    expect(decoded.message, 'participant_site_index');
+  });
+
+  test('round-trips ErrorMsg carrying a subscriptionId', () {
+    // Verifies: EVS-PRD-cross-process-event-transport/K
+    // A subscription-scoped refusal (e.g. view_converging during
+    // _handleSubscribe) names the subscriptionId it refuses so the
+    // client can route it to that subscription's stream instead of
+    // dropping it silently.
+    const original = ErrorMsg(
+      code: WireErrorCode.viewConverging,
+      message: 'participant_site_index',
+      subscriptionId: 'sub-1',
+    );
+    final j = SubscriptionMessages.encodeServer(original);
+    expect(j['type'], 'error');
+    expect(j['subscriptionId'], 'sub-1');
+    final decoded = SubscriptionMessages.decodeServer(j) as ErrorMsg;
+    expect(decoded.subscriptionId, 'sub-1');
+    expect(decoded.code, WireErrorCode.viewConverging);
+    expect(decoded.message, 'participant_site_index');
+  });
+
+  test('round-trips ErrorMsg with no subscriptionId (connection-scoped)', () {
+    const original = ErrorMsg(
+      code: WireErrorCode.protocolError,
+      message: 'bad json',
+    );
+    final j = SubscriptionMessages.encodeServer(original);
+    expect(j.containsKey('subscriptionId'), isFalse);
+    final decoded = SubscriptionMessages.decodeServer(j) as ErrorMsg;
+    expect(decoded.subscriptionId, isNull);
   });
 
   test('round-trips StaleDataMsg with reason', () {

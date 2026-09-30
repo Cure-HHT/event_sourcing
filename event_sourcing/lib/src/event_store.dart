@@ -25,9 +25,15 @@
 //   major throws DataFormatIncompatibleError before any write (_runBoot).
 // Implements: EVS-DEV-event-store-open/E
 // the whole boot runs in one
-//   bootTransaction, refusals first, then the library-version event,
-//   seeding, promotion, re-derivation, the generation record and the boot
-//   record (_runBoot).
+//   bootTransaction, refusals first, then the library-version event and
+//   registry audit, then creating and marking view copies, the generation
+//   record and the boot record (_runBoot).
+// Implements: EVS-DEV-event-store-open/N
+// the boot transaction reads, writes and deletes no view row; it creates
+//   and marks copy records only.
+// Implements: EVS-DEV-event-store-open/O
+// the boot reads no event other than the library-version events, the
+//   registry audit events and the latest event of the log.
 // Implements: EVS-DEV-event-store-open/F
 // the database identity is minted
 //   or adopted at the first open, recorded in lib_version_initialized, and
@@ -46,20 +52,21 @@
 // Implements: EVS-DEV-version-compatibility/C
 // every append path stamps LibVersion.dataFormat as the event's
 //   lib_format_version.
-// Implements: EVS-DEV-snapshot-promotion-on-open
-// _runBoot promotes lagging view rows
-//   and emits view_snapshot_promoted audit events.
+// Implements: EVS-DEV-view-convergence/B
+// _runBoot creates an empty copy, watermark before the first event of the
+//   log, for each registered view whose fingerprint has no stored unmarked
+//   copy.
+// Implements: EVS-DEV-view-convergence/D
+// _runBoot marks for deletion every stored copy whose fingerprint the
+//   opening build does not register.
 // Implements: EVS-DEV-entry-type-downgrade-refusal/A
 // EntryTypeVersionDowngradeError
-//   is thrown from open when a registered major is below the major of the
-//   highest stored target version.
-// Implements: EVS-DEV-entry-type-downgrade-refusal/B
-// verifyNoEntryTypeDowngrade
-//   runs in _runBoot before any write of the boot transaction.
+//   is thrown from open when a registered major is below the major the
+//   database's generation record holds for that entry type.
 // Implements: EVS-DEV-entry-type-downgrade-refusal/C
 // EntryTypeVersionDowngradeError
-//   carries the entryType id and the stored and registered versions, each a
-//   major and a minor, for diagnostic logging.
+//   carries the entryType id and the recorded and registered versions, each
+//   a major and a minor, for diagnostic logging.
 
 import 'dart:async';
 import 'dart:collection';
@@ -68,45 +75,125 @@ import 'dart:typed_data';
 
 import 'package:canonical_json_jcs/canonical_json_jcs.dart';
 import 'package:crypto/crypto.dart';
+import 'package:event_sourcing/src/actions/action_context.dart';
+import 'package:event_sourcing/src/actions/action_registry.dart';
+import 'package:event_sourcing/src/actions/action_submission.dart';
+import 'package:event_sourcing/src/actions/authorization_decision.dart'
+    show Deny, DenyReason;
+import 'package:event_sourcing/src/actions/authorization_policy.dart';
+import 'package:event_sourcing/src/actions/denial_events.dart';
+import 'package:event_sourcing/src/actions/dispatch_result.dart';
+import 'package:event_sourcing/src/actions/execution_result.dart';
+import 'package:event_sourcing/src/actions/idempotency.dart';
+import 'package:event_sourcing/src/actions/idempotency_errors.dart';
+import 'package:event_sourcing/src/actions/idempotency_store.dart';
+import 'package:event_sourcing/src/actions/permission.dart';
+import 'package:event_sourcing/src/actions/principal.dart' show UserPrincipal;
+import 'package:event_sourcing/src/actions/scope_value.dart';
+import 'package:event_sourcing/src/causal_record.dart';
+import 'package:event_sourcing/src/destinations/batch_envelope_metadata.dart';
 import 'package:event_sourcing/src/destinations/default_destination_wedges_spec.dart';
+import 'package:event_sourcing/src/destinations/destination.dart';
+import 'package:event_sourcing/src/destinations/destination_schedule.dart';
+import 'package:event_sourcing/src/destinations/halt_purpose.dart';
+import 'package:event_sourcing/src/destinations/receiver_response.dart';
+import 'package:event_sourcing/src/destinations/wedge_cause.dart';
+import 'package:event_sourcing/src/destinations/wire_payload.dart';
+import 'package:event_sourcing/src/entry_type_definition.dart';
 import 'package:event_sourcing/src/entry_type_registry.dart';
-import 'package:event_sourcing/src/ingest/batch_envelope.dart';
-import 'package:event_sourcing/src/ingest/chain_verdict.dart';
+import 'package:event_sourcing/src/event_draft.dart';
+import 'package:event_sourcing/src/ingest/chain_checks.dart';
+import 'package:event_sourcing/src/ingest/delivery_channel.dart';
+import 'package:event_sourcing/src/ingest/delivery_envelope.dart';
 import 'package:event_sourcing/src/ingest/ingest_errors.dart';
 import 'package:event_sourcing/src/ingest/ingest_result.dart';
+import 'package:event_sourcing/src/ingest/sender_succession.dart';
 import 'package:event_sourcing/src/lifecycle/boot_errors.dart';
 import 'package:event_sourcing/src/lifecycle/boot_progress.dart';
 import 'package:event_sourcing/src/lifecycle/lib_version.dart';
 import 'package:event_sourcing/src/lifecycle/version_check.dart';
 import 'package:event_sourcing/src/logging.dart';
+import 'package:event_sourcing/src/permissions/wait_for_current_views.dart';
 import 'package:event_sourcing/src/projections/interpreter/aggregate_fold.dart';
+import 'package:event_sourcing/src/projections/interpreter/fold_failure.dart'
+    show FoldFailureReason, foldFailedFindingEvidence;
 import 'package:event_sourcing/src/projections/interpreter/projection_interpreter.dart';
 import 'package:event_sourcing/src/projections/projection_registry.dart';
-import 'package:event_sourcing/src/projections/snapshot_promotion.dart';
+import 'package:event_sourcing/src/projections/projection_spec.dart';
 import 'package:event_sourcing/src/projections/subscription_filter.dart';
+import 'package:event_sourcing/src/projections/view_catch_up.dart';
+import 'package:event_sourcing/src/projections/view_fingerprint.dart';
+import 'package:event_sourcing/src/projections/view_read.dart';
 import 'package:event_sourcing/src/promoters/promoter_registry.dart';
 import 'package:event_sourcing/src/security/event_security_context.dart';
 import 'package:event_sourcing/src/security/security_context_store.dart';
 import 'package:event_sourcing/src/security/security_details.dart';
+import 'package:event_sourcing/src/security/security_finding.dart';
 import 'package:event_sourcing/src/security/security_retention_policy.dart';
 import 'package:event_sourcing/src/security/system_entry_types.dart';
+import 'package:event_sourcing/src/storage/attempt_result.dart';
 import 'package:event_sourcing/src/storage/boot_check.dart';
+import 'package:event_sourcing/src/storage/chain_coordinates.dart';
+import 'package:event_sourcing/src/storage/drain_lock.dart';
+import 'package:event_sourcing/src/storage/drain_records.dart';
 import 'package:event_sourcing/src/storage/event_hash.dart';
+import 'package:event_sourcing/src/storage/fifo_entry.dart';
+import 'package:event_sourcing/src/storage/final_status.dart';
 import 'package:event_sourcing/src/storage/generation.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
+import 'package:event_sourcing/src/storage/postgres/postgres_backend.dart';
+import 'package:event_sourcing/src/storage/queue_records.dart';
+import 'package:event_sourcing/src/storage/record_characters.dart';
+import 'package:event_sourcing/src/storage/send_result.dart';
 import 'package:event_sourcing/src/storage/source.dart';
 import 'package:event_sourcing/src/storage/storage_backend.dart';
+import 'package:event_sourcing/src/storage/storage_description.dart';
+import 'package:event_sourcing/src/storage/storage_reader.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
 import 'package:event_sourcing/src/storage/transaction.dart';
+import 'package:event_sourcing/src/storage/transaction_rerun_limit.dart';
+import 'package:event_sourcing/src/storage/view_copy.dart';
+import 'package:event_sourcing/src/storage/wedged_fifo_summary.dart';
 import 'package:event_sourcing/src/subscriptions/subscription_engine.dart';
 import 'package:event_sourcing/src/subscriptions/subscription_mode.dart';
 import 'package:event_sourcing/src/subscriptions/update.dart';
 import 'package:event_sourcing/src/sync/clock.dart';
+import 'package:event_sourcing/src/sync/declared_configuration.dart';
+import 'package:event_sourcing/src/sync/sync_policy.dart';
 import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
+import 'package:event_sourcing/src/verification/chain_verification_verdict.dart';
+import 'package:event_sourcing/src/verification/chain_walk.dart';
 import 'package:event_sourcing/src/versions.dart';
 import 'package:meta/meta.dart' show internal, visibleForTesting;
 import 'package:provenance/provenance.dart';
 import 'package:uuid/uuid.dart';
+
+part 'actions/action_dispatcher.dart';
+// Implements: EVS-DEV-storage-capability/C
+// the library's writers that take a handed-out object -- the bootstrap, the
+//   destination registry, the delivery cycle and its fill and drain, the
+//   view rebuild and the action dispatcher -- share the event store's Dart
+//   library, so the backend, the reserved append, the trigger slot, the
+//   wake and the collector's publish stay private to it.
+// Implements: EVS-PRD-storage-barrier/B
+// no handed-out object carries a member that writes the library's state
+//   outside its public operations; those members are library-private.
+// Implements: EVS-PRD-storage-barrier/E
+// no handed-out object yields the storage backend or a handle under it.
+// Implements: EVS-DEV-storage-capability/D
+// the members of the handed-out types that are accessible outside their
+//   declaring Dart library are pinned, by name and signature, in a list
+//   committed with the library's tests; the members declared here and in
+//   its parts are the event store's side of that surface.
+part 'bootstrap.dart';
+part 'destinations/destination_registry.dart';
+part 'ingest/receiver_endpoint.dart';
+part 'projections/rebuild.dart';
+part 'sync/drain.dart';
+part 'sync/fill_batch.dart';
+part 'sync/historical_replay.dart';
+part 'sync/succession_restore.dart';
+part 'sync/sync_cycle.dart';
 
 /// The delivery cycle's trigger, held in an event store's trigger slot.
 typedef _DeliveryTrigger = Future<void> Function();
@@ -135,15 +222,15 @@ class PublishCollector {
   final List<StoredEvent> _events = <StoredEvent>[];
   final List<AggregateFoldChange> _rowChanges = <AggregateFoldChange>[];
 
-  @internal
-  void add(StoredEvent event) {
+  // Implements: EVS-PRD-storage-barrier/D
+  // publishing to live subscribers is private to the event store's library.
+  void _add(StoredEvent event) {
     _checkOpen();
     if (_events.isEmpty) _onFirstEvent(event.sequenceNumber);
     _events.add(event);
   }
 
-  @internal
-  void addRowChanges(Iterable<AggregateFoldChange> changes) {
+  void _addRowChanges(Iterable<AggregateFoldChange> changes) {
     _checkOpen();
     _rowChanges.addAll(changes);
   }
@@ -183,43 +270,38 @@ class RetentionResult {
 }
 
 /// Thrown by [EventStore.open] when a registered entry type's major is
-/// below the major of the highest target version stored for that entry type
-/// in `view_target_versions`: the views hold rows folded under a newer
-/// major, which this build cannot read. A higher stored minor of the same
-/// major is not a downgrade. The resolution is a build whose registered
-/// major is at least [fromVersion]'s major.
+/// below the highest major the database's generation record holds for it:
+/// an earlier boot registered that major, so events or copies of that
+/// major may already exist, which this build cannot read. A higher
+/// recorded minor of the same major is not a downgrade. The resolution is
+/// a build whose registered major is at least [fromVersion]'s major.
+// Implements: EVS-DEV-entry-type-downgrade-refusal/A
 class EntryTypeVersionDowngradeError extends Error {
   EntryTypeVersionDowngradeError({
     required this.entryType,
     required this.fromVersion,
     required this.toVersion,
-    this.recordedByOpen = false,
   });
 
-  /// The entry type whose registered major is below its stored major.
+  /// The entry type whose registered major is below its recorded major.
   final String entryType;
 
-  /// The highest target version stored for [entryType].
+  /// The highest major the generation record holds for [entryType], with
+  /// minor 0.
   final EntryTypeVersion fromVersion;
 
   /// The version this build registers for [entryType].
   final EntryTypeVersion toVersion;
 
-  /// True when the higher major comes from the database's generation
-  /// record (an earlier open registered it) rather than from a stored view
-  /// target; [fromVersion] then carries that major with minor 0.
-  final bool recordedByOpen;
-
   @override
   String toString() =>
       'EntryTypeVersionDowngradeError: entry type "$entryType" was '
-      '${recordedByOpen ? 'registered at major ${fromVersion.major} by an '
-                'earlier open of the database (its generation record)' : 'previously folded at version $fromVersion (stored in '
-                'view_target_versions)'}, '
-      'but this build registers version $toVersion. '
-      'A build whose registered major (${toVersion.major}) is below the '
-      'stored major (${fromVersion.major}) is refused. Run a build that '
-      'registers major ${fromVersion.major} or higher for "$entryType".';
+      'registered at major $fromVersion by an earlier open of the '
+      'database (its generation record), but this build registers version '
+      '$toVersion. A build whose registered major (${toVersion.major}) is '
+      'below the recorded major (${fromVersion.major}) is refused. Run a '
+      'build that registers major ${fromVersion.major} or higher for '
+      '"$entryType".';
 }
 
 /// The substrate's append-only event log. Serves callers across mobile and
@@ -232,53 +314,234 @@ class EntryTypeVersionDowngradeError extends Error {
 /// handlers server-side).
 class EventStore {
   EventStore._({
-    required this.backend,
+    required StorageBackend backend,
     required this.entryTypes,
     required this.source,
-    required this.securityContexts,
+    required MutableSecurityContextStore securityContexts,
+    required OpenedStorage? storage,
     required this.databaseId,
+    required Map<String, String> viewCopyIds,
     required GenerationRegistration registration,
     ProjectionRegistry? projections,
     PromoterRegistry? promoters,
     Clock? clock,
     Uuid? uuid,
-  }) : _interpreter = ProjectionInterpreter(
+  }) : _backend = backend,
+       _viewCopyIds = viewCopyIds,
+       _interpreter = ProjectionInterpreter(
          projections: projections ?? ProjectionRegistry(),
          promoters: promoters ?? PromoterRegistry(),
          entryTypes: entryTypes,
        ),
        _promoters = promoters ?? PromoterRegistry(),
+       _securityContexts = securityContexts,
+       securityContexts = _SecurityContextReader(securityContexts),
+       _storage = storage,
        _registration = registration,
        _clock = clock,
-       _uuid = uuid ?? const Uuid();
+       _uuid = uuid ?? const Uuid() {
+    // _catchUp's recordFoldFailedFinding callback closes over this
+    // instance's _recordCatchUpFoldFailedFinding, which is only legal once
+    // construction has reached the constructor body.
+    _catchUp = ViewCatchUpDriver(
+      backend: backend,
+      entryTypes: entryTypes,
+      projections: projections ?? ProjectionRegistry(),
+      promoters: promoters ?? PromoterRegistry(),
+      viewCopyIds: viewCopyIds,
+      databaseId: databaseId,
+      recordFoldFailedFinding: _recordCatchUpFoldFailedFinding,
+      clock: clock,
+    );
+  }
 
-  final StorageBackend backend;
+  /// The storage this store appends to and reads from. It is private to
+  /// the event store's Dart library: the library's own writers (the
+  /// destination registry, the delivery cycle, the view rebuild, the
+  /// bootstrap) share that library and read it directly.
+  // Implements: EVS-DEV-storage-capability/C
+  // the backend is reachable only inside the event store's Dart library.
+  final StorageBackend _backend;
   final EntryTypeRegistry entryTypes;
   final Source source;
-  final MutableSecurityContextStore securityContexts;
+
+  /// The id of this instance's current copy of each registered view, by
+  /// view name, as the boot decided it (EVS-DEV-view-convergence/B+D). Row
+  /// storage addresses a view's rows by its copy id, never by its name.
+  final Map<String, String> _viewCopyIds;
+
+  /// Catches up this instance's copies that are behind after boot, and
+  /// deletes copies marked for deletion, in transactions bounded to run
+  /// after this store's construction and before it closes
+  /// (EVS-DEV-view-convergence).
+  late final ViewCatchUpDriver _catchUp;
+
+  /// The copy id of [viewName]'s current copy for this instance. Throws
+  /// [StateError] for a view no registered [ProjectionSpec] names.
+  String _copyIdOf(String viewName) {
+    final copyId = _viewCopyIds[viewName];
+    if (copyId == null) {
+      throw StateError(
+        'EventStore: "$viewName" names no view this instance registered '
+        'at EventStore.open.',
+      );
+    }
+    return copyId;
+  }
+
+  /// Test-only access to [_copyIdOf]: the id of this instance's current
+  /// copy of [viewName]'s view, the key row storage methods take in place
+  /// of the view's name.
+  @visibleForTesting
+  String copyIdOf(String viewName) => _copyIdOf(viewName);
+
+  /// Test-only access to the catch-up driver's in-memory progress of
+  /// [copyId]: its last failure and the backoff it is retrying under, if
+  /// it is behind, or null when no catch-up transaction on it has failed.
+  @visibleForTesting
+  ViewCopyProgress? catchUpProgressOf(String copyId) =>
+      _catchUp.progressOf(copyId);
+
+  /// The security contexts stored beside this store's events, for reading:
+  /// an object of its own that declares no writing member. The event
+  /// store's own operations (append, redaction, retention) write them.
+  // Implements: EVS-DEV-storage-capability/E
+  // the security-context store handed to the application is a separate
+  //   object declaring only the reads.
+  final SecurityContextStore securityContexts;
+
+  /// The writing store over the same contexts, private to the event store.
+  final MutableSecurityContextStore _securityContexts;
+
+  /// Reads of this store's storage: an object of its own that declares no
+  /// writing member. Its transactions run for reads only (`READ ONLY` on
+  /// Postgres), and its `...InTxn` reads accept the handles it issued and
+  /// those [runTransaction] issued, each while its body runs.
+  // Implements: EVS-DEV-storage-capability/E
+  // the storage reader handed to the application is a separate object
+  //   delegating only the backend's reads.
+  late final StorageReader reader = _StorageReader(this);
+
+  /// This store's receiver endpoint: it accepts the native deliveries a
+  /// sender presents on its delivery channels.
+  // Implements: EVS-PRD-delivery-channel/P
+  // the library provides the receiver endpoint over the event store; it is
+  //   never built from a backend.
+  late final ReceiverEndpoint receiverEndpoint = ReceiverEndpoint._(this);
+
+  /// This store's succession-restore operation, private to the library:
+  /// [restoreFromReceiver] is the public entry point.
+  late final _SuccessionRestore _successionRestore = _SuccessionRestore._(this);
+
+  /// Restores, through [destinationId] (a destination [registry] holds
+  /// registered, whose [Destination.channelPull] this pulls with), every
+  /// channel the destination's receiver lists for [predecessorDatabaseId]
+  /// and that identity's succession lineage, storing every carried event
+  /// this database does not hold and appending the succession event
+  /// (`system.destination_sender_succeeded`) naming [predecessorDatabaseId]
+  /// and each restored channel's last delivery, all in one transaction.
+  ///
+  /// Pulls the channel listing and, for each listed channel, its deliveries
+  /// from 1 up to the listing's record, outside any transaction. Every
+  /// carried event, deduplicated across the channels and generations that
+  /// carry it (an event served on a channel's earlier generation and its
+  /// current one is the ordinary case after that channel resumed on a new
+  /// generation), is stored in lineage order (the earliest predecessor
+  /// first, derived from the succession events among the pulled records),
+  /// then ascending origin position, then ascending registration
+  /// identifier, generation and delivery number of the lowest pulled
+  /// delivery that carried it. [initiator] names who asked for the restore.
+  ///
+  /// Throws [SuccessionRestoreRefused], storing nothing, when the restore
+  /// is refused (see its `reason` constants): the successor's log already
+  /// holds an authored application event or an authored succession event,
+  /// [predecessorDatabaseId] names the successor's own identity, the
+  /// receiver lists no channel for it, or a pull cannot serve a delivery
+  /// the restore asks for.
+  // Implements: EVS-DEV-sender-succession/A
+  // the restore operation pulls the channels a receiver lists for a
+  //   predecessor identity and each listed channel's deliveries from 1 up
+  //   to the receiver's record.
+  // Implements: EVS-DEV-sender-succession/C
+  // every carried event this database does not hold is stored, in one
+  //   transaction, in lineage order, then ascending origin position, then
+  //   ascending registration identifier, generation and delivery number of
+  //   the lowest pulled delivery carrying it, each with the successor's
+  //   provenance entry naming the channel and delivery it was pulled from.
+  // Implements: EVS-DEV-sender-succession/D
+  // the succession event is appended only in the transaction that stores
+  //   the predecessor's events, naming the successor's destination and
+  //   registration, the successor, the predecessor and each restored
+  //   channel's last delivery.
+  // Implements: EVS-PRD-delivery-channel/Q
+  // a database that restores a predecessor's deliveries records a
+  //   succession event in the transaction that stores them.
+  // Implements: EVS-PRD-event-log/C
+  // the restore stores one identity's events in the order that identity
+  //   wrote them.
+  // Implements: EVS-DEV-event-record/D+G
+  // the restore's provenance entry names the restoring database and keeps
+  //   every provenance entry the record carries exactly as carried.
+  // Implements: EVS-PRD-storage-barrier/C
+  // the restore operation is one of the public operations that may append
+  //   a reserved event.
+  // Implements: EVS-PRD-destinations/K
+  // the restore operation is one of the public operations exempted from
+  //   the internal-mutator rule.
+  // Implements: EVS-DEV-sender-succession/H
+  // the restore refuses, before storing anything, a restore into a
+  //   successor whose log holds an authored application event, one whose
+  //   log holds an authored succession event, one naming the successor's
+  //   own identity, one the receiver lists no channel for, and one whose
+  //   pull cannot serve a delivery asked for; throws
+  //   SuccessionRestoreRefused naming the refusal.
+  // Implements: EVS-PRD-delivery-channel/R
+  // the restore refuses, before storing anything, into a database that has
+  //   authored an event of an application entry type.
+  Future<StoredEvent> restoreFromReceiver({
+    required DestinationRegistry registry,
+    required String destinationId,
+    required String predecessorDatabaseId,
+    required Initiator initiator,
+  }) => _successionRestore._run(
+    registry: registry,
+    destinationId: destinationId,
+    predecessorDatabaseId: predecessorDatabaseId,
+    initiator: initiator,
+  );
+
+  /// The idempotency store over this store's storage, for an action
+  /// dispatcher, when it runs on Postgres: its outcomes persist in the
+  /// database's `idempotency` table, and every lookup, record and sweep runs
+  /// in the backend's fenced transactions. Null on any other backend, where
+  /// the application supplies an idempotency store of its own.
+  // Implements: EVS-DEV-storage-capability/I
+  // the library builds the idempotency store over the storage it opened.
+  late final IdempotencyStore? idempotencyStore = switch (_backend) {
+    final PostgresBackend postgres => postgres.idempotencyStoreOverThis(),
+    _ => null,
+  };
+
+  /// The transaction handles this store has issued whose body is running.
+  final Set<Transaction> _liveHandles = Set<Transaction>.identity();
+
+  /// The storage [open] opened from its description, which [close] closes
+  /// when the library opened it; null for [openForTest], whose backend the
+  /// caller keeps.
+  final OpenedStorage? _storage;
 
   /// The trigger slot: the trigger of the one started, not yet closed
   /// delivery cycle over this store, or null.
   _DeliveryTrigger? _deliveryTrigger;
-
-  /// The trigger of the delivery cycle that holds this store's trigger
-  /// slot, or null. Only `SyncCycle` sets it: when it starts, and back to
-  /// null when it closes.
-  @internal
-  Future<void> Function()? get deliveryTrigger => _deliveryTrigger;
-
-  @internal
-  set deliveryTrigger(Future<void> Function()? trigger) =>
-      _deliveryTrigger = trigger;
 
   /// Wakes the delivery cycle that holds the trigger slot, if any, without
   /// waiting for it. Nothing it raises reaches the caller: a trigger that
   /// throws, synchronously or through its future, is logged.
   // Implements: EVS-DEV-destination-drain-lock/D
   // a delivery-cycle trigger never raises into the operation that fires it.
-  @internal
-  void wakeDeliveryCycle() {
+  void _wakeDeliveryCycle() {
     final trigger = _deliveryTrigger;
+    _observeDeliveryWake(cycleWoken: trigger != null);
     if (trigger == null) return;
     void report(Object e, StackTrace st) => libraryLog(
       'event_store',
@@ -291,6 +554,22 @@ class EventStore {
       unawaited(trigger().then((_) {}, onError: report));
     } on Object catch (e, st) {
       report(e, st);
+    }
+  }
+
+  static void _observeDeliveryWake({required bool cycleWoken}) {
+    final seam = DeliveryTestHooks.current?.onDeliveryWake;
+    if (seam == null) return;
+    try {
+      seam(cycleWoken);
+    } on Object catch (e, st) {
+      libraryLog(
+        'event_store',
+        'the onDeliveryWake test seam threw',
+        level: LibraryLogLevel.severe,
+        error: e,
+        stackTrace: st,
+      );
     }
   }
 
@@ -320,10 +599,19 @@ class EventStore {
   final Uuid _uuid;
   final SubscriptionEngine _subs = SubscriptionEngine();
 
-  /// Opens an [EventStore] against [storage]: the single production entry
-  /// point. All required collaborators ([entryTypes], [source],
-  /// [securityContexts]) must be supplied; the returned store is fully
-  /// configured and ready for use.
+  /// Opens an [EventStore] over the storage [storage] describes: the single
+  /// production entry point. The returned store is fully configured and
+  /// ready for use.
+  ///
+  /// For a [SembastStorage] or [PostgresStorage] description the library
+  /// opens the storage itself, with the Sembast factory it selects for the
+  /// description or with `PostgresBackend.open`, builds the security-context
+  /// store over it, and holds both: [close] closes that storage, and an open
+  /// that fails after the storage opened closes it before the error reaches
+  /// the caller. An [ApplicationSuppliedStorage] carries a backend the
+  /// application constructed, with its security-context store; the
+  /// application keeps it and closes it, and neither [close] nor a failed
+  /// open does.
   ///
   /// The open first registers, in [entryTypes] and [projections], every
   /// reserved system entry type ([kSystemEntryTypes]) and the library's
@@ -363,10 +651,9 @@ class EventStore {
   ///   and by the database's generation record, must equal this build's
   ///   ([LibVersion.dataFormat]); another major throws
   ///   [DataFormatIncompatibleError].
-  /// - No registered entry type's major may be below the major stored for
-  ///   it in `view_target_versions`, or recorded for it in the generation
-  ///   record by an earlier boot; a lower one throws
-  ///   [EntryTypeVersionDowngradeError].
+  /// - No registered entry type's major may be below the major recorded
+  ///   for it in the generation record by an earlier boot; a lower one
+  ///   throws [EntryTypeVersionDowngradeError].
   ///
   /// Only the library-version events this database appended itself count;
   /// a peer's library-version events it ingested are never read as its
@@ -374,52 +661,48 @@ class EventStore {
   /// `lib_version_initialized` event at the first open (minting the
   /// database identity, [databaseId]), or a `lib_version_changed` event
   /// when this build's package version or data format differs from the one
-  /// recorded last, older ones included; the target versions of newly
-  /// registered view and entry-type pairs; the promotion of views whose
-  /// stored targets lag the registered versions; the re-derivation of views
-  /// that are behind the log; the generation record, merged with this
-  /// build's generation; and a boot record. A refused boot writes nothing.
+  /// recorded last, older ones included; an empty copy, at a watermark
+  /// before the first event of the log, for every registered view whose
+  /// fingerprinted definition has no stored unmarked copy (it catches up
+  /// with the log after the open returns); every stored copy whose
+  /// fingerprint this build does not register, marked for deletion; the
+  /// generation record, merged with this build's generation; and a boot
+  /// record. A refused boot writes nothing.
   ///
   /// Deployment. Builds with the same data-format major and the same
   /// entry-type majors share a database in any mix -- a canary beside the
   /// serving revision, several instances, a restart, a rollback to the
   /// previous release -- and every open by a different version is recorded
-  /// in the log. A view, or an entry type in a view's interest, that only
-  /// some of those builds register misses the events the others store
-  /// until a build that registers it opens the database again: that open
-  /// re-derives it (or `rebuildView` does). That catch-up follows the entry
-  /// types a view's interest names; a view whose interest names none (one
-  /// that selects by aggregate type), or whose interest differs between the
-  /// builds only outside its entry types, is not caught up: run
-  /// `rebuildView` for it once no build lacking it, or holding the narrower
-  /// interest, still serves the database. A build of another data-format
-  /// major, or one that raises an entry-type major, is deployed
-  /// stop-then-start: every instance of the old revision stops before the
-  /// first instance of the new one opens the database, and the old
-  /// revision's next open is refused afterwards. Recovery after such a
-  /// deployment is a restore from a backup taken before the switch, or a
-  /// roll-forward. Evolve compatibly where possible: add an optional field
-  /// as a minor step, and make a real reshape a new entry type.
+  /// in the log. The library stores a view's rows per fingerprint of its
+  /// definition (its interest, shape, entry-type versions and promoter
+  /// chains): builds that agree share one copy and fold each event into it
+  /// as they store it, and a build whose definition is new or changed gets
+  /// a copy of its own, which starts empty and catches up with the log
+  /// after this open returns, in short bounded transactions
+  /// (`EVS-DEV-view-convergence`). A build of another data-format major, or
+  /// one that raises an entry-type major, is deployed stop-then-start:
+  /// every instance of the old revision stops before the first instance of
+  /// the new one opens the database, and the old revision's next open is
+  /// refused afterwards. Recovery after such a deployment is a restore from
+  /// a backup taken before the switch, or a roll-forward. Evolve
+  /// compatibly where possible: add an optional field as a minor step, and
+  /// make a real reshape a new entry type.
   ///
   /// On a backend whose transactions contend with concurrent appends, the
   /// boot first locks what every append writes, so the appends of a
   /// revision serving the same database wait for the boot to commit rather
   /// than abort it. The wait lasts for the whole boot: its reads of the
-  /// library-version events and the stored view targets, its checks, and
-  /// any seeding, promotion and re-derivation it performs, the last two
-  /// proportional to the events and rows of the views they rewrite. A
-  /// release that promotes a large view, or adds a view over a long log,
-  /// pauses the serving revision's appends for as long; measure the boot on
-  /// a copy of production data before such a rollout.
+  /// library-version events, the registry audit events and the latest
+  /// event of the log, its checks, and its creating and marking of view
+  /// copies, a constant amount of work per registered view and stored
+  /// copy. It folds no view row, so the pause does not grow with a view's
+  /// size or the log's length.
   ///
   /// Progress. [onBootProgress], when given, observes the boot: it receives
-  /// a [BootProgress] when the open starts its checks ([BootPhase.checks]),
-  /// when snapshot promotion and view catch-up each start, after each chunk
-  /// of their work and when each ends ([BootPhase.promotion],
-  /// [BootPhase.catchUp]; a phase with nothing to re-derive reports
-  /// nothing), and once the boot has committed, just before the open
-  /// returns ([BootPhase.complete]). A refused open reports no completion. A
-  /// boot transaction the backend runs again reports its phases again from
+  /// a [BootProgress] when the open starts its checks ([BootPhase.checks])
+  /// and once the boot has committed, just before the open returns
+  /// ([BootPhase.complete]). A refused open reports no completion. A boot
+  /// transaction the backend runs again reports its phases again from
   /// [BootPhase.checks] when the new run starts; until then the discarded
   /// run's last report stands.
   ///
@@ -437,8 +720,7 @@ class EventStore {
   ///
   /// While the boot runs, a call from the observer, or from work it started
   /// in its zone, that opens an event store, runs a transaction of an event
-  /// store (its writes, [runTransaction], ingest, [logRejectedBatch], and
-  /// `rebuildView`) or starts a transaction on a storage backend the library
+  /// store (its writes, [runTransaction], ingest, and `rebuildView`) or starts a transaction on a storage backend the library
   /// ships throws [StateError], whichever database it is over. A callback
   /// the observer hands to code registered outside its zone (a stream
   /// listener subscribed elsewhere, say), a read a backend serves outside a
@@ -451,11 +733,13 @@ class EventStore {
   // the boot reports its phases to an optional observer that decides nothing;
   //   the completion is reported after the boot committed; an open the
   //   observer calls while the boot runs is refused.
+  // Implements: EVS-PRD-storage-barrier/I
+  // an open that fails after the library opened its storage closes that
+  //   storage before the failure reaches the caller.
   static Future<EventStore> open({
-    required StorageBackend storage,
+    required StorageDescription storage,
     required EntryTypeRegistry entryTypes,
     required Source source,
-    required MutableSecurityContextStore securityContexts,
     ProjectionRegistry? projections,
     PromoterRegistry? promoters,
     Clock? clock,
@@ -468,31 +752,43 @@ class EventStore {
       progress.report(BootPhase.checks, 0, 0);
       final effectiveProjections = projections ?? ProjectionRegistry();
       _registerLibraryDefinitions(entryTypes, effectiveProjections);
+      entryTypes.seal();
       effectiveProjections.seal();
       final effectivePromoters = (promoters ?? PromoterRegistry())..seal();
-      final (:databaseId, :registration) = await _guardedBoot(
-        storage: storage,
-        entryTypes: entryTypes,
-        projections: effectiveProjections,
-        promoters: effectivePromoters,
-        recordVersion: true,
-        progress: progress,
-      );
-      final store = EventStore._(
-        backend: storage,
-        entryTypes: entryTypes,
-        source: source,
-        securityContexts: securityContexts,
-        databaseId: databaseId,
-        registration: registration,
-        projections: effectiveProjections,
-        promoters: effectivePromoters,
-        clock: clock,
-        uuid: uuid,
-      );
+      final opened = await openDescribedStorage(storage);
+      final EventStore store;
+      try {
+        final (:databaseId, :copyIds, :registration) = await _guardedBoot(
+          storage: opened.backend,
+          entryTypes: entryTypes,
+          projections: effectiveProjections,
+          promoters: effectivePromoters,
+          recordVersion: true,
+          progress: progress,
+        );
+        store = EventStore._(
+          backend: opened.backend,
+          entryTypes: entryTypes,
+          source: source,
+          securityContexts: opened.securityContexts,
+          storage: opened,
+          databaseId: databaseId,
+          viewCopyIds: copyIds,
+          registration: registration,
+          projections: effectiveProjections,
+          promoters: effectivePromoters,
+          clock: clock,
+          uuid: uuid,
+        );
+      } catch (_) {
+        await opened.close();
+        rethrow;
+      }
       progress
         ..bootFinished()
         ..report(BootPhase.complete, 0, 0);
+      store._catchUp.onCaughtUp = store._subs.publishViewCaughtUp;
+      store._catchUp.start();
       return store;
     } finally {
       progress.bootFinished();
@@ -515,10 +811,19 @@ class EventStore {
   /// identity. The guarantee that the log records every version that opened
   /// the database holds for [open] only. [onBootProgress] observes the boot
   /// as it does for [open].
+  ///
+  /// The caller keeps [storage]: [close] does not close it, so several
+  /// stores may run over one backend. In a build with assertions disabled
+  /// it throws [StateError] before it touches [storage].
   // Implements: EVS-DEV-event-store-open/A
   // the test-only constructor: visible for testing, so the analyzer reports
   //   a call from production code; the refusals of open; no library-version
   //   event.
+  // Implements: EVS-DEV-storage-capability/K
+  // in a build with assertions disabled the test-only open refuses with
+  //   StateError before it touches the backend.
+  // Implements: EVS-PRD-storage-barrier/J
+  // without assertions the test-only entry point admits no backend.
   @visibleForTesting
   static Future<EventStore> openForTest({
     required StorageBackend storage,
@@ -531,15 +836,27 @@ class EventStore {
     Uuid? uuid,
     void Function(BootProgress progress)? onBootProgress,
   }) async {
+    var assertionsEnabled = false;
+    assert(() {
+      assertionsEnabled = true;
+      return true;
+    }(), 'admits the test-only open');
+    if (!assertionsEnabled) {
+      throw StateError(
+        'EventStore.openForTest runs only in a build with assertions '
+        'enabled; open an event store with EventStore.open',
+      );
+    }
     refuseCallFromBootProgressObserver('EventStore.openForTest');
     final progress = BootProgressReporter(onBootProgress);
     try {
       progress.report(BootPhase.checks, 0, 0);
       final effectiveProjections = projections ?? ProjectionRegistry();
       _registerLibraryDefinitions(entryTypes, effectiveProjections);
+      entryTypes.seal();
       effectiveProjections.seal();
       final effectivePromoters = (promoters ?? PromoterRegistry())..seal();
-      final (:databaseId, :registration) = await _guardedBoot(
+      final (:databaseId, :copyIds, :registration) = await _guardedBoot(
         storage: storage,
         entryTypes: entryTypes,
         projections: effectiveProjections,
@@ -552,7 +869,9 @@ class EventStore {
         entryTypes: entryTypes,
         source: source,
         securityContexts: securityContexts,
+        storage: null,
         databaseId: databaseId,
+        viewCopyIds: copyIds,
         registration: registration,
         projections: effectiveProjections,
         promoters: effectivePromoters,
@@ -562,6 +881,8 @@ class EventStore {
       progress
         ..bootFinished()
         ..report(BootPhase.complete, 0, 0);
+      store._catchUp.onCaughtUp = store._subs.publishViewCaughtUp;
+      store._catchUp.start();
       return store;
     } finally {
       progress.bootFinished();
@@ -588,6 +909,22 @@ class EventStore {
     EntryTypeRegistry entryTypes,
     ProjectionRegistry projections,
   ) {
+    // Implements: EVS-DEV-destination-drain/L
+    // an open refuses a registry holding an entry type of the reserved
+    //   namespace that the library does not declare.
+    for (final held in entryTypes.all()) {
+      if (isReservedEntryType(held.id) &&
+          !kReservedSystemEntryTypeIds.contains(held.id)) {
+        throw ArgumentError.value(
+          held.id,
+          'entryTypes',
+          'entryType id "${held.id}" is in the reserved entry-type namespace '
+              '(every id beginning with "system." and '
+              '${kReservedFixedEntryTypeIds.join(', ')}), which only the '
+              'library declares',
+        );
+      }
+    }
     for (final definition in kSystemEntryTypes) {
       final held = entryTypes.byId(definition.id);
       if (held != null && !identical(held, definition)) {
@@ -648,7 +985,13 @@ class EventStore {
   // Implements: EVS-DEV-version-compatibility/F+G
   // register before any write; the boot transaction runs under the boot
   //   lock; a failed open releases its registration.
-  static Future<({String databaseId, GenerationRegistration registration})>
+  static Future<
+    ({
+      String databaseId,
+      Map<String, String> copyIds,
+      GenerationRegistration registration,
+    })
+  >
   _guardedBoot({
     required StorageBackend storage,
     required EntryTypeRegistry entryTypes,
@@ -665,10 +1008,17 @@ class EventStore {
         for (final definition in entryTypes.all())
           definition.id: definition.registeredVersion,
       },
+      // Implements: EVS-DEV-view-convergence/C
+      // the fingerprint of each registered view is registered with the
+      //   guard's live components before the boot transaction.
+      viewFingerprints: <String>{
+        for (final spec in projections.all())
+          viewFingerprint(spec, entryTypes, promoters),
+      },
     );
     final registration = await storage.registerGeneration(descriptor);
     try {
-      final databaseId = await _runBoot(
+      final (:databaseId, :copyIds) = await _runBoot(
         storage: storage,
         entryTypes: entryTypes,
         projections: projections,
@@ -679,7 +1029,11 @@ class EventStore {
         progress: progress,
       );
       await registration.completeBoot();
-      return (databaseId: databaseId, registration: registration);
+      return (
+        databaseId: databaseId,
+        copyIds: copyIds,
+        registration: registration,
+      );
     } catch (_) {
       await registration.release();
       rethrow;
@@ -688,36 +1042,38 @@ class EventStore {
 
   /// The boot of [open] (with [recordVersion]) and of [openForTest]
   /// (without), in one `bootTransaction` of [storage]. Returns the database
-  /// identity.
+  /// identity and, for every view [projections] registers, the id of its
+  /// current copy.
   ///
   /// Every refusal is decided before the first write: the stored shapes,
   /// the database identity, the data format (in the log, then in the
-  /// generation record) and the entry-type majors (in the stored view
-  /// targets, then in the generation record). Then, in order: the
-  /// library-version event (when [recordVersion] and one is due),
-  /// view-target seeding, snapshot promotion (each promoted pair audited by
-  /// a `view_snapshot_promoted` event), the re-derivation of views behind
-  /// the log, the merged generation record and [registration]'s own
-  /// records, and the boot record. The whole body may run more than once (a serialization retry, or a browser database re-running it
-  /// after another tab committed); each run decides again from what it
-  /// reads.
-  // Implements: EVS-DEV-event-store-open/B+C+D+E+F
+  /// generation record) and the entry-type majors (in the generation
+  /// record). Then, in order: the library-version event (when
+  /// [recordVersion] and one is due), an empty copy for every registered
+  /// view whose fingerprint has no stored unmarked copy, marking for
+  /// deletion every stored copy whose fingerprint the opening build does
+  /// not register, the merged generation record and [registration]'s own
+  /// records, and the boot record. The boot folds no view row: a new copy
+  /// catches up with the log after the open returns. The whole body may
+  /// run more than once (a serialization retry, or a browser database
+  /// re-running it after another tab committed); each run decides again
+  /// from what it reads.
+  // Implements: EVS-DEV-event-store-open/E
   // one boot transaction; refusals before any write; the library-version
-  //   event before seeding and promotion; the boot record on every accepted
-  //   boot.
-  // Implements: EVS-DEV-entry-type-downgrade-refusal/A+B
-  // verifyNoEntryTypeDowngrade runs before any write of the boot
-  //   transaction.
-  // Implements: EVS-DEV-snapshot-promotion-on-open/A+B+C
-  // lagging view rows are re-derived and a view_snapshot_promoted audit
-  //   appended per pair, in the boot transaction.
-  // Implements: EVS-DEV-version-compatibility/L
-  // views behind the log for an entry type in their interest are
-  //   re-derived in the boot transaction.
+  //   event and registry audit before creating or marking any copy; the
+  //   boot record on every accepted boot.
+  // Implements: EVS-DEV-entry-type-downgrade-refusal/A
+  // the downgrade refusal runs before any write of the boot transaction.
+  // Implements: EVS-DEV-view-convergence/B+D
+  // the boot creates an empty copy for every unfingerprinted registered
+  //   view and marks for deletion every stored copy whose fingerprint the
+  //   opening build does not register; sparing a copy a live registration
+  //   of another instance names is added once the generation guard's live
+  //   registrations exist.
   // Implements: EVS-DEV-version-compatibility/I
   // the generation record refuses, before any write, a build it does not
   //   admit, and every accepted boot merges its generation into it.
-  static Future<String> _runBoot({
+  static Future<({String databaseId, Map<String, String> copyIds})> _runBoot({
     required StorageBackend storage,
     required EntryTypeRegistry entryTypes,
     required ProjectionRegistry projections,
@@ -729,12 +1085,14 @@ class EventStore {
   }) {
     final hooks = DeliveryTestHooks.current;
     final build = _build();
-    return storage.bootTransaction<String>((txn) async {
+    return storage.bootTransaction<
+      ({String databaseId, Map<String, String> copyIds})
+    >((txn) async {
       _observeBootBodyRun(hooks);
       progress.beginBodyRun();
 
       // -------- Decide: nothing below writes until every refusal ran.
-      await _refuseEarlierFormatEvents(storage, txn);
+      await _refuseEarlierFormatEvents(storage, txn, build.dataFormat);
       final storedId = await storage.readDatabaseIdTxn(txn);
       final LocalLibVersionHistory history;
       try {
@@ -790,12 +1148,10 @@ class EventStore {
           dataFormat: build.dataFormat,
         );
       }
-      await verifyNoEntryTypeDowngrade(
-        txn: txn,
-        backend: storage,
-        projections: projections,
-        entryTypes: entryTypes,
-      );
+      // Implements: EVS-DEV-entry-type-downgrade-refusal/A
+      // the database's generation record is the one place that knows
+      //   every major the database has been opened with, so the downgrade
+      //   refusal reads it alone.
       if (record != null) {
         for (final entry in descriptor.entryTypes.entries) {
           final recordedMajor = record.entryTypeMajors[entry.key];
@@ -804,7 +1160,6 @@ class EventStore {
               entryType: entry.key,
               fromVersion: EntryTypeVersion(recordedMajor, 0),
               toVersion: entry.value,
-              recordedByOpen: true,
             );
           }
         }
@@ -826,6 +1181,7 @@ class EventStore {
               'database_id': databaseId,
               'initializedAt': DateTime.now().toUtc().toIso8601String(),
             },
+            databaseId: databaseId,
           );
           versionEventAppended = true;
         }
@@ -847,6 +1203,7 @@ class EventStore {
               'toDataFormat': build.dataFormat.toJson(),
               'changedAt': DateTime.now().toUtc().toIso8601String(),
             },
+            databaseId: databaseId,
           );
           versionEventAppended = true;
         }
@@ -855,48 +1212,52 @@ class EventStore {
           (hooks?.afterBootVersionEvent?.call() ?? false)) {
         throw const InjectedFailure('afterBootVersionEvent');
       }
-      final seeded = await seedViewTargetVersions(
-        txn: txn,
-        backend: storage,
-        projections: projections,
-        entryTypes: entryTypes,
-      );
-      await promoteViewSnapshots(
-        txn: txn,
-        backend: storage,
-        projections: projections,
-        promoters: promoters,
-        entryTypes: entryTypes,
-        emitAudit:
-            ({
-              required String viewName,
-              required String entryType,
-              required EntryTypeVersion fromVersion,
-              required EntryTypeVersion toVersion,
-              required int rowsPromoted,
-            }) async {
-              await _appendViewSnapshotPromotedAuditInTxn(
-                txn,
-                storage,
-                entryTypes,
-                viewName: viewName,
-                entryType: entryType,
-                fromVersion: fromVersion,
-                toVersion: toVersion,
-                rowsPromoted: rowsPromoted,
-              );
-            },
-        progress: progress,
-      );
-      await catchUpViews(
-        txn: txn,
-        backend: storage,
-        projections: projections,
-        promoters: promoters,
-        entryTypes: entryTypes,
-        seeded: seeded,
-        progress: progress,
-      );
+      // Implements: EVS-DEV-view-convergence/A+B
+      // at most one copy of a fingerprint that is not marked for deletion;
+      //   an empty copy, watermark before the first event of the log, is
+      //   created for every registered view whose fingerprint has none.
+      final storedCopies = await storage.readViewCopiesInTxn(txn);
+      final unmarkedByFingerprint = <String, ViewCopy>{
+        for (final copy in storedCopies)
+          if (!copy.markedForDeletion) copy.fingerprint: copy,
+      };
+      final registeredFingerprints = <String>{};
+      final copyIds = <String, String>{};
+      for (final spec in projections.all()) {
+        final fingerprint = viewFingerprint(spec, entryTypes, promoters);
+        registeredFingerprints.add(fingerprint);
+        final existing = unmarkedByFingerprint[fingerprint];
+        if (existing != null) {
+          copyIds[spec.viewName] = existing.copyId;
+          continue;
+        }
+        final copyId = await storage.createViewCopyInTxn(
+          txn,
+          spec.viewName,
+          fingerprint,
+          0,
+        );
+        copyIds[spec.viewName] = copyId;
+        unmarkedByFingerprint[fingerprint] = ViewCopy(
+          copyId: copyId,
+          viewName: spec.viewName,
+          fingerprint: fingerprint,
+          watermark: 0,
+          markedForDeletion: false,
+        );
+      }
+      // Implements: EVS-DEV-view-convergence/D
+      // every stored copy whose fingerprint neither the opening build nor
+      //   a live registration of another instance names is marked for
+      //   deletion.
+      final liveFingerprints = registration.liveViewFingerprints;
+      for (final copy in storedCopies) {
+        if (!copy.markedForDeletion &&
+            !registeredFingerprints.contains(copy.fingerprint) &&
+            !liveFingerprints.contains(copy.fingerprint)) {
+          await storage.markViewCopyForDeletionInTxn(txn, copy.copyId);
+        }
+      }
       final merged = record == null
           ? GenerationRecord.of(descriptor)
           : record.merge(descriptor);
@@ -915,23 +1276,38 @@ class EventStore {
           dataFormat: build.dataFormat,
         ),
       );
-      return databaseId;
+      return (databaseId: databaseId, copyIds: copyIds);
     });
   }
 
   /// Throws [DatabaseResetRequiredError] when the latest event in the log
-  /// is not in this data format's stored shape.
+  /// is not in this data format's stored shape, or records a data-format
+  /// major below this build's: a build of an earlier data format appended
+  /// it. No build of this data format stores an event of an earlier major,
+  /// since ingest refuses one, so the latest event decides for the log.
+  // Implements: EVS-DEV-version-compatibility/O
+  // the open refuses, before any write, a database holding an event an
+  //   earlier data-format major appended, as one that must be reset.
   static Future<void> _refuseEarlierFormatEvents(
     StorageBackend storage,
     Transaction txn,
+    DataFormatVersion dataFormat,
   ) async {
+    StoredEvent? latest;
     try {
-      await for (final _ in storage.readEventsReverseInTxn(txn)) {
+      await for (final event in storage.readEventsReverseInTxn(txn)) {
+        latest = event;
         break;
       }
     } on FormatException catch (e) {
       throw DatabaseResetRequiredError(
         'its events are not in this data format: ${e.message}',
+      );
+    }
+    if (latest != null && latest.libFormatVersion.major < dataFormat.major) {
+      throw DatabaseResetRequiredError(
+        'its latest event, ${latest.eventId}, was appended by a build of '
+        'data format ${latest.libFormatVersion}',
       );
     }
   }
@@ -952,15 +1328,25 @@ class EventStore {
     }
   }
 
-  /// Close the backend and subscription engine, releasing all resources.
-  /// Not safe to call concurrently with in-flight work.
+  /// Closes the subscription engine and the storage the library opened for
+  /// this store, releasing their resources. A backend the application
+  /// supplied ([ApplicationSuppliedStorage]), or handed to [openForTest],
+  /// stays open: its holder closes it. Not safe to call concurrently with
+  /// in-flight work.
   ///
   /// The generation registration is released last, once the store and the
   /// backend have stopped writing, so no write of this store runs after a
   /// conflicting build could register.
+  // Implements: EVS-PRD-storage-barrier/H
+  // closing the event store closes the storage the library opened for it.
   Future<void> close() async {
+    // Implements: EVS-DEV-view-convergence/H
+    // Implements: EVS-DEV-view-convergence/I
+    // no catch-up transaction begins after close is called, and close
+    //   awaits the one in flight, if any, before the storage it uses closes.
+    await _catchUp.stop();
     await _subs.close();
-    await backend.close();
+    await _storage?.close();
     await _registration.release();
   }
 
@@ -1081,7 +1467,7 @@ class EventStore {
 
     final T result;
     try {
-      result = await backend.transaction<T>((txn) async {
+      result = await _backend.transaction<T>((txn) async {
         if (runInProgress) {
           throw StateError(
             'StorageBackend.transaction started a run of the body while an '
@@ -1097,9 +1483,11 @@ class EventStore {
           _holdSequence(sequenceNumber);
         });
         collector = runCollector;
+        _liveHandles.add(txn);
         try {
           return await body(txn, runCollector);
         } finally {
+          _liveHandles.remove(txn);
           runCollector._open = false;
           runInProgress = false;
         }
@@ -1157,9 +1545,32 @@ class EventStore {
   ///
   /// Atomic snapshot-then-attach: opens a single live listener FIRST
   /// (before reading the snapshot) so no changes are lost between the
-  /// snapshot read and forward-mode delivery. A `_replayDone` flag
-  /// inside the listener routes events to the buffer during snapshot
-  /// read and directly to the output controller after it.
+  /// snapshot read and forward-mode delivery. A `replayDone` flag inside
+  /// the listener routes events to a buffer during the snapshot read and
+  /// directly to the output controller after it; a `redelivering` flag
+  /// applies the same buffering, once replay is done, for the duration of
+  /// a became-current redelivery read below, so a live change the read's
+  /// own storage transaction predates is never overtaken by it.
+  ///
+  /// The initial replay reads the view's convergence state and its rows in
+  /// one storage transaction (the [reader]'s `findViewRows` /
+  /// `readViewRowsByKeys`, EVS-DEV-converging-view-reads/A): a named
+  /// aggregate not yet settled is delivered as [Pending] rather than
+  /// [Snapshot], and the replay ends with [EndOfReplay] carrying the
+  /// view's state. While the copy converges, no `Delta`/`Tombstone` for it
+  /// reaches this subscription -- an append folds inline only into a copy
+  /// that is current (EVS-DEV-view-convergence/F) -- so nothing here needs
+  /// to filter live updates by settledness. Once the copy is found current
+  /// at the end of a catch-up transaction, this subscription re-reads the
+  /// view (again in one storage transaction) and redelivers a [Snapshot]
+  /// for every aggregate it named -- the already-settled ones unchanged,
+  /// the formerly pending ones replacing their earlier [Pending] -- or
+  /// every row of the view, if it named none; a live change that lands
+  /// while this re-read is in flight is buffered and drained right after,
+  /// so it can never reach the subscriber ahead of a redelivered row it
+  /// postdates (EVS-PRD-subscription/C). Only then does the subscription
+  /// emit a second [EndOfReplay] reporting the view current
+  /// (EVS-DEV-converging-view-reads/G).
   ///
   /// The [StreamController] is closed when the subscriber cancels,
   /// preventing infinite blocking.
@@ -1169,19 +1580,143 @@ class EventStore {
   ) {
     late StreamController<Update<T>> controller;
     StreamSubscription<AggregateFoldChange>? liveSub;
+    StreamSubscription<String>? caughtUpSub;
 
     Future<void> start() async {
       // Open ONE subscription that lasts the lifetime of this stream.
       // During the snapshot phase events go to liveBuffer; after
       // _replayDone is set they go directly to controller.
       var replayDone = false;
+      var reportedCurrent = false;
+      // Guards the re-read itself, not just its outcome: two caught-up
+      // signals landing before either read returns must not both pass the
+      // `reportedCurrent` check and both redeliver.
+      var deliveringBecameCurrent = false;
+      var caughtUpDuringReplay = false;
       var maxSequenceSeen = 0;
       final liveBuffer = <AggregateFoldChange>[];
+      // While `deliverBecameCurrent`'s redelivery read is in flight, a live
+      // change published by an append that lands concurrently is buffered
+      // here rather than sent straight to the controller -- exactly as
+      // `liveBuffer` holds changes during the initial replay -- so a
+      // redelivered Snapshot (reflecting the read's pre-append state) can
+      // never be followed by a Delta/Tombstone the append already
+      // published before the read started (EVS-PRD-subscription/C).
+      var redelivering = false;
+      final redeliverBuffer = <AggregateFoldChange>[];
+
+      // Drains changes buffered during a redelivery read: applied straight
+      // to the controller, in arrival order, updating `maxSequenceSeen`.
+      void drainRedeliverBuffer() {
+        for (final change in redeliverBuffer) {
+          if (controller.isClosed) break;
+          final u = _changeToUpdate<T>(change, filter, mode);
+          if (u != null) {
+            if (u.sequence > maxSequenceSeen) maxSequenceSeen = u.sequence;
+            controller.add(u);
+          }
+        }
+        redeliverBuffer.clear();
+      }
+
+      // Implements: EVS-DEV-converging-view-reads/G
+      // Redelivers on the view becoming current and reports it current,
+      // only once, guarded by `reportedCurrent`. A signal that arrives
+      // while the re-read still finds the copy converging (another build
+      // wrote past the watermark again first) is a no-op: this listener
+      // stays attached for the next one.
+      Future<void> deliverBecameCurrent() async {
+        if (reportedCurrent || deliveringBecameCurrent || controller.isClosed) {
+          return;
+        }
+        deliveringBecameCurrent = true;
+        // Implements: EVS-PRD-subscription/C
+        // route concurrent live changes to a buffer for the
+        // duration of the redelivery read, the same discipline the initial
+        // replay uses, so no redelivered row is stale relative to a change
+        // already published.
+        redelivering = true;
+        try {
+          final aggregateIds = mode.aggregates;
+          if (aggregateIds == null) {
+            final read = await reader.findViewRows(mode.viewName);
+            if (read.state != ViewConvergenceState.current) {
+              drainRedeliverBuffer();
+              return;
+            }
+            reportedCurrent = true;
+            var maxSeq = 0;
+            for (final row in read.rows) {
+              if (controller.isClosed) return;
+              final seq = (row['sequence'] as int?) ?? 0;
+              if (seq > maxSeq) maxSeq = seq;
+              controller.add(
+                Snapshot<T>(value: mode.mapper(row), sequence: seq),
+              );
+            }
+            drainRedeliverBuffer();
+            if (maxSequenceSeen > maxSeq) maxSeq = maxSequenceSeen;
+            if (!controller.isClosed) {
+              controller.add(
+                EndOfReplay<T>(sequence: maxSeq, state: read.state),
+              );
+            }
+          } else {
+            final read = await reader.readViewRowsByKeys(
+              mode.viewName,
+              aggregateIds,
+            );
+            if (read.state != ViewConvergenceState.current) {
+              drainRedeliverBuffer();
+              return;
+            }
+            reportedCurrent = true;
+            var maxSeq = 0;
+            for (final aggId in aggregateIds) {
+              if (controller.isClosed) return;
+              final data = read.rows[aggId]?.dataOrNull;
+              final seq = (data?['sequence'] as int?) ?? 0;
+              if (seq > maxSeq) maxSeq = seq;
+              controller.add(
+                Snapshot<T>(
+                  value: data == null ? null : mode.mapper(data),
+                  sequence: seq,
+                ),
+              );
+            }
+            drainRedeliverBuffer();
+            if (maxSequenceSeen > maxSeq) maxSeq = maxSequenceSeen;
+            if (!controller.isClosed) {
+              controller.add(
+                EndOfReplay<T>(sequence: maxSeq, state: read.state),
+              );
+            }
+          }
+        } finally {
+          redelivering = false;
+          deliveringBecameCurrent = false;
+        }
+        await caughtUpSub?.cancel();
+        caughtUpSub = null;
+      }
+
+      // Attached before the snapshot read, like `liveSub`, so a copy that
+      // reaches the log's tip during the read is not missed: the signal is
+      // recorded and acted on right after the initial EndOfReplay.
+      caughtUpSub = _subs.viewCaughtUp(mode.viewName).listen((_) {
+        if (!replayDone) {
+          caughtUpDuringReplay = true;
+          return;
+        }
+        unawaited(deliverBecameCurrent());
+      });
 
       liveSub = _subs.rowChanges(mode.viewName).listen((change) {
         if (controller.isClosed) return;
         if (!replayDone) {
           liveBuffer.add(change);
+        } else if (redelivering) {
+          redeliverBuffer.add(change);
         } else {
           final u = _changeToUpdate<T>(change, filter, mode);
           if (u != null) {
@@ -1191,11 +1726,15 @@ class EventStore {
         }
       }, onDone: () => controller.close());
 
-      // Snapshot read
+      // Snapshot read: through the reader, so the view's convergence
+      // state and its rows come from one storage transaction
+      // (EVS-DEV-converging-view-reads/A).
       final aggregateIds = mode.aggregates;
+      var initialState = ViewConvergenceState.current;
       if (aggregateIds == null) {
-        final rows = await backend.findViewRows(mode.viewName);
-        for (final row in rows) {
+        final read = await reader.findViewRows(mode.viewName);
+        initialState = read.state;
+        for (final row in read.rows) {
           if (controller.isClosed) return;
           final seq = (row['sequence'] as int?) ?? 0;
           if (seq > maxSequenceSeen) maxSequenceSeen = seq;
@@ -1209,22 +1748,29 @@ class EventStore {
         // would cost about three round trips per id against a networked
         // database. Each requested id emits a Snapshot, with a null value for
         // an absent row, so a tombstoned or absent row is still signalled
-        // per id.
-        final byKey = await backend.readViewRowsByKeys(
+        // per id; a row the copy cannot yet confirm settled is delivered as
+        // Pending instead (EVS-DEV-converging-view-reads/E).
+        final read = await reader.readViewRowsByKeys(
           mode.viewName,
           aggregateIds,
         );
+        initialState = read.state;
         for (final aggId in aggregateIds) {
           if (controller.isClosed) return;
-          final row = byKey[aggId];
-          final seq = (row?['sequence'] as int?) ?? 0;
-          if (seq > maxSequenceSeen) maxSequenceSeen = seq;
-          controller.add(
-            Snapshot<T>(
-              value: row == null ? null : mode.mapper(row),
-              sequence: seq,
-            ),
-          );
+          final row = read.rows[aggId];
+          switch (row) {
+            case SettledRow(:final data):
+              final seq = (data['sequence'] as int?) ?? 0;
+              if (seq > maxSequenceSeen) maxSequenceSeen = seq;
+              controller.add(
+                Snapshot<T>(value: mode.mapper(data), sequence: seq),
+              );
+            case AbsentRow():
+            case null:
+              controller.add(Snapshot<T>(value: null, sequence: 0));
+            case PendingRow():
+              controller.add(Pending<T>(aggregateId: aggId));
+          }
         }
       }
 
@@ -1243,10 +1789,22 @@ class EventStore {
       // flipping replayDone so the marker is ordered correctly relative to
       // any deltas that arrive after this point.
       if (!controller.isClosed) {
-        controller.add(EndOfReplay<T>(sequence: maxSequenceSeen));
+        controller.add(
+          EndOfReplay<T>(sequence: maxSequenceSeen, state: initialState),
+        );
       }
 
       replayDone = true;
+      if (initialState == ViewConvergenceState.current) {
+        // Already reported current by the initial EndOfReplay: a stray
+        // caught-up signal (this view was never converging) must not
+        // trigger a redelivery.
+        reportedCurrent = true;
+        await caughtUpSub?.cancel();
+        caughtUpSub = null;
+      } else if (caughtUpDuringReplay) {
+        unawaited(deliverBecameCurrent());
+      }
     }
 
     controller = StreamController<Update<T>>(
@@ -1254,6 +1812,8 @@ class EventStore {
       onCancel: () async {
         await liveSub?.cancel();
         liveSub = null;
+        await caughtUpSub?.cancel();
+        caughtUpSub = null;
         if (!controller.isClosed) await controller.close();
       },
     );
@@ -1285,13 +1845,16 @@ class EventStore {
   /// unchanged.
   DateTime _now() => (_clock ?? DateTime.now)().toUtc();
 
+  // Implements: EVS-DEV-causal-parents/G
+  // the public append operations take no argument that sets causal.
   /// Append a new event. Returns the persisted `StoredEvent`, or `null`
   /// when `dedupeByContent` is true and the content matches the
   /// aggregate's most recent event of [entryType].
   ///
-  /// Throws [ArgumentError], appending nothing, when [entryType] is a
-  /// reserved system entry type ([kReservedSystemEntryTypeIds]): only the
-  /// library appends reserved system events.
+  /// Throws [ArgumentError], appending nothing, when [entryType] lies in
+  /// the reserved entry-type namespace ([isReservedEntryType]): only the
+  /// library appends reserved system events; and when [data] holds a
+  /// top-level key beginning with `$`, which the default views reserve.
   ///
   /// The library stamps `entry_type_version` with the registered major and
   /// minor (`EntryTypeDefinition.registeredVersion` for [entryType]) and
@@ -1344,104 +1907,26 @@ class EventStore {
     });
 
     if (event == null) return null;
-    wakeDeliveryCycle();
+    _wakeDeliveryCycle();
     return event;
   }
 
-  /// Throws [ArgumentError] when [entryType] is a reserved system entry
-  /// type: the public append operations never append one.
+  /// Throws [ArgumentError] when [entryType] lies in the reserved
+  /// namespace ([isReservedEntryType]), declared by this release or not: the
+  /// public append operations never append one.
   // Implements: EVS-DEV-destination-drain/L
-  // the event store's public append operations refuse reserved system entry
-  //   types.
+  // the event store's public append operations refuse every entry type in
+  //   the reserved namespace.
   static void _refuseReservedEntryType(String entryType) {
-    if (kReservedSystemEntryTypeIds.contains(entryType)) {
+    if (isReservedEntryType(entryType)) {
       throw ArgumentError.value(
         entryType,
         'entryType',
-        'is a reserved system entry type; only the library appends reserved '
-            'system events',
+        'is in the reserved entry-type namespace (every id beginning with '
+            '"system." and ${kReservedFixedEntryTypeIds.join(', ')}); only '
+            'the library appends reserved system events',
       );
     }
-  }
-
-  /// Throws [ArgumentError] unless [entryType] is a reserved system entry
-  /// type appended in a shape the library declares for it and, for a
-  /// destination audit, with data ingest admits
-  /// ([isWellFormedDestinationAuditData]).
-  // Implements: EVS-DEV-destination-drain/K
-  // every destination audit event the library appends carries a destination
-  //   identifier and the appending database's identity, each non-empty and
-  //   without '|'.
-  static void _checkReservedAppend({
-    required String entryType,
-    required String aggregateType,
-    required String eventType,
-    required Map<String, Object?> data,
-  }) {
-    checkReservedEventShape(
-      entryType: entryType,
-      aggregateType: aggregateType,
-      eventType: eventType,
-    );
-    if (kDestinationAuditEntryTypes.contains(entryType) &&
-        !isWellFormedDestinationAuditData(data)) {
-      throw ArgumentError.value(
-        data,
-        'data',
-        'a destination audit event carries a destination identifier (id) '
-            'and a database identity (database_id), each a non-empty string '
-            "without '|'",
-      );
-    }
-  }
-
-  /// Append a reserved system event in its own transaction: the library's
-  /// counterpart of [append] for the entry types [append] refuses.
-  ///
-  /// Throws [ArgumentError], appending nothing, when [entryType] is not a
-  /// reserved system entry type, when [aggregateType] and [eventType] are
-  /// not a shape the library declares for [entryType], or when a destination
-  /// audit's [data] lacks a destination identifier or a database identity
-  /// that ingest admits. Otherwise behaves as [append]: stamps the registered version, dedupes by content when
-  /// [dedupeByContent] is true (returning null), publishes after the commit
-  /// and triggers the sync cycle.
-  @internal
-  Future<StoredEvent?> appendReserved({
-    required String entryType,
-    required String aggregateId,
-    required String aggregateType,
-    required String eventType,
-    required Map<String, Object?> data,
-    required Initiator initiator,
-    bool dedupeByContent = false,
-  }) async {
-    _checkReservedAppend(
-      entryType: entryType,
-      aggregateType: aggregateType,
-      eventType: eventType,
-      data: data,
-    );
-    final event = await _runInTxnWithPublish<StoredEvent?>(
-      (txn, collector) => _appendInTxn(
-        txn,
-        collector: collector,
-        entryType: entryType,
-        aggregateId: aggregateId,
-        aggregateType: aggregateType,
-        eventType: eventType,
-        data: data,
-        initiator: initiator,
-        flowToken: null,
-        metadata: null,
-        security: null,
-        checkpointReason: null,
-        changeReason: null,
-        dedupeByContent: dedupeByContent,
-      ),
-    );
-    if (event == null) return null;
-    wakeDeliveryCycle();
-    return event;
   }
 
   /// Append a reserved system event inside the transaction of a
@@ -1456,8 +1941,16 @@ class EventStore {
   /// [appendInTxn] does for a collector of another run. Returns null only
   /// when [dedupeByContent] is true and the content matches the latest event
   /// of [entryType] in the aggregate.
-  @internal
-  Future<StoredEvent?> appendReservedInTxn(
+  // Implements: EVS-PRD-storage-barrier/C
+  // the reserved append is private to the event store's library; only its
+  //   public operations append reserved events.
+  // Implements: EVS-DEV-security-findings/S
+  // [mode] decides whether this reserved append's own fold failures are
+  //   passed over and recorded (a record of an ingest, a restore or the
+  //   drain, and every security finding) or fail the append to its caller
+  //   (a public local operation such as destination_registered, an
+  //   app-requested halt, or the boot).
+  Future<StoredEvent?> _appendReservedInTxn(
     Transaction txn,
     PublishCollector collector, {
     required String entryType,
@@ -1467,8 +1960,9 @@ class EventStore {
     required Map<String, Object?> data,
     required Initiator initiator,
     bool dedupeByContent = false,
+    ApplyEventMode mode = ApplyEventMode.local,
   }) {
-    _checkReservedAppend(
+    checkReservedAppend(
       entryType: entryType,
       aggregateType: aggregateType,
       eventType: eventType,
@@ -1489,6 +1983,172 @@ class EventStore {
       checkpointReason: null,
       changeReason: null,
       dedupeByContent: dedupeByContent,
+      mode: mode,
+    );
+  }
+
+  /// Verifies this database's log over the local sequence numbers [from] to
+  /// [to], both inclusive, and records what it finds.
+  ///
+  /// It checks every event stored in the range, whatever path stored it:
+  /// its hashes, its storage-chain link (the first event of the range
+  /// against the event before it), the local sequence numbers holding no
+  /// event, its origin-chain predecessor, the forks and reused origin
+  /// positions it takes part in (each once), and its causal parents. An
+  /// omitted lower bound, or 0, is the first local sequence number; the
+  /// upper bound is the highest local sequence number stored when the
+  /// verification starts, or [to] when that is lower, so events stored
+  /// meanwhile are left to the next verification.
+  ///
+  /// The reads hold no transaction an append waits for. After them, each
+  /// finding the returned verdict lists is recorded as a security finding
+  /// under the detector role `walk`, in a short transaction of its own,
+  /// unless this database already holds it: a second verification of the
+  /// same log records nothing more. [StorageReader.verifyChains] returns
+  /// the same verdict and records nothing.
+  ///
+  /// Throws [ArgumentError], before reading any event, for a negative bound
+  /// or a lower bound above the upper.
+  // Implements: EVS-PRD-hash-chain-integrity/C+F
+  // any holder of the log verifies its storage chain and every origin-chain
+  //   link it can resolve, from the log alone, the first event of a range
+  //   included.
+  // Implements: EVS-DEV-chain-verification/R
+  // each finding of the verdict is recorded as a security finding of its
+  //   kind and evidence, in a write transaction of its own committed after
+  //   the read.
+  // Implements: EVS-DEV-security-findings/Q
+  // the chain verification records its findings under the detector role
+  //   walk.
+  // Implements: EVS-PRD-hash-chain-integrity/J
+  // the operation run on an open event store records each anomaly once per
+  //   detector.
+  Future<ChainVerificationVerdict> verifyChains({int? from, int? to}) =>
+      _verifyChains(from: from, to: to);
+
+  Future<ChainVerificationVerdict> _verifyChains({
+    int? from,
+    int? to,
+    int pageSize = kChainWalkPageSize,
+    Future<void> Function()? afterPage,
+  }) async {
+    refuseCallFromBootProgressObserver('EventStore.verifyChains');
+    final verdict = await verifyChainsOver(
+      _backend,
+      from: from,
+      to: to,
+      pageSize: pageSize,
+      afterPage: afterPage,
+    );
+    for (final finding in verdict.findings) {
+      await _runInTxnWithPublish<void>((txn, collector) async {
+        await _recordFindingInTxn(
+          txn,
+          collector,
+          role: FindingRole.walk,
+          kind: finding.kind,
+          evidence: finding.evidence,
+          aggregates: await recordedAggregatesInTxn(_backend, txn, finding),
+        );
+      });
+    }
+    return verdict;
+  }
+
+  /// [evidence] with its `record` key, when it holds a record (an
+  /// `identity_mismatch`, `event_malformed` or `own_event_ingested`
+  /// finding), replaced by [findingRecordEvidence]'s encoding; [evidence]
+  /// unchanged otherwise (no `record` key, or one already null).
+  // Implements: EVS-DEV-security-findings/U
+  // a finding's record evidence is the record itself when it is free of
+  //   U+0000, otherwise its base64 encoding.
+  static Map<String, Object?> _withStorableRecord(
+    Map<String, Object?> evidence,
+  ) {
+    final record = evidence['record'];
+    if (record is! Map) return evidence;
+    return <String, Object?>{
+      ...evidence,
+      'record': findingRecordEvidence(Map<String, Object?>.from(record)),
+    };
+  }
+
+  /// Record, inside [txn], the security finding of [kind] with [evidence]
+  /// that this database detected in [role], naming [aggregates]: append a
+  /// `system.security_finding` event, whose aggregate is the finding's
+  /// identity, unless this database already holds as authored a finding
+  /// with the same identity, read inside [txn]. Returns the appended event,
+  /// or null when such a finding is held. The finding commits with the
+  /// detection point's outcome, in [txn].
+  ///
+  /// Throws [ArgumentError], appending nothing, when [kind] is not a kind
+  /// the library records or [evidence] is not exactly the evidence its kind
+  /// fixes.
+  // Implements: EVS-DEV-security-findings/B+C+H
+  // a finding carries its identity, kind, fixed evidence, the aggregates in
+  //   ascending order and its detector; the library records only the listed
+  //   kinds.
+  // Implements: EVS-DEV-security-findings/E
+  // a finding is appended only when, read inside the appending transaction,
+  //   the detecting database holds as authored no finding with its identity;
+  //   a received finding carrying the identity does not match.
+  // Implements: EVS-DEV-security-findings/F
+  // the finding is appended in the transaction of the detection point's
+  //   outcome.
+  Future<StoredEvent?> _recordFindingInTxn(
+    Transaction txn,
+    PublishCollector collector, {
+    required FindingRole role,
+    required FindingKind kind,
+    required Map<String, Object?> evidence,
+    required Iterable<String> aggregates,
+  }) async {
+    // Implements: EVS-DEV-security-findings/U
+    // every finding's `record` evidence is the received record itself when
+    //   it is free of U+0000, otherwise its base64 encoding, computed once
+    //   here for every kind that carries one (identity_mismatch,
+    //   event_malformed, own_event_ingested), so the finding is itself an
+    //   event free of U+0000 (EVS-DEV-event-record/L) and its identity is
+    //   deterministic across redeliveries of one record.
+    final storableEvidence = _withStorableRecord(evidence);
+    checkFindingEvidence(kind, storableEvidence);
+    final findingId = securityFindingId(
+      databaseId: databaseId,
+      role: role,
+      kind: kind,
+      evidence: storableEvidence,
+    );
+    if (await _backend.holdsAuthoredSecurityFindingInTxn(
+      txn,
+      databaseId: databaseId,
+      findingId: findingId,
+    )) {
+      return null;
+    }
+    return _appendReservedInTxn(
+      txn,
+      collector,
+      entryType: kSecurityFindingEntryType,
+      aggregateId: findingId,
+      aggregateType: kSecurityFindingAggregateType,
+      eventType: kSecurityFindingRecordedEventType,
+      data: securityFindingData(
+        findingId: findingId,
+        kind: kind,
+        evidence: storableEvidence,
+        aggregates: aggregates,
+        databaseId: databaseId,
+        role: role,
+        libraryVersion: _build().version,
+      ),
+      initiator: _kSecurityFindingInitiator,
+      // Implements: EVS-DEV-view-convergence/E
+      // every security finding is an always-stored event: a fold failure
+      //   folding the finding event itself passes over and is recorded.
+      // Implements: EVS-DEV-security-findings/T
+      // (for a finding that is itself of kind fold_failed, the interpreter
+      //   collects no failure to record.)
+      mode: ApplyEventMode.alwaysStored,
     );
   }
 
@@ -1518,7 +2178,7 @@ class EventStore {
     required Initiator redactedBy,
   }) async {
     await _runInTxnWithPublish<void>((txn, collector) async {
-      final existing = await securityContexts.readInTxn(txn, eventId);
+      final existing = await _securityContexts.readInTxn(txn, eventId);
       if (existing == null) {
         throw ArgumentError.value(
           eventId,
@@ -1526,12 +2186,15 @@ class EventStore {
           'no security context row for event',
         );
       }
-      await securityContexts.deleteInTxn(txn, eventId);
+      await _securityContexts.deleteInTxn(txn, eventId);
       // Emit the redaction audit event. The install UUID is the aggregate;
       // the redaction subject moves into `data.subject_event_id` so callers
       // can query "all redactions of event X" by filtering on entry_type
       // AND data.subject_event_id.
-      await appendReservedInTxn(
+      // A caller-invoked operation, not an ingest, restore or drain
+      // transaction: stays local (default mode), so a fold failure fails
+      // to clearSecurityContext's caller with nothing stored.
+      await _appendReservedInTxn(
         txn,
         collector,
         entryType: kSecurityContextRedactedEntryType,
@@ -1542,7 +2205,7 @@ class EventStore {
         initiator: redactedBy,
       );
     });
-    wakeDeliveryCycle();
+    _wakeDeliveryCycle();
   }
 
   /// Apply [policy] (or [SecurityRetentionPolicy.defaults]) to the
@@ -1568,22 +2231,25 @@ class EventStore {
       txn,
       collector,
     ) async {
-      final compactCandidates = await securityContexts
+      final compactCandidates = await _securityContexts
           .findUnredactedOlderThanInTxn(txn, compactCutoff);
       for (final row in compactCandidates) {
-        await securityContexts.upsertInTxn(txn, row.applyTruncation(p));
+        await _securityContexts.upsertInTxn(txn, row.applyTruncation(p));
       }
 
-      final purgeCandidates = await securityContexts.findOlderThanInTxn(
+      final purgeCandidates = await _securityContexts.findOlderThanInTxn(
         txn,
         purgeCutoff,
       );
       for (final row in purgeCandidates) {
-        await securityContexts.deleteInTxn(txn, row.eventId);
+        await _securityContexts.deleteInTxn(txn, row.eventId);
       }
 
+      // The retention sweep is an operator-invoked operation, its own
+      // transaction, not an ingest, restore or drain transaction: every
+      // append below stays local (default mode).
       if (compactCandidates.isNotEmpty) {
-        await appendReservedInTxn(
+        await _appendReservedInTxn(
           txn,
           collector,
           entryType: kSecurityContextCompactedEntryType,
@@ -1599,7 +2265,7 @@ class EventStore {
         );
       }
       if (purgeCandidates.isNotEmpty) {
-        await appendReservedInTxn(
+        await _appendReservedInTxn(
           txn,
           collector,
           entryType: kSecurityContextPurgedEntryType,
@@ -1615,7 +2281,7 @@ class EventStore {
       }
       // Always emit the policy-applied audit event, even when both sweeps
       // were empty, so operators have a continuous retention timeline.
-      await appendReservedInTxn(
+      await _appendReservedInTxn(
         txn,
         collector,
         entryType: kRetentionPolicyAppliedEntryType,
@@ -1637,7 +2303,7 @@ class EventStore {
         purgedCount: purgeCandidates.length,
       );
     });
-    wakeDeliveryCycle();
+    _wakeDeliveryCycle();
     return result;
   }
 
@@ -1662,6 +2328,43 @@ class EventStore {
     }
   }
 
+  /// Throws [ArgumentError], naming the key, when [data] holds a top-level
+  /// key beginning with `$`: the default views reserve the prefix for the
+  /// keys they stamp on every row.
+  // Implements: EVS-PRD-materializer/H
+  // an append whose data holds a top-level key beginning with `$` is
+  //   refused by name before any write.
+  static void _refuseReservedDataKey(Map<String, Object?> data) {
+    for (final key in data.keys) {
+      if (key.startsWith(r'$')) {
+        throw ArgumentError.value(
+          key,
+          'data',
+          'holds the top-level key "$key"; keys beginning with "\$" are '
+              'reserved for the keys the default views stamp on every row',
+        );
+      }
+    }
+  }
+
+  /// Throws [ArgumentError], naming the top-level field, when some string of
+  /// [record] -- a key included, at any depth -- carries the character
+  /// U+0000: no storage backend the library supports can hold every event
+  /// the library holds unless every one is free of it.
+  // Implements: EVS-DEV-event-record/L+M
+  // an append carrying U+0000 in any string of the record is refused before
+  //   any write, naming the top-level field.
+  static void _refuseUnstorableCharacter(Map<String, Object?> record) {
+    final field = recordFieldWithNulCharacter(record);
+    if (field == null) return;
+    throw ArgumentError.value(
+      field,
+      field,
+      'a string of the event, a key included, carries the character '
+      'U+0000; no storage backend the library supports can hold it',
+    );
+  }
+
   /// Transactional companion to [append]: appends inside the transaction
   /// of a [runTransaction] body, so the append commits atomically with the
   /// body's other work (for example a configuration change and the audit
@@ -1680,8 +2383,8 @@ class EventStore {
   ///
   /// Validates inputs via [_validateAppendInputs] before doing any work,
   /// so direct callers do not need to pre-validate. Throws [ArgumentError],
-  /// appending nothing, when [entryType] is a reserved system entry type
-  /// ([kReservedSystemEntryTypeIds]): only the library appends reserved
+  /// appending nothing, when [entryType] lies in the reserved entry-type
+  /// namespace ([isReservedEntryType]): only the library appends reserved
   /// system events.
   ///
   /// Runs the projection interpreter inside the same transaction as the
@@ -1722,6 +2425,25 @@ class EventStore {
     );
   }
 
+  /// Throws [StateError] unless [txn] is a handle this store's
+  /// [runTransaction] issued and whose body is still running: a handle of
+  /// another event store, of a storage reader, or carried past its body is
+  /// refused before anything is written.
+  // Implements: EVS-DEV-storage-capability/G
+  // a transaction handle used in an operation of an event store other than
+  //   the one that issued it, or after its body returned, is refused with
+  //   StateError before any write.
+  void _refuseForeignHandle(Transaction txn, String operation) {
+    if (!_liveHandles.contains(txn)) {
+      throw StateError(
+        'EventStore.$operation: the transaction handle was not issued by '
+        "this event store's runTransaction, or its body has returned. Pass "
+        'the handle a runTransaction body of this store received, while '
+        'that body runs.',
+      );
+    }
+  }
+
   /// The append every append operation shares, reserved and user entry
   /// types alike.
   // Implements: EVS-PRD-destinations/K
@@ -1742,6 +2464,7 @@ class EventStore {
     required String? changeReason,
     required bool dedupeByContent,
     required PublishCollector collector,
+    ApplyEventMode mode = ApplyEventMode.local,
   }) async {
     if (!collector._open || !identical(collector._transaction, txn)) {
       throw StateError(
@@ -1750,11 +2473,36 @@ class EventStore {
         'runTransaction body received, while that body runs.',
       );
     }
+    _refuseForeignHandle(txn, 'appendInTxn');
     _validateAppendInputs(
       entryType: entryType,
       aggregateType: aggregateType,
       eventType: eventType,
     );
+    _refuseReservedDataKey(data);
+    // Implements: EVS-DEV-event-record/L+M
+    // an append carrying U+0000 in any string of the record, a key
+    //   included, at any depth, is refused before any write (before the
+    //   sequence number and the causal record are reserved), naming the
+    //   top-level field. Checked over the caller's own inputs, shaped as
+    //   their top-level field ends up in the stored record (data and
+    //   checkpoint_reason share the `data` field, metadata and
+    //   change_reason the `metadata` field); the library's own
+    //   sequence_number, causal record, hashes and timestamps are never
+    //   caller-supplied strings.
+    _refuseUnstorableCharacter(<String, Object?>{
+      'aggregate_id': aggregateId,
+      'aggregate_type': aggregateType,
+      'entry_type': entryType,
+      'event_type': eventType,
+      'data': <String, Object?>{...data, 'checkpoint_reason': checkpointReason},
+      'metadata': <String, Object?>{
+        ...?metadata,
+        'change_reason': changeReason,
+      },
+      'initiator': initiator.toJson(),
+      'flow_token': flowToken,
+    });
 
     final def = entryTypes.byId(entryType)!;
     // Implements: EVS-DEV-append-stamps-registered-version
@@ -1765,12 +2513,6 @@ class EventStore {
     final effectiveChangeReason = changeReason ?? 'initial';
 
     final now = _now();
-    final provenance0 = ProvenanceEntry(
-      hop: source.hopId,
-      receivedAt: now,
-      identifier: source.identifier,
-      softwareVersion: source.softwareVersion,
-    );
 
     // dedupe-by-content: compares against the most-recent event of matching
     // entry_type within the aggregate. Multiple entry types may share an
@@ -1778,7 +2520,7 @@ class EventStore {
     // per entry_type so each emission stream is treated independently.
     StoredEvent? prior;
     if (dedupeByContent) {
-      final aggregateHistory = await backend.findEventsForAggregateInTxn(
+      final aggregateHistory = await _backend.findEventsForAggregateInTxn(
         txn,
         aggregateId,
       );
@@ -1806,12 +2548,22 @@ class EventStore {
       if (candidateHash == priorHash) return null;
     }
 
-    // Implements: EVS-PRD-hash-chain-integrity/B
-    // every appended event carries the
-    //   hash of the one before it in its chain, read inside the same
-    //   transaction so the link cannot straddle a concurrent append.
-    final previousHash = await backend.readLatestEventHash(txn);
-    final sequenceNumber = await backend.nextSequenceNumber(txn);
+    final links = await _reserveChainLinksInTxn(_backend, txn, databaseId);
+    final sequenceNumber = links.sequenceNumber;
+    final causal = await _stampCausalInTxn(
+      _backend,
+      txn,
+      aggregateId: aggregateId,
+      declaration: def.declarationFor(eventType),
+    );
+    final provenance0 = _originatorEntry(
+      hop: source.hopId,
+      identifier: source.identifier,
+      softwareVersion: source.softwareVersion,
+      receivedAt: now,
+      databaseId: databaseId,
+      links: links,
+    );
     final eventId = _uuid.v4();
 
     final dataMap = <String, Object?>{
@@ -1838,13 +2590,14 @@ class EventStore {
       'initiator': initiator.toJson(),
       'flow_token': flowToken,
       'client_timestamp': provenance0.receivedAt.toIso8601String(),
-      'previous_event_hash': previousHash,
+      'previous_event_hash': links.previousEventHash,
+      'causal': causal.toJson(),
     };
     final eventHash = _eventHash(recordMap);
     recordMap['event_hash'] = eventHash;
     final event = StoredEvent.fromMap(recordMap, 0);
 
-    await backend.appendEvent(txn, event);
+    await _backend.appendEvent(txn, event);
 
     if (security != null) {
       final row = EventSecurityContext(
@@ -1857,22 +2610,37 @@ class EventStore {
         geoRegion: security.geoRegion,
         requestId: security.requestId,
       );
-      await securityContexts.writeInTxn(txn, row);
+      await _securityContexts.writeInTxn(txn, row);
     }
 
-    collector.add(event);
+    collector._add(event);
 
     // Run the projection interpreter inside the same transaction so views
     // materialize atomically with the append. Action-emitted events (via
     // ActionDispatcher → appendInTxn) MUST update views in-tx so subsequent
     // dispatches in the same flow read the new view rows.
-    final rowChanges = await _interpreter.applyEvent(
+    final applied = await _interpreter.applyEvent(
       txn: txn,
-      backend: backend,
+      backend: _backend,
       event: event,
+      copyIds: _viewCopyIds,
+      mode: mode,
     );
-    if (rowChanges.isNotEmpty) {
-      collector.addRowChanges(rowChanges);
+    if (applied.changes.isNotEmpty) {
+      collector._addRowChanges(applied.changes);
+    }
+    // Implements: EVS-DEV-security-findings/S
+    // every always-stored append records the fold_failed findings its own
+    //   fold collected, in the same transaction (a reserved record of an
+    //   ingest, a restore or the drain, and every security finding go
+    //   through this shared append path under always-stored mode).
+    if (mode == ApplyEventMode.alwaysStored && applied.failures.isNotEmpty) {
+      await _recordFoldFailedFindingsInTxn(
+        txn,
+        collector,
+        event,
+        applied.failures,
+      );
     }
     return event;
   }
@@ -1901,252 +2669,301 @@ class EventStore {
   // Destination-role (ingest) write path
   // -----------------------------------------------------------------------
 
-  /// Process-local ingest. Opens its own transaction and delegates to
-  /// [_ingestOneInTxn] with `batchContext: null`.
+  /// Process-local ingest of one event, in a transaction of its own,
+  /// applied to the record [incoming] writes (`incoming.toMap()`). Private
+  /// to the event store's Dart library: the library admits an event only
+  /// as part of a delivery ([ReceiverEndpoint.accept]), so no public entry
+  /// point admits one outside a delivery (`EVS-PRD-ingest/G`). The
+  /// receiver endpoint, which shares this library, and
+  /// [ingestEventForTest], for the library's own tests of how ingest
+  /// handles a single record, are its only callers.
   ///
-  /// Accepts an [incoming] StoredEvent, refuses an incompatible data-format
-  /// or entry-type version ([IngestDataFormatIncompatible],
-  /// [IngestEntryTypeVersionAhead]) and a reserved system event the library
-  /// does not append ([IngestReservedEventRefused]), verifies Chain 1 (the
-  /// event's own hash against its content and every hop's arrival hash,
-  /// refusing with [IngestChainBroken]), checks
-  /// idempotency
-  /// by event_id, stamps a receiver ProvenanceEntry with Chain 2 fields
-  /// (`batch_context = null`), recomputes `event_hash`, and persists.
+  /// Refuses, before any write, an event of another data-format major
+  /// ([IngestDataFormatIncompatible]), and an entry-type version above the
+  /// registered major or one a view it folds into cannot promote
+  /// ([IngestEntryTypeVersionAhead], [IngestEntryTypeVersionUnpromotable]).
+  /// Every other anomaly is recorded as a security finding in the same
+  /// transaction, and the returned outcome says whether the event was
+  /// stored, found held, or kept in a finding.
   ///
-  /// The caller already holds the parsed event, so its hash is checked over
-  /// `incoming.toMap()`. For an event parsed with [StoredEvent.fromMap] that
-  /// is the record it was parsed from, as far as the hash reaches: parsing
-  /// keeps every hashed field as the record spelled it.
-  ///
-  /// An event whose client timestamp, or a provenance entry's
-  /// `received_at`, is not one a record may carry throws
-  /// [IngestDecodeFailure] naming the field, before any write; an event
-  /// parsed with [StoredEvent.fromMap] was already refused there.
-  // Implements: EVS-DEV-event-record/A+C
-  // both ingest entry points refuse a malformed client timestamp or
-  //   received_at as a decode failure naming the field, before any write.
-  Future<PerEventIngestOutcome> ingestEvent(StoredEvent incoming) async {
-    try {
-      incoming.requireRecordTimestamps();
-    } on FormatException catch (e) {
-      throw IngestDecodeFailure('event ${incoming.eventId}: ${e.message}');
-    }
-    return _runInTxnWithPublish((txn, collector) async {
-      return _ingestOneInTxn(
+  /// For an event parsed with [StoredEvent.fromMap], `incoming.toMap()` is
+  /// the record it was parsed from as far as the hash reaches: parsing keeps
+  /// every hashed field as the record spelled it.
+  // Implements: EVS-PRD-ingest/G
+  // the event store's ingest of one record is private to its Dart library;
+  //   the receiver endpoint, which shares that library, is the only
+  //   production caller.
+  // Implements: EVS-DEV-version-compatibility/Q
+  // ingest refuses another data-format major before any check of the rest
+  //   of the event's record.
+  Future<PerEventIngestOutcome> _ingestEvent(StoredEvent incoming) async {
+    _refuseOtherDataFormatMajor(incoming.eventId, incoming.libFormatVersion);
+    final record = Map<String, Object?>.from(incoming.toMap());
+    return _runInTxnWithPublish((txn, collector) {
+      return _ingestRecordInTxn(
         txn,
-        incoming,
+        record,
+        parsed: incoming,
         batchContext: null,
         collector: collector,
       );
     });
   }
 
-  /// Wire-side batch ingest. Decodes [bytes] as an `esd/batch@2` envelope,
-  /// runs every subject event through [_ingestOneInTxn] inside a single
-  /// transaction, and stamps each with a [BatchContext] referencing this
-  /// batch. Throws [IngestDecodeFailure] for any unsupported [wireFormat] or
-  /// malformed bytes; throws the refusal of any event, [ingestEvent]'s
-  /// refusals included, rolling back the whole batch; throws [IngestIdentityMismatch] (rolling back the whole
-  /// batch) if any subject has a hash conflict with an already-stored event.
-  ///
-  /// Each event's `event_hash` is checked against the canonical hash of its
-  /// record exactly as the envelope carried it, not of the parsed event. The
-  /// parsed event keeps every hashed field as that record spelled it, so
-  /// the stored copy, and the copy a later delivery forwards, hash as the
-  /// record did.
-  ///
-  /// See design spec §2.5.
-  Future<IngestBatchResult> ingestBatch(
-    Uint8List bytes, {
-    required String wireFormat,
-  }) async {
-    if (wireFormat != BatchEnvelope.wireFormat) {
-      throw IngestDecodeFailure(
-        'unsupported wireFormat: "$wireFormat"; expected "${BatchEnvelope.wireFormat}"',
-      );
-    }
-    final envelope = BatchEnvelope.decode(bytes);
-    final wireBytesHash = sha256.convert(bytes).toString();
-    final outcomes = <PerEventIngestOutcome>[];
-
-    await _runInTxnWithPublish<void>((txn, collector) async {
-      // Implements: EVS-PRD-event-log/G
-      // A re-run body starts from no outcomes, so
-      //   the result lists the committed run's outcomes only.
-      outcomes.clear();
-      for (var i = 0; i < envelope.events.length; i++) {
-        final eventMap = envelope.events[i];
-        final StoredEvent storedEvent;
-        try {
-          storedEvent = StoredEvent.fromMap(
-            Map<String, Object?>.from(eventMap),
-            0,
-          );
-        } on FormatException catch (e) {
-          throw IngestDecodeFailure(
-            'batch ${envelope.batchId} event $i: ${e.message}',
-          );
-        }
-        final batchContext = BatchContext(
-          batchId: envelope.batchId,
-          batchPosition: i,
-          batchSize: envelope.events.length,
-          batchWireBytesHash: wireBytesHash,
-          batchWireFormat: BatchEnvelope.wireFormat,
-        );
-        final outcome = await _ingestOneInTxn(
-          txn,
-          storedEvent,
-          batchContext: batchContext,
-          collector: collector,
-          wireRecord: eventMap,
-        );
-        outcomes.add(outcome);
-      }
-    });
-
-    return IngestBatchResult(batchId: envelope.batchId, events: outcomes);
+  /// Throws [IngestDataFormatIncompatible] when [version], the data-format
+  /// version of the incoming event [eventId], has a major other than this
+  /// build's.
+  static void _refuseOtherDataFormatMajor(
+    String eventId,
+    DataFormatVersion version,
+  ) {
+    if (version.isCompatibleWith(LibVersion.dataFormat)) return;
+    throw IngestDataFormatIncompatible(
+      eventId: eventId,
+      wireFormat: version,
+      receiverFormat: LibVersion.dataFormat,
+    );
   }
 
-  /// Per-event ingest logic, called from both [ingestEvent] and the
-  /// `ingestBatch` loop.
-  ///
-  /// [batchContext] is non-null when called from `ingestBatch`, null when
-  /// called from [ingestEvent]. [wireRecord] is the record [incoming] was
-  /// parsed from, as the batch envelope carried it; the event's own hash is
-  /// checked over it when given.
-  Future<PerEventIngestOutcome> _ingestOneInTxn(
-    Transaction txn,
-    StoredEvent incoming, {
-    required BatchContext? batchContext,
-    PublishCollector? collector,
-    Map<String, Object?>? wireRecord,
-  }) async {
-    // 0. Version compatibility, before any read or write: the data-format
-    //    major must equal this build's, and the entry-type major must not be
-    //    above the registered one. A same-major event is accepted at any
-    //    minor.
-    // Implements: EVS-DEV-version-compatibility/D
-    // every ingest entry point (ingestEvent and each event of ingestBatch)
-    //   refuses a different data-format major or a higher entry-type major
-    //   before any write.
-    if (!incoming.libFormatVersion.isCompatibleWith(LibVersion.dataFormat)) {
-      throw IngestDataFormatIncompatible(
-        eventId: incoming.eventId,
-        wireFormat: incoming.libFormatVersion,
-        receiverFormat: LibVersion.dataFormat,
-      );
-    }
-    // An entry type this build does not register is accepted at any
-    // version: it is stored as it is and folds under its own version.
-    final def = entryTypes.byId(incoming.entryType);
-    if (def != null &&
-        incoming.entryTypeVersion.major > def.registeredVersion.major) {
-      throw IngestEntryTypeVersionAhead(
-        eventId: incoming.eventId,
-        entryType: incoming.entryType,
-        wireVersion: incoming.entryTypeVersion,
-        receiverVersion: def.registeredVersion,
-      );
-    }
-    // Implements: EVS-DEV-version-compatibility/D
-    // an event below the registered version that a view it folds into has
-    //   no promoter path for is refused by name before any write.
-    if (def != null && incoming.entryTypeVersion < def.registeredVersion) {
-      for (final spec in projections.all()) {
-        if (!spec.interest.matches(incoming)) continue;
-        final gap = promoters.chainGap(
-          viewName: spec.viewName,
-          entryType: incoming.entryType,
-          fromVersion: incoming.entryTypeVersion,
-          toVersion: def.registeredVersion,
-        );
-        if (gap != null) {
-          throw IngestEntryTypeVersionUnpromotable(
-            eventId: incoming.eventId,
-            entryType: incoming.entryType,
-            viewName: spec.viewName,
-            wireVersion: incoming.entryTypeVersion,
-            receiverVersion: def.registeredVersion,
-            reason: gap,
-          );
-        }
+  /// Throws [IngestDataFormatIncompatible] when [record], an event record
+  /// as a batch envelope carried it, records a data-format major other than
+  /// this build's, reading nothing of the record but `lib_format_version`
+  /// and `event_id`, so the refusal names the major and not a field a
+  /// build of that major did not write. An integer `lib_format_version` is
+  /// the version shape of a data format before 2.0 and names its major. A
+  /// `lib_format_version` this reads no version from is left to
+  /// [StoredEvent.fromMap], which names the field.
+  // Implements: EVS-DEV-version-compatibility/Q
+  // an event of another data-format major is refused by its major before
+  //   any check of the rest of its record.
+  static void _refuseOtherDataFormatMajorOfRecord(Map<String, Object?> record) {
+    final raw = record['lib_format_version'];
+    final DataFormatVersion version;
+    if (raw is int && raw >= 1) {
+      version = DataFormatVersion(raw, 0);
+    } else {
+      try {
+        version = DataFormatVersion.fromJson(raw);
+      } on FormatException {
+        return;
       }
     }
+    final eventId = record['event_id'];
+    _refuseOtherDataFormatMajor(
+      eventId is String ? eventId : '(no event_id)',
+      version,
+    );
+  }
 
-    // 0b. Reserved system events: only shapes the library appends, before
-    //     any read or write.
-    _refuseUndeclaredReservedEvent(incoming);
-
-    // 1. Chain 1: the event's own hash against its content, then each
-    //    hop's arrival hash.
-    final verdict = _verifyChainOn(incoming, wireRecord: wireRecord);
-    if (!verdict.isValid) {
-      final failure = verdict.failures.first;
-      throw IngestChainBroken(
-        eventId: incoming.eventId,
-        kind: failure.kind,
-        hopIndex: failure.position,
-        expectedHash: failure.expectedHash,
-        actualHash: failure.actualHash,
+  /// Handles one received [record] inside [txn], for [_ingestEvent] and each
+  /// record of a native delivery the receiver endpoint accepts: stores it
+  /// as received, finds it held, or keeps it in a security finding, and
+  /// records every finding it meets.
+  ///
+  /// [parsed] is the event [record] was written from, when the caller holds
+  /// one ([_ingestEvent]); otherwise [record] is parsed here, and a record
+  /// that does not parse is one the library does not store as an event.
+  /// [batchContext] is non-null for a record of a delivery, and [delivery]
+  /// names the delivery of a native delivery channel it arrived in.
+  // Implements: EVS-PRD-ingest/G
+  // every record of a delivery is admitted whatever its content or the
+  //   outcome of the integrity checks, other than a record the library cannot
+  //   store as an event, which is kept in full in a security finding; the
+  //   rest of the delivery is admitted.
+  // Implements: EVS-DEV-security-findings/F
+  // every finding ingest records is appended in the ingest transaction that
+  //   commits the record's outcome.
+  // Implements: EVS-DEV-security-findings/Q
+  // ingest records its findings under the detector role ingest; the restore
+  //   operation, sharing this record handling, records them under restore.
+  Future<PerEventIngestOutcome> _ingestRecordInTxn(
+    Transaction txn,
+    Map<String, Object?> record, {
+    required StoredEvent? parsed,
+    required BatchContext? batchContext,
+    required PublishCollector collector,
+    ProvenanceDelivery? delivery,
+    FindingRole role = FindingRole.ingest,
+  }) async {
+    final rawEventId = record['event_id'];
+    final eventId = rawEventId is String ? rawEventId : null;
+    final findingIds = <String>[];
+    Future<void> find(
+      FindingKind kind,
+      Map<String, Object?> evidence,
+      List<String> aggregates,
+    ) async {
+      findingIds.add(
+        await _recordIngestFindingInTxn(
+          txn,
+          collector,
+          kind: kind,
+          evidence: evidence,
+          aggregates: aggregates,
+          role: role,
+        ),
       );
     }
 
-    // 2. Idempotency check by event_id.
-    final existing = await backend.findEventByIdInTxn(txn, incoming.eventId);
-    if (existing != null) {
-      // Event already present — compare arrival_hash for identity check.
-      final existingProv = (existing.metadata['provenance'] as List<Object?>)
-          .cast<Map<String, Object?>>();
-      final thisHopEntry = existingProv.last;
-      final storedArrivalHash = thisHopEntry['arrival_hash'] as String?;
-      if (storedArrivalHash == incoming.eventHash) {
-        // Duplicate — emit audit event, return duplicate outcome.
-        await _emitDuplicateReceivedInTxn(
-          txn,
-          subjectEventId: incoming.eventId,
-          subjectEventHashOnRecord: existing.eventHash,
-          batchContext: batchContext,
-          collector: collector,
-        );
+    // Implements: EVS-DEV-chain-verification/Q
+    // an event of the receiver's own identity is recognised by its
+    //   originator provenance entry, never by the data it carries.
+    final originator = _originatorDatabaseOfRecord(record);
+    final isOwn = originator == databaseId;
+
+    // 1. Parse, and decide whether the library can store the record as an
+    //    event. The U+0000 check runs over the raw record, before any
+    //    parse attempt: a parse of a record carrying it could otherwise
+    //    succeed (the character does not break a record's shape) or, were
+    //    a parser ever taught to refuse it too, would misclassify the
+    //    record as record_malformed instead of unstorable_character.
+    // Implements: EVS-DEV-security-findings/O
+    // a received or restored record a string of which, a key included,
+    //   carries U+0000 is stored as no event and kept in a finding of
+    //   reason unstorable_character.
+    StoredEvent? event;
+    String? unstorable;
+    if (originator == null) {
+      unstorable = _kRecordMalformed;
+    } else if (recordFieldWithNulCharacter(record) != null) {
+      unstorable = _kUnstorableCharacter;
+    } else {
+      try {
+        event = (parsed ?? StoredEvent.fromMap(record, 0))
+          ..requireWellFormedRecord();
+      } on FormatException {
+        event = null;
+        unstorable = _kRecordMalformed;
+      }
+    }
+    if (event != null) {
+      _refuseUnadmittedVersion(event);
+      unstorable = _unstorableReason(event, originator!);
+    }
+
+    final held = eventId == null
+        ? null
+        : await _backend.findEventByIdInTxn(txn, eventId);
+    // Implements: EVS-DEV-security-findings/B
+    // a finding about a received record names the aggregate of the event
+    //   the receiver holds under the record's identifier, and no aggregate
+    //   when it holds none: a record kept in full is not an event it holds.
+    final heldAggregates = <String>[if (held != null) held.aggregateId];
+
+    // 2. A record the library does not store as an event.
+    // Implements: EVS-DEV-security-findings/O
+    // a received record the library does not store as an event (malformed,
+    //   a declared reserved entry type in a shape it does not declare, or a
+    //   destination audit whose identifiers are not well formed or whose
+    //   database identity is not its originating database) is kept in full
+    //   in an event_malformed finding naming the reason, other than a record
+    //   of the receiver's own identity; no event is stored for it.
+    // Implements: EVS-DEV-causal-parents/B
+    // a record with no causal object of the exact shape is stored as no
+    //   event and kept in a finding.
+    // Implements: EVS-DEV-event-record/H
+    // a record whose provenance entry lacks database_id or library_version
+    //   is stored as no event and kept in a finding.
+    // Implements: EVS-PRD-materializer/H
+    // the ingest part: a record ingest receives whose data holds a top-level
+    //   key beginning with `$` is stored as no event, and the finding names
+    //   the reason. The append and registration parts are refused where
+    //   they are made.
+    if (unstorable != null) {
+      if (isOwn) {
+        await find(FindingKind.ownEventIngested, <String, Object?>{
+          'event_id': eventId,
+          'sealed_hash': _sealedHashOfRecord(record),
+          'record': held == null ? record : null,
+        }, heldAggregates);
+      } else {
+        await find(FindingKind.eventMalformed, <String, Object?>{
+          'reason': unstorable,
+          'record': record,
+        }, heldAggregates);
+      }
+      final heldOwn = isOwn ? held : null;
+      return PerEventIngestOutcome(
+        eventId: eventId,
+        outcome: heldOwn == null
+            ? IngestOutcome.keptInFinding
+            : IngestOutcome.duplicate,
+        resultHash: heldOwn?.eventHash,
+        findingIds: findingIds,
+      );
+    }
+    final incoming = event!;
+
+    // 3. Every hash the record carries, recomputed over the record as it
+    //    arrived.
+    // Implements: EVS-DEV-chain-verification/P
+    // an event whose event_hash, or a receiver entry's arrival hash, does
+    //   not recompute is stored as received with a hash_mismatch finding
+    //   naming the event, the hash it carries and the hash it recomputes to.
+    // Implements: EVS-PRD-ingest/D
+    // each received event's hash chain is verified, and an event whose
+    //   chain does not verify is admitted as received with a finding.
+    final hashEvidence = hashMismatchEvidence(incoming, wireRecord: record);
+
+    // 4. An identifier the receiver holds.
+    if (held != null) {
+      final heldSealed = ChainCoordinates.of(held).sealedHash;
+      if (heldSealed != ChainCoordinates.of(incoming).sealedHash) {
+        // Implements: EVS-DEV-security-findings/G
+        // an event whose identifier the receiver holds under another sealed
+        //   hash is not stored; an identity_mismatch finding carries the
+        //   received record in full.
+        await find(FindingKind.identityMismatch, <String, Object?>{
+          'event_id': incoming.eventId,
+          'held_hash': heldSealed,
+          'record': record,
+        }, heldAggregates);
+        if (isOwn) await _findOwnEvent(find, incoming, heldAggregates);
         return PerEventIngestOutcome(
           eventId: incoming.eventId,
-          outcome: IngestOutcome.duplicate,
-          resultHash: existing.eventHash,
-        );
-      } else {
-        throw IngestIdentityMismatch(
-          eventId: incoming.eventId,
-          incomingHash: incoming.eventHash,
-          storedArrivalHash: storedArrivalHash ?? '(null)',
+          outcome: IngestOutcome.keptInFinding,
+          resultHash: null,
+          findingIds: findingIds,
         );
       }
-    }
-
-    // 2b. A destination audit naming this database that this database does
-    //     not hold is not one it appended and still has.
-    // Implements: EVS-DEV-destination-drain/L
-    // ingest refuses, before any write, a reserved destination audit event
-    //   that names the receiver's own database and that the receiver does not
-    //   already hold.
-    if (kDestinationAuditEntryTypes.contains(incoming.entryType) &&
-        incoming.data['database_id'] == databaseId) {
-      throw IngestReservedEventRefused(
+      // Implements: EVS-PRD-ingest/F
+      // re-presenting an event already admitted stores nothing.
+      await _emitDuplicateReceivedInTxn(
+        txn,
+        subjectEventId: incoming.eventId,
+        subjectEventHashOnRecord: held.eventHash,
+        batchContext: batchContext,
+        collector: collector,
+      );
+      for (final evidence in hashEvidence) {
+        await find(FindingKind.hashMismatch, evidence, heldAggregates);
+      }
+      if (isOwn) await _findOwnEvent(find, incoming, heldAggregates);
+      return PerEventIngestOutcome(
         eventId: incoming.eventId,
-        entryType: incoming.entryType,
-        reason: ReservedEventRefusal.namesReceiverDatabase,
+        outcome: IngestOutcome.duplicate,
+        resultHash: held.eventHash,
+        findingIds: findingIds,
       );
     }
 
-    // 3. New event — reserve a fresh local sequence_number, capture the
-    //    originator's wire-supplied sequence_number, and stamp receiver
-    //    provenance. Under the unified event store, "Chain 2 ordering"
-    //    is the local sequence_number; the previous-ingest tail hash is
-    //    the prior event in this destination's log.
+    // 5. A new event: reserve a fresh local sequence number, capture the
+    //    originator's wire-supplied sequence number, and stamp the receiver
+    //    entry.
+    // Implements: EVS-DEV-security-findings/I
+    // a security finding another database originated reaches this step as
+    //   any event does, whatever its kind and detector, and no rule beyond
+    //   ingest's own applies to it.
     final originSeq = incoming.sequenceNumber;
-    final localSeq = await backend.nextSequenceNumber(txn);
-    final previousTailHash = await backend.readLatestEventHash(txn);
+    final localSeq = await _backend.nextSequenceNumber(txn);
+    // Implements: EVS-DEV-chain-verification/C
+    // the receiver entry records the event's local sequence number and the
+    //   stored hash of the event at the preceding one, read in this
+    //   transaction.
+    final previousTailHash = await _backend.readLatestEventHash(txn);
+    // Implements: EVS-DEV-event-record/D+E
+    // the receiver entry names the receiving database and the library
+    //   version that stamped it.
     final receiverEntry = ProvenanceEntry(
       hop: source.hopId,
       receivedAt: _now(),
@@ -2157,296 +2974,377 @@ class EventStore {
       ingestSequenceNumber: localSeq,
       originSequenceNumber: originSeq,
       batchContext: batchContext,
+      libraryVersion: _build().version,
+      databaseId: databaseId,
+      // Implements: EVS-DEV-delivery-receiver/H
+      // the receiver entry of an event ingested from a native delivery
+      //   carries the delivery: its channel and its number.
+      delivery: delivery,
     );
-
-    // 4. Build the updated event with the local sequence_number and
-    //    appended receiver provenance, then recompute the event hash.
     final updatedEvent = _appendReceiverProvenance(
       incoming,
       receiverEntry,
       localSeq: localSeq,
     );
+    await _backend.appendEvent(txn, updatedEvent);
+    collector._add(updatedEvent);
 
-    // 5. Persist via the same path as origin appends.
-    await backend.appendEvent(txn, updatedEvent);
-    collector?.add(updatedEvent);
-
-    // 6. Fire the projection interpreter symmetric with the local-append path.
-    //    The interpreter runs inside the same transaction as `appendEvent`,
-    //    applying all registered ProjectionSpecs whose interest filter matches
-    //    the event. A throw propagates out and rolls back the entire ingest
-    //    transaction (all-or-nothing batch atomicity).
-    final rowChanges = await _interpreter.applyEvent(
+    // The projection interpreter runs inside the same transaction, as on
+    // the local-append path. This is an always-stored event
+    // (`EVS-DEV-view-convergence` Terms): a fold failure is this copy's
+    // problem alone -- the copy passes over the event and stays current --
+    // and is collected for the finding recorded below; the rest of the
+    // delivery still commits (`EVS-PRD-ingest/G`).
+    final applied = await _interpreter.applyEvent(
       txn: txn,
-      backend: backend,
+      backend: _backend,
       event: updatedEvent,
+      copyIds: _viewCopyIds,
+      mode: ApplyEventMode.alwaysStored,
     );
-    if (collector != null && rowChanges.isNotEmpty) {
-      collector.addRowChanges(rowChanges);
-    }
+    if (applied.changes.isNotEmpty) collector._addRowChanges(applied.changes);
 
+    // 6. The findings about the stored event, recorded after it so that
+    //    each names its aggregate.
+    final stored = <String>[updatedEvent.aggregateId];
+    // Implements: EVS-DEV-security-findings/S
+    // one fold_failed finding is recorded, in the storing transaction, for
+    //   each copy that passed over the stored event.
+    findingIds.addAll(
+      await _recordFoldFailedFindingsInTxn(
+        txn,
+        collector,
+        updatedEvent,
+        applied.failures,
+      ),
+    );
+    for (final evidence in hashEvidence) {
+      await find(FindingKind.hashMismatch, evidence, stored);
+    }
+    // Implements: EVS-PRD-ingest/H
+    // an event whose originator entry names the receiving database is
+    //   stored as received when the receiver does not hold it, with a
+    //   finding.
+    if (isOwn) await _findOwnEvent(find, incoming, stored);
+    // Implements: EVS-DEV-chain-verification/K+L
+    // every event ingest stores is checked for a broken predecessor, a
+    //   reused origin position and a fork inside the ingest transaction, so
+    //   the events stored earlier in it count, and is stored whatever the
+    //   checks find.
+    for (final found in await chainStructureFindingsInTxn(
+      _backend,
+      txn,
+      updatedEvent,
+    )) {
+      await find(found.kind, found.evidence, found.aggregates);
+    }
+    // Implements: EVS-DEV-sender-succession/K
+    // storing a succession event the receiver does not hold records one
+    //   succession_ahead finding for each channel it names of which the
+    //   receiver holds an accepted delivery and whose named delivery is
+    //   above the receiver's record of that channel.
+    if (updatedEvent.entryType == kDestinationSenderSucceededEntryType) {
+      await _findSuccessionAheadInTxn(txn, updatedEvent, find);
+    }
     return PerEventIngestOutcome(
       eventId: updatedEvent.eventId,
-      outcome: IngestOutcome.ingested,
+      outcome: findingIds.isEmpty
+          ? IngestOutcome.ingested
+          : IngestOutcome.ingestedWithFinding,
       resultHash: updatedEvent.eventHash,
+      findingIds: findingIds,
     );
   }
 
-  /// Throws [IngestReservedEventRefused] when [incoming] is of a reserved
-  /// system entry type and is not in a shape the library appends: its
-  /// aggregate type and event type must be declared for its entry type
-  /// ([ReservedEventRefusal.shapeMismatch]), and a destination audit event
-  /// must carry a destination identifier and a database identity, each a
-  /// non-empty string without `|` ([ReservedEventRefusal.malformed]). Reads
-  /// and writes nothing.
-  // Implements: EVS-DEV-destination-drain/L
-  // ingest refuses, with a named reason and before any write, an event of a
-  //   reserved entry type whose aggregate type or event type is not one the
-  //   library declares for that entry type, and an event of a reserved
-  //   destination audit entry type whose destination identifier or database
-  //   identity is missing, empty, not a string, or contains '|'.
-  static void _refuseUndeclaredReservedEvent(StoredEvent incoming) {
-    final shape = kReservedEventShapes[incoming.entryType];
-    if (shape == null) return;
-    if (!shape.admits(incoming.aggregateType, incoming.eventType)) {
-      throw IngestReservedEventRefused(
-        eventId: incoming.eventId,
-        entryType: incoming.entryType,
-        reason: ReservedEventRefusal.shapeMismatch,
-      );
-    }
-    if (!kDestinationAuditEntryTypes.contains(incoming.entryType)) return;
-    if (!isWellFormedDestinationAuditData(incoming.data)) {
-      throw IngestReservedEventRefused(
-        eventId: incoming.eventId,
-        entryType: incoming.entryType,
-        reason: ReservedEventRefusal.malformed,
-      );
-    }
-  }
+  /// Records, through [find], the `own_event_ingested` finding for
+  /// [incoming], an event of this database's own identity that ingest held
+  /// or stored, so the finding carries no record.
+  // Implements: EVS-DEV-chain-verification/Q
+  // an incoming event whose originator entry names the receiving database
+  //   records one own_event_ingested finding naming the event and its sealed
+  //   hash, held or not, and no event_malformed finding.
+  static Future<void> _findOwnEvent(
+    Future<void> Function(FindingKind, Map<String, Object?>, List<String>) find,
+    StoredEvent incoming,
+    List<String> aggregates,
+  ) => find(FindingKind.ownEventIngested, <String, Object?>{
+    'event_id': incoming.eventId,
+    'sealed_hash': ChainCoordinates.of(incoming).sealedHash,
+    'record': null,
+  }, aggregates);
 
-  // -----------------------------------------------------------------------
-  // Verification APIs
-  // -----------------------------------------------------------------------
-
-  /// Walk Chain 1 on [event]: check that its `event_hash` is the canonical
-  /// hash of its content, then walk `metadata.provenance` backward from tail
-  /// to origin. Non-throwing; returns a [ChainVerdict] with `ok=true` when the
-  /// event's hash and every `arrival_hash` match the hash recomputed at that
-  /// hop, `ok=false` otherwise with a list of [ChainFailure] instances
-  /// describing each broken link. An origin-only event (single-entry
-  /// provenance) has no inter-hop link; its own hash is still checked.
-  ///
-  /// See design spec §2.11.
-  Future<ChainVerdict> verifyEventChain(StoredEvent event) async {
-    return _verifyChainOn(event);
-  }
-
-  /// Walk Chain 2 on this destination's event log from [fromSequenceNumber]
-  /// to [toSequenceNumber] (inclusive). When [toSequenceNumber] is null,
-  /// walks through the current tail. Throws [ArgumentError] if
-  /// `fromSequenceNumber > toSequenceNumber`. Non-throwing otherwise; returns
-  /// a [ChainVerdict] with `ok=true` when every `previous_ingest_hash` equals
-  /// the stored `event_hash` of the prior ingest-stamped event in the range.
-  ///
-  /// Under the unified event store, the "Chain 2 ordering" is the local
-  /// `sequence_number` (also recorded on the receiver-hop entry as
-  /// `ingest_sequence_number` for symmetry with Chain 2 fields). Events
-  /// without a receiver-stamped top provenance entry — i.e. origin appends
-  /// made by this device — are skipped.
-  ///
-  /// See design spec §2.11.
-  Future<ChainVerdict> verifyIngestChain({
-    int fromSequenceNumber = 0,
-    int? toSequenceNumber,
-  }) async {
-    final allEvents = await backend.findAllEvents();
-    final ingestStamped = <StoredEvent>[];
-    for (final event in allEvents) {
-      final ingestSeq = _ingestSeqOf(event);
-      if (ingestSeq != null) {
-        ingestStamped.add(event);
-      }
+  /// Records, through [find], one `succession_ahead` finding for each
+  /// channel [event]'s `predecessor_channels` names of which this database
+  /// holds an accepted delivery and whose named delivery number is above
+  /// this database's record of that channel, read inside [txn]. A channel
+  /// this database never accepted a delivery on, and a named delivery at
+  /// or below the record, name nothing.
+  // Implements: EVS-DEV-sender-succession/K
+  // a channel the receiver never accepted a delivery on, and a named
+  //   delivery at or below the receiver's record, record nothing.
+  Future<void> _findSuccessionAheadInTxn(
+    Transaction txn,
+    StoredEvent event,
+    Future<void> Function(FindingKind, Map<String, Object?>, List<String>) find,
+  ) async {
+    final SenderSuccessionData succession;
+    try {
+      succession = SenderSuccessionData.fromJson(event.data);
+    } on FormatException {
+      return;
     }
-    final tailSeq = ingestStamped.isEmpty
-        ? 0
-        : _ingestSeqOf(ingestStamped.last)!;
-    final upperBound = toSequenceNumber ?? tailSeq;
-    if (fromSequenceNumber > upperBound) {
-      throw ArgumentError(
-        'fromSequenceNumber ($fromSequenceNumber) must be <= '
-        'toSequenceNumber ($upperBound)',
-      );
-    }
-    final failures = <ChainFailure>[];
-    StoredEvent? prev;
-    for (final event in ingestStamped) {
-      final thisSeq = _ingestSeqOf(event)!;
-      if (thisSeq < fromSequenceNumber) continue;
-      if (thisSeq > upperBound) break;
-      if (thisSeq <= fromSequenceNumber) {
-        // Anchor at the start of the range — not verified against
-        // anything before it.
-        prev = event;
+    for (final predecessorChannel in succession.predecessorChannels) {
+      final channel = predecessorChannel.channel;
+      final record = await receiverEndpoint._recordInTxn(txn, channel);
+      if (record.deliveryNumber == 0) continue;
+      if (predecessorChannel.deliveryNumber <= record.deliveryNumber) {
         continue;
       }
-      final lastEntry = _lastProvenanceEntry(event)!;
-      final previousIngestHash = lastEntry['previous_ingest_hash'] as String?;
-      final expected = prev?.eventHash;
-      if (previousIngestHash != expected) {
-        failures.add(
-          ChainFailure(
-            position: thisSeq,
-            kind: ChainFailureKind.previousIngestHashMismatch,
-            expectedHash: expected ?? '(null)',
-            actualHash: previousIngestHash ?? '(null)',
-          ),
-        );
-      }
-      prev = event;
+      await find(FindingKind.successionAhead, <String, Object?>{
+        'channel': channel.toJson(),
+        'receiver_record': record.toJson(),
+        'succession_record': DeliveryRecord(
+          deliveryNumber: predecessorChannel.deliveryNumber,
+          deliveryHash: predecessorChannel.deliveryHash,
+        ).toJson(),
+      }, const <String>[]);
     }
-    return ChainVerdict(isValid: failures.isEmpty, failures: failures);
   }
 
-  /// Extract the last provenance entry of [event] as a typed map, or `null`
-  /// when provenance is absent or empty. Shared by [_ingestSeqOf] and
-  /// [verifyIngestChain] to avoid duplicating the same map-shape navigation.
-  Map<String, Object?>? _lastProvenanceEntry(StoredEvent event) {
-    final provenanceRaw = event.metadata['provenance'];
-    if (provenanceRaw is! List || provenanceRaw.isEmpty) return null;
-    final last = provenanceRaw.last;
-    if (last is! Map<String, Object?>) return null;
-    return last;
+  /// Records, inside [txn], the security finding of [kind] with [evidence]
+  /// that this record handling detected under detector role [role] (ingest
+  /// by default; the restore operation passes `FindingRole.restore`),
+  /// naming [aggregates], unless this database holds it as authored
+  /// already; returns its identity either way.
+  Future<String> _recordIngestFindingInTxn(
+    Transaction txn,
+    PublishCollector collector, {
+    required FindingKind kind,
+    required Map<String, Object?> evidence,
+    required List<String> aggregates,
+    FindingRole role = FindingRole.ingest,
+  }) async {
+    await _recordFindingInTxn(
+      txn,
+      collector,
+      role: role,
+      kind: kind,
+      evidence: evidence,
+      aggregates: aggregates,
+    );
+    return securityFindingId(
+      databaseId: databaseId,
+      role: role,
+      kind: kind,
+      evidence: evidence,
+    );
   }
 
-  /// Extract the `ingest_sequence_number` from the last provenance entry of
-  /// [event], or `null` when the event was not ingest-stamped (i.e. an
-  /// origin-only event with no receiver hop). Used by [verifyIngestChain]
-  /// to identify each event's position in Chain 2.
-  int? _ingestSeqOf(StoredEvent event) =>
-      _lastProvenanceEntry(event)?['ingest_sequence_number'] as int?;
-
-  /// Walk Chain 1 on [event].metadata.provenance and return a non-throwing
-  /// verdict. Used by [ingestEvent] and [verifyEventChain]. The event's own
-  /// hash is checked over [wireRecord] when given (the record as a batch
-  /// envelope carried it), else over `event.toMap()`.
-  ChainVerdict _verifyChainOn(
-    StoredEvent event, {
-    Map<String, Object?>? wireRecord,
-  }) {
-    final provenanceRaw = event.metadata['provenance'];
-    if (provenanceRaw is! List) {
-      return const ChainVerdict(
-        isValid: false,
-        failures: <ChainFailure>[
-          ChainFailure(
-            position: -1,
-            kind: ChainFailureKind.provenanceMissing,
-            expectedHash: '(list)',
-            actualHash: '(missing or non-list)',
+  /// Records, inside [txn], one `fold_failed` finding under detector role
+  /// [FindingRole.fold] for each of [failures], naming [event]'s aggregate:
+  /// the shared recording every always-stored append uses for the fold
+  /// failures its own fold collected (`EVS-DEV-security-findings/S`), and
+  /// ingest and the raw internal audit fold use for the failures collected
+  /// folding the event or audit they just stored. Never called for an
+  /// [event] that is itself a finding of kind `fold_failed`
+  /// (`EVS-DEV-security-findings/T`): the interpreter collects no
+  /// failures for one, so [failures] is always empty in that case and this
+  /// method is never reached with a non-empty list.
+  // Implements: EVS-DEV-security-findings/S
+  // one fold_failed finding is recorded, in the transaction that stores or
+  //   appends the event, for each copy that passed over it.
+  Future<List<String>> _recordFoldFailedFindingsInTxn(
+    Transaction txn,
+    PublishCollector collector,
+    StoredEvent event,
+    List<FoldFailureRecord> failures,
+  ) async {
+    final ids = <String>[];
+    final aggregates = <String>[event.aggregateId];
+    for (final failure in failures) {
+      ids.add(
+        await _recordIngestFindingInTxn(
+          txn,
+          collector,
+          kind: FindingKind.foldFailed,
+          evidence: foldFailedFindingEvidence(
+            viewName: failure.viewName,
+            definitionFingerprint: failure.definitionFingerprint,
+            event: event,
+            reason: failure.reason,
           ),
-        ],
-      );
-    }
-    final provenance = provenanceRaw.cast<Map<String, Object?>>();
-    if (provenance.isEmpty) {
-      return const ChainVerdict(
-        isValid: false,
-        failures: <ChainFailure>[
-          ChainFailure(
-            position: -1,
-            kind: ChainFailureKind.provenanceMissing,
-            expectedHash: '(non-empty)',
-            actualHash: '(empty)',
-          ),
-        ],
-      );
-    }
-    final failures = <ChainFailure>[];
-    // Implements: EVS-PRD-ingest/D
-    // the event's own hash is recomputed from the record as it arrived,
-    //   whatever the length of its provenance, so an event whose
-    //   `event_hash` is not the hash of that record is refused before any
-    //   write.
-    // Implements: EVS-PRD-hash-chain-integrity/A
-    // the hash an event states must be the canonical hash of its content.
-    //
-    // `event_hash` is the hash the last hop stored the record under: the
-    // originator's for an origin-only event, the last receiver's for a
-    // relayed one. Each hop seals the record it holds (its own provenance
-    // entry and its own `sequence_number` included) and a delivery sends
-    // that stored record. A batch's record is hashed exactly as the
-    // envelope carried it; `StoredEvent.fromMap` keeps every hashed field
-    // as the record spelled it, so a parsed event's `toMap()` hashes the
-    // same, and so does the copy this hop stores and forwards. The hops
-    // below the last are covered by the arrival-hash walk that follows,
-    // which rebuilds each earlier hop's record from the same fields.
-    //
-    // Limits: the hash is an unkeyed SHA-256, so the check detects a change
-    // made without recomputing every hash it affects, not a forger who
-    // recomputes them. `aggregate_type` is outside the hash input.
-    // `previous_event_hash` is not checked against the event before it in
-    // the upstream log.
-    final recomputedTail = _eventHash(wireRecord ?? event.toMap());
-    if (recomputedTail != event.eventHash) {
-      failures.add(
-        ChainFailure(
-          position: provenance.length - 1,
-          kind: ChainFailureKind.eventHashMismatch,
-          expectedHash: event.eventHash,
-          actualHash: recomputedTail,
+          aggregates: aggregates,
+          role: FindingRole.fold,
         ),
       );
     }
-    // Walk from tail back to hop 1: each receiver hop's `arrival_hash` is
-    // the hash of the record as the hop before it stored it.
-    //
-    // Each receiver hop reassigns the stored event's `sequence_number` to
-    // its local counter. To recompute the hash at hop k-1,
-    // substitute the seq that was on the event when hop k-1 stored it:
-    //
-    //   - For k == 1 (recomputing the origin's hash): use the originator's
-    //     wire-supplied seq, preserved on provenance[1].origin_sequence_number.
-    //   - For k > 1 (recomputing a prior receiver hop's hash): use that
-    //     prior hop's reassigned local seq, recorded as
-    //     provenance[k-1].ingest_sequence_number.
-    for (var k = provenance.length - 1; k > 0; k--) {
-      final entry = provenance[k];
-      final expected = entry['arrival_hash'] as String?;
-      if (expected == null) {
-        failures.add(
-          ChainFailure(
-            position: k,
-            kind: ChainFailureKind.arrivalHashMismatch,
-            expectedHash: '(non-null)',
-            actualHash: '(null)',
-          ),
-        );
-        continue;
-      }
-      final int? seqAtHopBefore;
-      if (k == 1) {
-        seqAtHopBefore = entry['origin_sequence_number'] as int?;
-      } else {
-        seqAtHopBefore = provenance[k - 1]['ingest_sequence_number'] as int?;
-      }
-      final recomputed = _hashWithProvenanceSlice(
-        event,
-        provenance.sublist(0, k),
-        sequenceNumberOverride: seqAtHopBefore,
+    return ids;
+  }
+
+  /// The [FoldFailedFindingRecorder] the catch-up driver calls once its own
+  /// catch-up transaction has rolled back unwritten on a fold failure
+  /// (`EVS-DEV-view-convergence/Z`): appends the `fold_failed` finding, under
+  /// detector role [FindingRole.fold], in a transaction of its own, committing
+  /// before the catch-up transaction that then passes over the event
+  /// (`EVS-DEV-security-findings/F`).
+  Future<void> _recordCatchUpFoldFailedFinding({
+    required String viewName,
+    required String definitionFingerprint,
+    required StoredEvent event,
+    required FoldFailureReason reason,
+  }) async {
+    if (DeliveryTestHooks.current?.failCatchUpFoldFindingAppend?.call() ??
+        false) {
+      throw const InjectedFailure('catch_up_fold_finding_append');
+    }
+    await _runInTxnWithPublish<void>((txn, collector) async {
+      await _recordFindingInTxn(
+        txn,
+        collector,
+        role: FindingRole.fold,
+        kind: FindingKind.foldFailed,
+        evidence: foldFailedFindingEvidence(
+          viewName: viewName,
+          definitionFingerprint: definitionFingerprint,
+          event: event,
+          reason: reason,
+        ),
+        aggregates: <String>[event.aggregateId],
       );
-      if (recomputed != expected) {
-        failures.add(
-          ChainFailure(
-            position: k,
-            kind: ChainFailureKind.arrivalHashMismatch,
-            expectedHash: expected,
-            actualHash: recomputed,
-          ),
+    });
+  }
+
+  /// Throws, before the record is written, when [incoming]'s entry-type
+  /// version is above the major this build registers for its entry type
+  /// ([IngestEntryTypeVersionAhead]), or below it with no promoter path for
+  /// a view it folds into ([IngestEntryTypeVersionUnpromotable]). An entry
+  /// type this build does not register is accepted at any version: it is
+  /// stored as it is and folds under its own version.
+  // Implements: EVS-DEV-version-compatibility/D
+  // every ingest entry point refuses a higher entry-type major, and an
+  //   event below the registered version that a view it folds into has no
+  //   promoter path for, by name before any write.
+  void _refuseUnadmittedVersion(StoredEvent incoming) {
+    _refuseOtherDataFormatMajor(incoming.eventId, incoming.libFormatVersion);
+    final def = entryTypes.byId(incoming.entryType);
+    if (def == null) return;
+    if (incoming.entryTypeVersion.major > def.registeredVersion.major) {
+      throw IngestEntryTypeVersionAhead(
+        eventId: incoming.eventId,
+        entryType: incoming.entryType,
+        wireVersion: incoming.entryTypeVersion,
+        receiverVersion: def.registeredVersion,
+      );
+    }
+    if (!(incoming.entryTypeVersion < def.registeredVersion)) return;
+    for (final spec in projections.all()) {
+      if (!spec.interest.matches(incoming)) continue;
+      final gap = promoters.chainGap(
+        viewName: spec.viewName,
+        entryType: incoming.entryType,
+        fromVersion: incoming.entryTypeVersion,
+        toVersion: def.registeredVersion,
+      );
+      if (gap != null) {
+        throw IngestEntryTypeVersionUnpromotable(
+          eventId: incoming.eventId,
+          entryType: incoming.entryType,
+          viewName: spec.viewName,
+          wireVersion: incoming.entryTypeVersion,
+          receiverVersion: def.registeredVersion,
+          reason: gap,
         );
       }
     }
-    return ChainVerdict(isValid: failures.isEmpty, failures: failures);
+  }
+
+  /// The reason the library does not store [incoming], a parsed record
+  /// that [originator] originated, as an event, or null when it can:
+  ///
+  /// - `record_malformed`: its data holds a top-level key beginning with
+  ///   `$`, which the views reserve; or its provenance does not place it in
+  ///   an origin chain and a storage chain (an entry that is not an object,
+  ///   a receiver entry without an arrival hash, a first receiver entry
+  ///   without the origin position, or a later-hop entry before the last
+  ///   without its local position);
+  /// - `reserved_type_undeclared`: it is of a reserved entry type this
+  ///   release declares, under an aggregate type or event type the library
+  ///   does not declare for it;
+  /// - `audit_identity_invalid`: it is a destination audit whose destination
+  ///   identifier or database identity is missing, empty, not a string or
+  ///   contains `|`, or whose database identity is not [originator].
+  ///
+  /// A reserved entry type this release does not declare, or a reserved
+  /// event carrying an enumerated value it does not know, is stored.
+  // Implements: EVS-DEV-destination-drain/L
+  // ingest stores no event for a received event of a declared reserved
+  //   entry type in an aggregate type or event type the library does not
+  //   declare for it, or for a destination audit whose identifiers are not
+  //   well formed or whose database identity is not its originating
+  //   database; an undeclared reserved entry type or an unknown enumerated
+  //   value is stored as received.
+  static String? _unstorableReason(StoredEvent incoming, String originator) {
+    if (incoming.data.keys.any((key) => key.startsWith(r'$'))) {
+      return _kRecordMalformed;
+    }
+    final provenance = incoming.metadata['provenance'];
+    if (provenance is! List) return _kRecordMalformed;
+    for (var k = 0; k < provenance.length; k++) {
+      final entry = provenance[k];
+      if (entry is! Map) return _kRecordMalformed;
+      if (k == 0) continue;
+      if (entry['arrival_hash'] is! String) return _kRecordMalformed;
+      if (k == 1 && entry['origin_sequence_number'] is! int) {
+        return _kRecordMalformed;
+      }
+      if (k < provenance.length - 1 &&
+          entry['ingest_sequence_number'] is! int) {
+        return _kRecordMalformed;
+      }
+    }
+    final shape = kReservedEventShapes[incoming.entryType];
+    if (shape == null) return null;
+    if (!shape.admits(incoming.aggregateType, incoming.eventType)) {
+      return 'reserved_type_undeclared';
+    }
+    if (kDestinationAuditEntryTypes.contains(incoming.entryType) &&
+        (!isWellFormedDestinationAuditData(incoming.data) ||
+            incoming.data['database_id'] != originator)) {
+      return 'audit_identity_invalid';
+    }
+    return null;
+  }
+
+  /// The database identity [record]'s originator provenance entry names,
+  /// or null when its metadata carries no provenance list whose first entry
+  /// is an object naming a database as a non-empty string.
+  static String? _originatorDatabaseOfRecord(Map<String, Object?> record) {
+    final metadata = record['metadata'];
+    if (metadata is! Map) return null;
+    final provenance = metadata['provenance'];
+    if (provenance is! List || provenance.isEmpty) return null;
+    final first = provenance.first;
+    if (first is! Map) return null;
+    final id = first['database_id'];
+    return id is String && id.isNotEmpty ? id : null;
+  }
+
+  /// The hash [record]'s originating database sealed it under, read from
+  /// the record as it arrived: its `event_hash` when its provenance holds
+  /// one entry, otherwise its second entry's arrival hash; null when the
+  /// record carries none as a string.
+  static String? _sealedHashOfRecord(Map<String, Object?> record) {
+    final metadata = record['metadata'];
+    final provenance = metadata is Map ? metadata['provenance'] : null;
+    if (provenance is! List || provenance.isEmpty) return null;
+    final Object? hash;
+    if (provenance.length == 1) {
+      hash = record['event_hash'];
+    } else {
+      final second = provenance[1];
+      hash = second is Map ? second['arrival_hash'] : null;
+    }
+    return hash is String ? hash : null;
   }
 
   // Implements: EVS-DEV-flow-token/C
@@ -2484,103 +3382,8 @@ class EventStore {
     return StoredEvent.fromMap(recordMap, localSeq);
   }
 
-  /// Compute the hash that an event would have with its provenance replaced
-  /// by [provenanceSlice] and (optionally) `sequence_number` overridden to
-  /// [sequenceNumberOverride]. Used by [_verifyChainOn] to reconstruct what
-  /// each intermediate hop's `event_hash` was, accounting for the receiver-
-  /// side reassignment of `sequence_number`.
-  String _hashWithProvenanceSlice(
-    StoredEvent event,
-    List<Map<String, Object?>> provenanceSlice, {
-    int? sequenceNumberOverride,
-  }) {
-    final recordMap = Map<String, Object?>.from(event.toMap());
-    final newMetadata = <String, Object?>{
-      ...event.metadata,
-      'provenance': provenanceSlice,
-    };
-    recordMap['metadata'] = newMetadata;
-    if (sequenceNumberOverride != null) {
-      recordMap['sequence_number'] = sequenceNumberOverride;
-    }
-    recordMap.remove('event_hash');
-    return _eventHash(recordMap);
-  }
-
-  /// Caller-composed rejection audit. See design spec §2.7.
-  ///
-  /// Opens its own transaction and records one `ingest.batch_rejected` event
-  /// under the `ingest-audit:{hopId}` aggregate with Chain 2 fields stamped on
-  /// `provenance[0]`.  `batch_context` is null because no decoded batch is
-  /// associated — the batch failed before or during decoding.
-  ///
-  /// Typical call site:
-  /// ```dart
-  /// try {
-  ///   await store.ingestBatch(bytes, wireFormat: 'esd/batch@2');
-  /// } on IngestIdentityMismatch catch (e) {
-  ///   await store.logRejectedBatch(
-  ///     bytes,
-  ///     wireFormat: 'esd/batch@2',
-  ///     reason: 'identityMismatch',
-  ///     failedEventId: e.eventId,
-  ///     errorDetail: e.toString(),
-  ///   );
-  /// }
-  /// ```
-  Future<void> logRejectedBatch(
-    Uint8List bytes, {
-    required String wireFormat,
-    required String reason,
-    String? failedEventId,
-    String? errorDetail,
-  }) async {
-    refuseCallFromBootProgressObserver('EventStore.logRejectedBatch');
-    await backend.transaction((txn) async {
-      final now = _now();
-      final wireBytesHash = sha256.convert(bytes).toString();
-      final localSeq = await backend.nextSequenceNumber(txn);
-      final previousTailHash = await backend.readLatestEventHash(txn);
-      final provenance0 = ProvenanceEntry(
-        hop: source.hopId,
-        receivedAt: now,
-        identifier: source.identifier,
-        softwareVersion: source.softwareVersion,
-        arrivalHash: null,
-        previousIngestHash: previousTailHash,
-        ingestSequenceNumber: localSeq,
-        batchContext: null,
-      );
-      await _appendRawInternalEventInTxn(
-        txn,
-        backend,
-        aggregateId: 'ingest-audit:${source.hopId}',
-        aggregateType: kIngestAuditAggregateType,
-        entryType: kIngestAuditEntryType,
-        entryTypeVersion: entryTypes
-            .byId(kIngestAuditEntryType)!
-            .registeredVersion,
-        eventType: kIngestBatchRejectedEventType,
-        data: <String, Object?>{
-          'wire_bytes': base64Encode(bytes),
-          'wire_format': wireFormat,
-          'byte_length': bytes.length,
-          'wire_bytes_hash': wireBytesHash,
-          'reason': reason,
-          'failed_event_id': failedEventId,
-          'error_detail': errorDetail,
-        },
-        initiator: const AutomationInitiator(service: 'ingest'),
-        provenance0: provenance0,
-        localSeq: localSeq,
-        previousTailHash: previousTailHash,
-        uuid: _uuid,
-      );
-    });
-  }
-
   /// Emit a receiver-originated `ingest.duplicate_received` audit event
-  /// inside [txn]. Stamped with Chain 2 fields on `provenance[0]`.
+  /// inside [txn], an event this database authors.
   Future<void> _emitDuplicateReceivedInTxn(
     Transaction txn, {
     required String subjectEventId,
@@ -2588,24 +3391,15 @@ class EventStore {
     required BatchContext? batchContext,
     PublishCollector? collector,
   }) async {
-    final now = _now();
-    // Reserve a fresh local sequence_number; under the unified store this
-    // value is also the receiver-hop's ingest_sequence_number for Chain 2.
-    final localSeq = await backend.nextSequenceNumber(txn);
-    final previousTailHash = await backend.readLatestEventHash(txn);
-    final provenance0 = ProvenanceEntry(
+    final auditEvent = await _appendRawInternalEventInTxn(
+      txn,
+      _backend,
+      databaseId: databaseId,
       hop: source.hopId,
-      receivedAt: now,
       identifier: source.identifier,
       softwareVersion: source.softwareVersion,
-      arrivalHash: null,
-      previousIngestHash: previousTailHash,
-      ingestSequenceNumber: localSeq,
+      receivedAt: _now(),
       batchContext: batchContext,
-    );
-    await _appendRawInternalEventInTxn(
-      txn,
-      backend,
       aggregateId: 'ingest-audit:${source.hopId}',
       aggregateType: kIngestAuditAggregateType,
       entryType: kIngestAuditEntryType,
@@ -2618,11 +3412,53 @@ class EventStore {
         'subject_event_hash_on_record': subjectEventHashOnRecord,
       },
       initiator: const AutomationInitiator(service: 'ingest'),
-      provenance0: provenance0,
-      localSeq: localSeq,
-      previousTailHash: previousTailHash,
       uuid: _uuid,
       collector: collector,
+    );
+    await _foldRawInternalEventInTxn(txn, auditEvent, collector);
+  }
+
+  /// Folds [event], a raw internal audit this instance just appended
+  /// inside [txn] (the `ingest.delivery_accepted` or `ingest.duplicate_received`
+  /// audit), into every current copy exactly as an ingested event is
+  /// folded, so a copy whose interest names the audit's event type stays
+  /// current after the delivery that produced it. Not used for the boot's
+  /// `lib_version` events, appended before this instance's projection
+  /// interpreter and view copies exist.
+  // Implements: EVS-DEV-view-convergence/E
+  // the storing transaction of a delivery's raw audits folds them into
+  //   every current copy, the same as any other stored event.
+  // Implements: EVS-DEV-view-convergence/F
+  // a copy this call does not set to the event's position is left
+  //   entirely unchanged: this call touches only the copies the
+  //   interpreter's own applyEvent decides are current.
+  // Implements: EVS-DEV-security-findings/S
+  // one fold_failed finding is recorded, in the same transaction, for each
+  //   copy that passed over this raw internal audit.
+  Future<void> _foldRawInternalEventInTxn(
+    Transaction txn,
+    StoredEvent event,
+    PublishCollector? collector,
+  ) async {
+    final applied = await _interpreter.applyEvent(
+      txn: txn,
+      backend: _backend,
+      event: event,
+      copyIds: _viewCopyIds,
+      mode: ApplyEventMode.alwaysStored,
+    );
+    if (applied.changes.isNotEmpty) collector?._addRowChanges(applied.changes);
+    if (applied.failures.isEmpty) return;
+    assert(
+      collector != null,
+      '_foldRawInternalEventInTxn: a fold failure on a raw internal audit '
+      'needs a collector to record its fold_failed finding.',
+    );
+    await _recordFoldFailedFindingsInTxn(
+      txn,
+      collector!,
+      event,
+      applied.failures,
     );
   }
 }
@@ -2634,24 +3470,293 @@ class EventStore {
 /// Fixed initiator used for substrate-emitted lib_version events.
 const _kLibVersionInitiator = AutomationInitiator(service: 'event_sourcing');
 
+/// The reason an `event_malformed` finding names for a record that is not
+/// an event record of this data format.
+const String _kRecordMalformed = 'record_malformed';
+
+/// The reason an `event_malformed` finding names for a record some string
+/// of which, a key included, carries the character U+0000.
+// Implements: EVS-DEV-security-findings/R
+// the event_malformed reason unstorable_character.
+const String _kUnstorableCharacter = 'unstorable_character';
+
+/// The initiator of every security finding the library records.
+const _kSecurityFindingInitiator = AutomationInitiator(
+  service: 'event_sourcing',
+);
+
+/// [EventStore.verifyChains] on [store], reading the log [pageSize] events
+/// at a time and awaiting [afterPage] after each page it read, for the
+/// library's own tests of what the verification reads and when. In a build
+/// with assertions disabled it throws [StateError] before it reads.
+// Implements: EVS-PRD-storage-barrier/J
+// the test-only entry point to the chain verification refuses in a build
+//   with assertions disabled.
+@internal
+@visibleForTesting
+Future<ChainVerificationVerdict> verifyChainsForTest(
+  EventStore store, {
+  int? from,
+  int? to,
+  int pageSize = kChainWalkPageSize,
+  Future<void> Function()? afterPage,
+}) {
+  var assertionsEnabled = false;
+  assert(() {
+    assertionsEnabled = true;
+    return true;
+  }(), 'records that assertions are enabled');
+  if (!assertionsEnabled) {
+    throw StateError(
+      'verifyChainsForTest is test-only and refuses in a build with '
+      'assertions disabled',
+    );
+  }
+  return store._verifyChains(
+    from: from,
+    to: to,
+    pageSize: pageSize,
+    afterPage: afterPage,
+  );
+}
+
+/// [EventStore]'s ingest of one event outside any delivery, on [store], for
+/// the library's own tests of how ingest handles a single record
+/// (`EVS-PRD-ingest/G`: the library exposes no public ingest entry point
+/// that admits an event outside a delivery, so this test-only seam is the
+/// only way a test outside the event store's Dart library reaches it). In a
+/// build with assertions disabled it throws [StateError] before it touches
+/// [store].
+// Implements: EVS-PRD-storage-barrier/J
+// the test-only entry point to per-record ingest refuses in a build with
+//   assertions disabled.
+@internal
+@visibleForTesting
+Future<PerEventIngestOutcome> ingestEventForTest(
+  EventStore store,
+  StoredEvent incoming,
+) {
+  var assertionsEnabled = false;
+  assert(() {
+    assertionsEnabled = true;
+    return true;
+  }(), 'records that assertions are enabled');
+  if (!assertionsEnabled) {
+    throw StateError(
+      'ingestEventForTest is test-only and refuses in a build with '
+      'assertions disabled',
+    );
+  }
+  return store._ingestEvent(incoming);
+}
+
+/// The event store's recording of a security finding inside [txn], as a
+/// detection point runs it, for the library's own tests of the finding's
+/// shape, identity and once-per-detector rule: the recording is private to
+/// the event store's Dart library, and the detection points, which share
+/// that library, are its only production callers. In a build with
+/// assertions disabled it throws [StateError] before it touches [txn].
+// Implements: EVS-PRD-storage-barrier/J
+// the test-only entry point to the finding record refuses in a build with
+//   assertions disabled, so it changes nothing the library writes there.
+@internal
+@visibleForTesting
+Future<StoredEvent?> recordFindingInTxnForTest(
+  EventStore store,
+  Transaction txn,
+  PublishCollector collector, {
+  required FindingRole role,
+  required FindingKind kind,
+  required Map<String, Object?> evidence,
+  required Iterable<String> aggregates,
+}) async {
+  var assertionsEnabled = false;
+  assert(() {
+    assertionsEnabled = true;
+    return true;
+  }(), 'records that assertions are enabled');
+  if (!assertionsEnabled) {
+    throw StateError(
+      'recordFindingInTxnForTest is test-only and refuses in a build with '
+      'assertions disabled',
+    );
+  }
+  return store._recordFindingInTxn(
+    txn,
+    collector,
+    role: role,
+    kind: kind,
+    evidence: evidence,
+    aggregates: aggregates,
+  );
+}
+
 /// Canonical event hash used by every raw-record-map append site; see
 /// [canonicalEventHash].
 String _canonicalEventHash(Map<String, Object?> recordMap) =>
     canonicalEventHash(recordMap);
 
-/// Build and append one substrate-internal event to [backend] inside [txn].
+/// The sequence number reserved for an event the database authors, and the
+/// two links it records: its predecessor in the database's origin chain and
+/// its predecessor in the database's storage chain.
+typedef _ChainLinks = ({
+  int sequenceNumber,
+  String? previousEventHash,
+  String? previousIngestHash,
+});
+
+/// Reserves the next local sequence number in [txn] and reads, in the same
+/// transaction, the two links an event the database [databaseId] authors
+/// at it records: the sealed hash of the latest event the database holds
+/// as authored, and the stored hash of the event at the preceding local
+/// sequence number. Appends nothing; the caller appends the event at the
+/// reserved number.
+// Implements: EVS-DEV-chain-verification/B
+// the predecessor hash is the sealed hash of the event with the highest
+//   local sequence number the database holds as authored, or null when it
+//   holds none, read inside the append's transaction.
+// Implements: EVS-PRD-hash-chain-integrity/B
+// every appended event carries the hash of the event its database authored
+//   immediately before it, so the database's authored events form one chain.
+// Implements: EVS-DEV-chain-verification/C
+// the storage link is the stored hash of the event at the preceding local
+//   sequence number, read inside the storing transaction.
+// Implements: EVS-DEV-chain-verification/T
+// both links are keyed reads (an index on Postgres, a keyed record on
+//   Sembast), so the chain adds a bounded cost to every append and ingest
+//   whatever the log's size.
+Future<_ChainLinks> _reserveChainLinksInTxn(
+  StorageBackend backend,
+  Transaction txn,
+  String databaseId,
+) async {
+  final sequenceNumber = await backend.nextSequenceNumber(txn);
+  final previousIngestHash = await backend.readLatestEventHash(txn);
+  final latestAuthored = await backend.readLatestHeldAsAuthoredInTxn(
+    txn,
+    databaseId,
+  );
+  return (
+    sequenceNumber: sequenceNumber,
+    previousEventHash: latestAuthored == null
+        ? null
+        : _sealedHashOf(latestAuthored),
+    previousIngestHash: previousIngestHash,
+  );
+}
+
+/// The causal record of an event appended on [aggregateId] under
+/// [declaration], read inside [txn]: the declared kind and eligibility, and
+/// as `parents` the aggregate's latest eligible version in the database's
+/// log, named by its sealed hash, or none when the database holds none.
+// Implements: EVS-DEV-causal-parents/F
+// kind and eligible are stamped from the appended entry type's declaration
+//   for the appended event type, and parents by the stamping rule, inside
+//   the append transaction.
+// Implements: EVS-DEV-causal-parents/H
+// parents names the aggregate's latest eligible version in the appending
+//   database's log, or nothing when it holds none, read from the log inside
+//   the append transaction.
+Future<CausalRecord> _stampCausalInTxn(
+  StorageBackend backend,
+  Transaction txn, {
+  required String aggregateId,
+  required EventTypeDeclaration declaration,
+}) async {
+  final latest = await backend.readLatestEligibleVersionInTxn(txn, aggregateId);
+  return CausalRecord(
+    kind: declaration.kind,
+    eligible: declaration.eligible,
+    parents: <CausalRef>[
+      if (latest != null)
+        CausalRef(eventId: latest.eventId, eventHash: _sealedHashOf(latest)),
+    ],
+  );
+}
+
+/// The sealed hash of [stored], a copy the backend returned from the log.
+/// Throws [StateError] when its provenance yields none: every copy the
+/// library stores carries the entries it is read from.
+// Implements: EVS-DEV-chain-verification/A
+// predecessor hashes and causal parents name the sealed hash, never a
+//   holder's re-stamped event_hash.
+String _sealedHashOf(StoredEvent stored) {
+  final sealed = ChainCoordinates.of(stored).sealedHash;
+  if (sealed == null) {
+    throw StateError(
+      'stored event ${stored.eventId} at sequence ${stored.sequenceNumber} '
+      'yields no sealed hash',
+    );
+  }
+  return sealed;
+}
+
+/// The declaration of [eventType] by the reserved entry type [entryType],
+/// read from [kSystemEntryTypes]: the library's raw internal appends run
+/// before an event store, and its registry, exist. Throws [StateError] when
+/// [entryType] is not a reserved entry type.
+// Implements: EVS-DEV-causal-parents/F
+// a raw internal append stamps kind and eligible from its reserved entry
+//   type's declaration for its event type.
+EventTypeDeclaration _reservedDeclaration(String entryType, String eventType) {
+  for (final definition in kSystemEntryTypes) {
+    if (definition.id == entryType) {
+      return definition.declarationFor(eventType);
+    }
+  }
+  throw StateError('$entryType is not a reserved system entry type');
+}
+
+/// The originator entry of an event the database [databaseId] authors at
+/// [links]: attribution to [hop], [identifier] and [softwareVersion], the
+/// database's identity, the library version of this build, and the
+/// event's storage link.
+// Implements: EVS-DEV-event-record/D+E+F
+// the originator entry names the stamping database and the library version
+//   this build declares, which is the compiled package version unless a
+//   test installed a build declaration.
+// Implements: EVS-PRD-provenance/A
+// the entry the library stamps records the library's version.
+// Implements: EVS-DEV-chain-verification/C
+// the originator entry records the event's local sequence number and the
+//   stored hash of the event before it.
+ProvenanceEntry _originatorEntry({
+  required String hop,
+  required String identifier,
+  required String softwareVersion,
+  required DateTime receivedAt,
+  required String databaseId,
+  required _ChainLinks links,
+  BatchContext? batchContext,
+}) => ProvenanceEntry(
+  hop: hop,
+  receivedAt: receivedAt,
+  identifier: identifier,
+  softwareVersion: softwareVersion,
+  ingestSequenceNumber: links.sequenceNumber,
+  previousIngestHash: links.previousIngestHash,
+  batchContext: batchContext,
+  libraryVersion: EventStore._build().version,
+  databaseId: databaseId,
+);
+
+/// Build and append one substrate-internal event, authored by the database
+/// [databaseId], to [backend] inside [txn].
 ///
-/// Encapsulates the ~25-line boilerplate shared by [EventStore.logRejectedBatch],
-/// [EventStore._emitDuplicateReceivedInTxn], and [_appendLibVersionEventInTxn]:
-/// assemble the 14-key record map, hash it with [_canonicalEventHash], call
-/// [StorageBackend.appendEvent], and optionally record the event into [collector].
-///
-/// [provenance0] and [localSeq] / [previousTailHash] must be reserved by the
-/// caller before this function is invoked, so that the caller can incorporate
-/// them into provenance entries (e.g. Chain 2 fields) before passing them here.
+/// Reserves the event's sequence number and chain links, builds its
+/// originator entry, assembles the record map shared by
+/// [EventStore._emitDuplicateReceivedInTxn] and
+/// [_appendLibVersionEventInTxn], hashes it with [_canonicalEventHash],
+/// calls [StorageBackend.appendEvent], and records the event into
+/// [collector] when one is given.
 Future<StoredEvent> _appendRawInternalEventInTxn(
   Transaction txn,
   StorageBackend backend, {
+  required String databaseId,
+  required String hop,
+  required String identifier,
+  required String softwareVersion,
+  required DateTime receivedAt,
   required String aggregateId,
   required String aggregateType,
   required String entryType,
@@ -2659,10 +3764,8 @@ Future<StoredEvent> _appendRawInternalEventInTxn(
   required String eventType,
   required Map<String, Object?> data,
   required Initiator initiator,
-  required ProvenanceEntry provenance0,
-  required int localSeq,
-  required String? previousTailHash,
   required Uuid uuid,
+  BatchContext? batchContext,
   PublishCollector? collector,
 }) async {
   // Every caller passes a shape it takes from the declared-shape constants,
@@ -2673,6 +3776,23 @@ Future<StoredEvent> _appendRawInternalEventInTxn(
     entryType: entryType,
     aggregateType: aggregateType,
     eventType: eventType,
+  );
+  final links = await _reserveChainLinksInTxn(backend, txn, databaseId);
+  final localSeq = links.sequenceNumber;
+  final causal = await _stampCausalInTxn(
+    backend,
+    txn,
+    aggregateId: aggregateId,
+    declaration: _reservedDeclaration(entryType, eventType),
+  );
+  final provenance0 = _originatorEntry(
+    hop: hop,
+    identifier: identifier,
+    softwareVersion: softwareVersion,
+    receivedAt: receivedAt,
+    databaseId: databaseId,
+    links: links,
+    batchContext: batchContext,
   );
   final eventId = uuid.v4();
   final recordMap = <String, Object?>{
@@ -2691,13 +3811,14 @@ Future<StoredEvent> _appendRawInternalEventInTxn(
     'initiator': initiator.toJson(),
     'flow_token': null,
     'client_timestamp': provenance0.receivedAt.toIso8601String(),
-    'previous_event_hash': previousTailHash,
+    'previous_event_hash': links.previousEventHash,
+    'causal': causal.toJson(),
   };
   final eventHash = _canonicalEventHash(recordMap);
   recordMap['event_hash'] = eventHash;
   final event = StoredEvent.fromMap(recordMap, localSeq);
   await backend.appendEvent(txn, event);
-  collector?.add(event);
+  collector?._add(event);
   return event;
 }
 
@@ -2719,21 +3840,18 @@ Future<void> _appendLibVersionEventInTxn(
   Transaction txn,
   StorageBackend backend,
   String eventType,
-  Map<String, Object?> data,
-) async {
+  Map<String, Object?> data, {
+  required String databaseId,
+}) async {
   const uuid = Uuid();
-  final now = DateTime.now().toUtc();
-  final localSeq = await backend.nextSequenceNumber(txn);
-  final previousTailHash = await backend.readLatestEventHash(txn);
-  final provenance0 = ProvenanceEntry(
-    hop: 'event_sourcing',
-    receivedAt: now,
-    identifier: 'event_sourcing',
-    softwareVersion: LibVersion.version,
-  );
   await _appendRawInternalEventInTxn(
     txn,
     backend,
+    databaseId: databaseId,
+    hop: 'event_sourcing',
+    identifier: 'event_sourcing',
+    softwareVersion: LibVersion.version,
+    receivedAt: DateTime.now().toUtc(),
     aggregateId: kLibAggregateType,
     aggregateType: kLibAggregateType,
     entryType: eventType,
@@ -2741,68 +3859,469 @@ Future<void> _appendLibVersionEventInTxn(
     eventType: eventType,
     data: data,
     initiator: _kLibVersionInitiator,
-    provenance0: provenance0,
-    localSeq: localSeq,
-    previousTailHash: previousTailHash,
     uuid: uuid,
   );
 }
 
-/// Append a substrate-emitted `view_snapshot_promoted` event inside [txn].
-///
-/// Called by [EventStore._runBoot] (via the
-/// [AuditEmitter] callback wired to [promoteViewSnapshots]) once per
-/// (viewName, entryType) pair that has been lifted to a new
-/// `registeredVersion`. Runs inside the same backend transaction as the
-/// row updates and `view_target_versions` write, so the promoted state
-/// and its audit event commit atomically.
-///
-/// Bypasses [EventStore.appendInTxn] because this boot-time helper runs
-/// before the [EventStore] instance exists. Uses [_appendRawInternalEventInTxn]
-/// for record assembly and hashing.
-// Implements: EVS-DEV-snapshot-promotion-on-open
-// audit event emission.
-Future<void> _appendViewSnapshotPromotedAuditInTxn(
-  Transaction txn,
-  StorageBackend backend,
-  EntryTypeRegistry entryTypes, {
-  required String viewName,
-  required String entryType,
-  required EntryTypeVersion fromVersion,
-  required EntryTypeVersion toVersion,
-  required int rowsPromoted,
-}) async {
-  const uuid = Uuid();
-  final now = DateTime.now().toUtc();
-  final localSeq = await backend.nextSequenceNumber(txn);
-  final previousTailHash = await backend.readLatestEventHash(txn);
-  final provenance0 = ProvenanceEntry(
-    hop: 'event_sourcing',
-    receivedAt: now,
-    identifier: 'event_sourcing',
-    softwareVersion: LibVersion.version,
+/// The security-context store an event store hands out: a separate object
+/// that declares the reads alone and delegates them, so neither a downcast
+/// nor a dynamic call reaches a writing member.
+final class _SecurityContextReader implements SecurityContextStore {
+  _SecurityContextReader(this._store);
+
+  final SecurityContextStore _store;
+
+  @override
+  Future<EventSecurityContext?> read(String eventId) => _store.read(eventId);
+
+  @override
+  Future<PagedAudit> queryAudit({
+    Initiator? initiator,
+    String? flowToken,
+    String? ipAddress,
+    DateTime? from,
+    DateTime? to,
+    int limit = 50,
+    String? cursor,
+  }) => _store.queryAudit(
+    initiator: initiator,
+    flowToken: flowToken,
+    ipAddress: ipAddress,
+    from: from,
+    to: to,
+    limit: limit,
+    cursor: cursor,
   );
-  await _appendRawInternalEventInTxn(
-    txn,
-    backend,
-    aggregateId: kLibAggregateType,
-    aggregateType: kLibAggregateType,
-    entryType: kViewSnapshotPromotedEntryType,
-    entryTypeVersion: entryTypes
-        .byId(kViewSnapshotPromotedEntryType)!
-        .registeredVersion,
-    eventType: kViewSnapshotPromotedEventType,
-    data: <String, Object?>{
-      'viewName': viewName,
-      'entryType': entryType,
-      'fromVersion': fromVersion.toString(),
-      'toVersion': toVersion.toString(),
-      'rowsPromoted': rowsPromoted,
-    },
-    initiator: _kLibVersionInitiator,
-    provenance0: provenance0,
-    localSeq: localSeq,
-    previousTailHash: previousTailHash,
-    uuid: uuid,
+}
+
+/// The storage reader an [EventStore] hands out: it delegates the reads of
+/// the store's backend, and nothing else.
+final class _StorageReader implements StorageReader {
+  _StorageReader(this._store);
+
+  final EventStore _store;
+
+  StorageBackend get _backend => _store._backend;
+
+  /// The handles [transaction] has issued whose body is running.
+  final Set<Transaction> _liveHandles = Set<Transaction>.identity();
+
+  /// Returns [txn] when this reader, or its event store, issued it and its
+  /// body is running; throws [StateError] otherwise.
+  // Implements: EVS-DEV-storage-capability/G
+  // a transaction handle used in a read of a storage reader other than the
+  //   one that issued it (or its event store), or after its body returned,
+  //   is refused with StateError.
+  Transaction _issued(Transaction txn) {
+    if (_liveHandles.contains(txn) || _store._liveHandles.contains(txn)) {
+      return txn;
+    }
+    throw StateError(
+      'StorageReader: the transaction handle was not issued by this reader '
+      'or its event store, or its body has returned. Pass the handle a '
+      'transaction body of this reader or of its event store received, '
+      'while that body runs.',
+    );
+  }
+
+  @override
+  Future<T> transaction<T>(Future<T> Function(Transaction txn) body) {
+    refuseCallFromBootProgressObserver('StorageReader.transaction');
+    return _backend.readOnlyTransaction<T>((txn) async {
+      _liveHandles.add(txn);
+      try {
+        return await body(txn);
+      } finally {
+        _liveHandles.remove(txn);
+      }
+    });
+  }
+
+  @override
+  Future<List<StoredEvent>> findEventsForAggregate(String aggregateId) =>
+      _backend.findEventsForAggregate(aggregateId);
+
+  @override
+  Future<List<StoredEvent>> findEventsForAggregateInTxn(
+    Transaction txn,
+    String aggregateId,
+  ) async => _backend.findEventsForAggregateInTxn(_issued(txn), aggregateId);
+
+  @override
+  Future<List<StoredEvent>> findAllEvents({
+    int? afterSequence,
+    int? limit,
+    String? originatorHopId,
+    String? originatorIdentifier,
+    String? entryType,
+    DateTime? clientTimestampStart,
+    DateTime? clientTimestampEnd,
+  }) => _backend.findAllEvents(
+    afterSequence: afterSequence,
+    limit: limit,
+    originatorHopId: originatorHopId,
+    originatorIdentifier: originatorIdentifier,
+    entryType: entryType,
+    clientTimestampStart: clientTimestampStart,
+    clientTimestampEnd: clientTimestampEnd,
+  );
+
+  @override
+  Future<List<StoredEvent>> findAllEventsInTxn(
+    Transaction txn, {
+    int? afterSequence,
+    int? limit,
+    String? entryType,
+    DateTime? clientTimestampStart,
+    DateTime? clientTimestampEnd,
+  }) async => _backend.findAllEventsInTxn(
+    _issued(txn),
+    afterSequence: afterSequence,
+    limit: limit,
+    entryType: entryType,
+    clientTimestampStart: clientTimestampStart,
+    clientTimestampEnd: clientTimestampEnd,
+  );
+
+  @override
+  Future<String?> readLatestEventHash(Transaction txn) async =>
+      _backend.readLatestEventHash(_issued(txn));
+
+  @override
+  Future<int> readSequenceCounter() => _backend.readSequenceCounter();
+
+  @override
+  Future<StoredEvent?> findEventById(String eventId) =>
+      _backend.findEventById(eventId);
+
+  @override
+  Future<StoredEvent?> findEventByIdInTxn(
+    Transaction txn,
+    String eventId,
+  ) async => _backend.findEventByIdInTxn(_issued(txn), eventId);
+
+  @override
+  Stream<StoredEvent> readEventsReverse({Set<String>? eventTypes}) =>
+      _backend.readEventsReverse(eventTypes: eventTypes);
+
+  // The view-row reads below address a view by name; row storage addresses
+  // rows by copy id, so each translates through the instance's copy map
+  // before delegating to the backend (EVS-DEV-view-convergence). Each also
+  // reads the copy's convergence state alongside its rows, in the same
+  // transaction, and withholds what it cannot confirm settled
+  // (EVS-DEV-converging-view-reads).
+
+  /// The instance's [ProjectionSpec] and [ViewCopy] of [viewName], read
+  /// inside [txn].
+  ///
+  /// The copy this instance last registered may, by the time this read
+  /// runs, be marked for deletion or gone: another instance's boot or
+  /// `rebuildView` legitimately marks a shared copy, and this instance's
+  /// own `_viewCopyIds` follows only after its own next catch-up
+  /// transaction commits. Rather than serve that copy's rows as current or
+  /// throw once its record is gone, this finds the unmarked copy of the
+  /// view's fingerprint in [txn]; when none is stored, it hands back a
+  /// placeholder, unwritten copy at the position before the first event of
+  /// the log, without writing one itself -- a storage reader's transaction
+  /// runs read-only on Postgres, so it could never create the replacement
+  /// there. The placeholder is empty, so the caller's currency scan reports
+  /// it converging and every read built on it withholds rows
+  /// (EVS-DEV-converging-view-reads/B) instead of the ones a copy being
+  /// deleted has left behind; the catch-up driver, not a read, is what
+  /// creates and catches up this instance's real replacement copy
+  /// (EVS-DEV-view-convergence/T).
+  Future<(ProjectionSpec, ViewCopy)> _specAndCopy(
+    Transaction txn,
+    String viewName,
+  ) async {
+    final spec = _store.projections.lookup(viewName);
+    if (spec == null) {
+      throw StateError(
+        'EventStore: "$viewName" names no view this instance registered '
+        'at EventStore.open.',
+      );
+    }
+    final issued = _issued(txn);
+    final fingerprint = viewFingerprint(
+      spec,
+      _store.entryTypes,
+      _store._promoters,
+    );
+    final existing = await _backend.readUnmarkedViewCopyInTxn(
+      issued,
+      fingerprint,
+    );
+    final copy =
+        existing ??
+        ViewCopy(
+          copyId: fingerprint,
+          viewName: viewName,
+          fingerprint: fingerprint,
+          watermark: 0,
+          markedForDeletion: false,
+        );
+    return (spec, copy);
+  }
+
+  // Implements: EVS-DEV-converging-view-reads/A
+  // Implements: EVS-DEV-converging-view-reads/C
+  @override
+  Future<ViewRowRead> readViewRowInTxn(
+    Transaction txn,
+    String viewName,
+    String key,
+  ) async {
+    final issued = _issued(txn);
+    final (spec, copy) = await _specAndCopy(issued, viewName);
+    final scan = await scanViewCurrency(
+      txn: issued,
+      backend: _backend,
+      spec: spec,
+      copy: copy,
+    );
+    await DeliveryTestHooks.current?.afterViewStateReadBeforeRows?.call();
+    final copyId = copy.copyId;
+    if (scan.state == ViewConvergenceState.converging) {
+      final pending = switch (spec) {
+        TableProjectionSpec() => true,
+        AggregateProjectionSpec() =>
+          scan.allUnsettled || scan.unsettledAggregateIds.contains(key),
+      };
+      if (pending) {
+        return ViewRowRead(state: scan.state, row: const PendingRow());
+      }
+    }
+    final row = await _backend.readViewRowInTxn(issued, copyId, key);
+    return ViewRowRead(
+      state: scan.state,
+      row: row == null ? const AbsentRow() : SettledRow(row),
+    );
+  }
+
+  // Implements: EVS-DEV-converging-view-reads/A
+  // Implements: EVS-DEV-converging-view-reads/B
+  @override
+  Future<ViewRowsRead> findViewRows(
+    String viewName, {
+    int? limit,
+    int? offset,
+  }) => transaction(
+    (txn) => findViewRowsInTxn(txn, viewName, limit: limit, offset: offset),
+  );
+
+  // Implements: EVS-DEV-converging-view-reads/A
+  // Implements: EVS-DEV-converging-view-reads/C
+  @override
+  Future<ViewRowsByKeyRead> readViewRowsByKeys(
+    String viewName,
+    Set<String> keys,
+  ) => transaction((txn) async {
+    final issued = _issued(txn);
+    final (spec, copy) = await _specAndCopy(issued, viewName);
+    final scan = await scanViewCurrency(
+      txn: issued,
+      backend: _backend,
+      spec: spec,
+      copy: copy,
+    );
+    await DeliveryTestHooks.current?.afterViewStateReadBeforeRows?.call();
+    final copyId = copy.copyId;
+    final settledKeys = <String>{};
+    final rows = <String, ViewRow>{};
+    for (final key in keys) {
+      final pending =
+          scan.state == ViewConvergenceState.converging &&
+          switch (spec) {
+            TableProjectionSpec() => true,
+            AggregateProjectionSpec() =>
+              scan.allUnsettled || scan.unsettledAggregateIds.contains(key),
+          };
+      if (pending) {
+        rows[key] = const PendingRow();
+      } else {
+        settledKeys.add(key);
+      }
+    }
+    if (settledKeys.isNotEmpty) {
+      final found = await _backend.readViewRowsByKeysInTxn(
+        issued,
+        copyId,
+        settledKeys,
+      );
+      for (final key in settledKeys) {
+        final row = found[key];
+        rows[key] = row == null ? const AbsentRow() : SettledRow(row);
+      }
+    }
+    return ViewRowsByKeyRead(state: scan.state, rows: rows);
+  });
+
+  // Implements: EVS-DEV-converging-view-reads/A
+  // Implements: EVS-DEV-converging-view-reads/B
+  // Implements: EVS-DEV-converging-view-reads/D
+  @override
+  Future<ViewRowsRead> findViewRowsInTxn(
+    Transaction txn,
+    String viewName, {
+    Map<String, Object?>? where,
+    int? limit,
+    int? offset,
+  }) async {
+    final issued = _issued(txn);
+    final (spec, copy) = await _specAndCopy(issued, viewName);
+    final scan = await scanViewCurrency(
+      txn: issued,
+      backend: _backend,
+      spec: spec,
+      copy: copy,
+    );
+    await DeliveryTestHooks.current?.afterViewStateReadBeforeRows?.call();
+    final copyId = copy.copyId;
+    if (scan.state == ViewConvergenceState.converging) {
+      if (spec is TableProjectionSpec || scan.allUnsettled) {
+        return ViewRowsRead(state: scan.state, rows: const []);
+      }
+    }
+    final rows = await _backend.findViewRowsInTxn(
+      issued,
+      copyId,
+      where: where,
+      limit: limit,
+      offset: offset,
+    );
+    if (scan.state == ViewConvergenceState.current) {
+      return ViewRowsRead(state: scan.state, rows: rows);
+    }
+    final settled = [
+      for (final row in rows)
+        if (!scan.unsettledAggregateIds.contains(row['aggregateId'])) row,
+    ];
+    return ViewRowsRead(state: scan.state, rows: settled);
+  }
+
+  // Implements: EVS-DEV-converging-view-reads/J
+  @override
+  Future<List<ViewCopyStatus>> viewProgress() => transaction((txn) async {
+    final issued = _issued(txn);
+    final statuses = <ViewCopyStatus>[];
+    for (final spec in _store.projections.all()) {
+      final fingerprint = viewFingerprint(
+        spec,
+        _store.entryTypes,
+        _store._promoters,
+      );
+      // A copy this instance last registered may since have been marked
+      // for deletion or deleted underneath it (EVS-DEV-view-convergence/T,
+      // see `_specAndCopy`); progress is reported for whichever copy the
+      // driver is currently working, or as freshly converging when none
+      // exists yet.
+      var copy = await _backend.readUnmarkedViewCopyInTxn(issued, fingerprint);
+      copy ??= ViewCopy(
+        copyId: fingerprint,
+        viewName: spec.viewName,
+        fingerprint: fingerprint,
+        watermark: 0,
+        markedForDeletion: false,
+      );
+      final scan = await scanViewCurrency(
+        txn: issued,
+        backend: _backend,
+        spec: spec,
+        copy: copy,
+      );
+      // A failure while no copy existed was recorded under the
+      // fingerprint (the catch-up driver's lock key when it has no known
+      // copy id); a failure of a real copy's own catch-up was recorded
+      // under its copy id.
+      final progress =
+          _store.catchUpProgressOf(copy.copyId) ??
+          _store.catchUpProgressOf(fingerprint);
+      statuses.add(
+        ViewCopyStatus(
+          viewName: spec.viewName,
+          state: scan.state,
+          watermark: copy.watermark,
+          logHead: scan.logHead,
+          lastFailure: progress?.lastFailure,
+          lastFailureAt: progress?.lastFailureAt,
+        ),
+      );
+    }
+    return statuses;
+  });
+
+  @override
+  Future<FifoEntry?> readFifoHead(String destinationId) =>
+      _backend.readFifoHead(destinationId);
+
+  @override
+  Future<List<FifoEntry>> listFifoEntries(
+    String destinationId, {
+    int? afterSequenceInQueue,
+    int? limit,
+  }) => _backend.listFifoEntries(
+    destinationId,
+    afterSequenceInQueue: afterSequenceInQueue,
+    limit: limit,
+  );
+
+  @override
+  Future<FifoEntry?> readFifoRow(String destinationId, String entryId) =>
+      _backend.readFifoRow(destinationId, entryId);
+
+  @override
+  Future<bool> hasFifoWedged() => _backend.hasFifoWedged();
+
+  @override
+  Future<List<WedgedFifoSummary>> wedgedFifos() => _backend.wedgedFifos();
+
+  @override
+  Future<int> readSchemaVersion() => _backend.readSchemaVersion();
+
+  @override
+  Future<int> readFillCursor(String destinationId) =>
+      _backend.readFillCursor(destinationId);
+
+  @override
+  Future<DestinationSchedule?> readSchedule(String destinationId) =>
+      _backend.readSchedule(destinationId);
+
+  @override
+  Future<Map<String, DestinationSchedule>> listSchedules() =>
+      _backend.listSchedules();
+
+  // Implements: EVS-DEV-chain-verification/R
+  // a verifier that holds only the log computes the same verdict and
+  //   appends nothing.
+  @override
+  Future<ChainVerificationVerdict> verifyChains({int? from, int? to}) {
+    refuseCallFromBootProgressObserver('StorageReader.verifyChains');
+    return verifyChainsOver(_backend, from: from, to: to);
+  }
+
+  // Implements: EVS-DEV-sender-succession/G
+  // the succession lineage read is derived solely from the succession
+  //   events the log holds.
+  @override
+  Future<SuccessionLineage> successionLineageOf(String databaseId) =>
+      computeSuccessionLineage(_backend, databaseId);
+
+  @override
+  Future<PagedAudit> queryAudit({
+    Initiator? initiator,
+    String? flowToken,
+    String? ipAddress,
+    DateTime? from,
+    DateTime? to,
+    int limit = 50,
+    String? cursor,
+  }) => _backend.queryAudit(
+    initiator: initiator,
+    flowToken: flowToken,
+    ipAddress: ipAddress,
+    from: from,
+    to: to,
+    limit: limit,
+    cursor: cursor,
   );
 }

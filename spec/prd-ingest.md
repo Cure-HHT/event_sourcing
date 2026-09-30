@@ -5,7 +5,7 @@
 
 ## Purpose
 
-The ingest path is the inbound counterpart of destinations. It receives events from another event-sourcing deployment — daisy-chained through whatever transport the application chose — and admits them into this deployment's local log while preserving the upstream events' identity, authority, and hash chain. Ingested events join the local log alongside locally-originated events; from the materializer's perspective they participate in canonicalization rules like any other event.
+The ingest path is the inbound counterpart of destinations. It receives the events another event-sourcing deployment authored, delivered on a delivery channel through whatever transport the application chose, and admits them into this deployment's local log while preserving the upstream events' identity, authority, and hash chain. Ingested events join the local log alongside locally-originated events; from the materializer's perspective they participate in canonicalization rules like any other event.
 
 The ingest path is distinct from the action-dispatch path. Dispatch produces *new* events stamped with this deployment's identity; ingest admits *existing* events from upstream while preserving their original identity. Both paths route into the same event log; the distinction is who carries the authority for the resulting events.
 
@@ -17,13 +17,27 @@ B. Events admitted via the ingest path SHALL retain their upstream identity (has
 
 C. The library SHALL extend an ingested event's provenance chain to record this deployment's hop.
 
-D. The library SHALL verify the hash-chain integrity of ingested events against the upstream chain before admitting them, rejecting any event whose chain does not verify.
+D. The library SHALL verify the hash-chain integrity of each ingested event against the upstream chain before admitting it, and SHALL admit an event whose chain does not verify as received, recording a security finding for it.
 
 E. Ingested events SHALL participate in the local materializer and the local subscription primitives identically to locally-originated events.
 
 F. The ingest path SHALL be idempotent: re-presenting an event already admitted SHALL not duplicate it in the local log.
 
-G. The ingest path SHALL admit every event that passes this requirement's integrity verifications, without regard to the event's content or the age of its client-authored timestamps.
+G. Every event of a delivery the ingest path admits SHALL be held in the log, as an event or kept in full in a security finding, whatever the outcome of this requirement's integrity verifications, its content, whether every view can fold it, or the age of its client-authored timestamps.
+
+H. Every ingest entry point SHALL record a security finding for an event whose originator provenance entry names the receiving database's identity, whether or not the receiving database holds it, and SHALL store such an event as received when it does not hold it.
+
+I. The ingest path SHALL record a security finding for an event whose predecessor hash names a held event that the event's originating database did not author, or that its originating database authored at a later position.
+
+J. The ingest path SHALL record a security finding for an event that follows a held predecessor which another held event of the same originating database already follows, or that sits at an origin position another held event of that database already occupies.
+
+K. <RETIRED> Ingest compares no declarations: every holder reads the kind and eligibility recorded on each event.
+
+L. <RETIRED> A delivery records no withheld-parent flag; per-delivery facts travel as delivery attributes (EVS-DEV-delivery-receiver).
+
+M. The ingest path SHALL admit an event only as part of a delivery on a channel that admits that delivery.
+
+N. Every public operation of the library that admits an event through the ingest path SHALL take the event as part of a delivery.
 
 ## Rationale
 
@@ -33,9 +47,9 @@ G. The ingest path SHALL admit every event that passes this requirement's integr
 
 **Why extend the provenance chain rather than reset it?** Provenance answers "where has this event been?". Resetting at each hop loses the answer; extending records the transit so downstream observers see the full path. Section EVS-PRD-provenance pins the chain semantics; this PRD pins that ingest is one of the operations that adds a hop.
 
-**Why verify hash-chain integrity at ingest?** Ingest is the boundary between an external deployment's audit trail and this deployment's. Admitting an event whose chain doesn't verify would let upstream tampering propagate downstream. Verifying at the boundary catches it once, at the place that has both the upstream chain and the local trust anchor.
+**Why verify hash-chain integrity at ingest, and record rather than refuse (assertion D)?** Ingest is the boundary between an external deployment's audit trail and this deployment's, the place that has both the upstream chain and the local trust anchor, so it checks there. A refused event is gone from the receiver's record, and a refused delivery holds everything after it on the sender until a person acts. So an event that fails a check is admitted as received with a security finding stating what failed (`EVS-DEV-security-findings`): the receiver's log holds the suspect event and the evidence against it, its default views mark the aggregate, and tampering upstream is visible downstream rather than silently dropped.
 
-**What the verification covers.** Each incoming event's own hash is recomputed over the record exactly as it arrived, whatever the length of its provenance, and each receiver hop's arrival hash over the record as the hop before it stored it. The hash is unkeyed (EVS-PRD-hash-chain-integrity, Rationale), so the check catches a record altered in transit or at rest without its hashes being recomputed, not one whose hashes were recomputed to match. The incoming event's `previous_event_hash` is not checked against the event before it in the upstream log.
+**What the verification covers.** Each incoming event's own hash is recomputed over the record exactly as it arrived, whatever the length of its provenance, and each receiver hop's arrival hash over the record as the hop before it stored it. The hash is unkeyed (EVS-PRD-hash-chain-integrity, Rationale), so the check catches a record altered in transit or at rest without its hashes being recomputed, not one whose hashes were recomputed to match. An incoming event's predecessor hash is checked wherever the receiver holds the event it names (assertions I and J), and every failed check is recorded as a security finding. A predecessor hash naming an event the receiver does not hold is accepted, because a destination's filter leaves out events by design and the delivery chain accounts for them (EVS-PRD-delivery-channel).
 
 **Why is ingest idempotent?** Cross-tier transports retry. The same upstream event may be presented at the ingest path many times (delivery retries, replay after restart, reconfiguration of upstream destinations). Idempotency on event identity (the upstream hash) makes retries safe and ensures the local log records each upstream event exactly once.
 
@@ -43,12 +57,40 @@ G. The ingest path SHALL admit every event that passes this requirement's integr
 
 **Why does the ingest path admit unconditionally?** Rejecting a verifiable event before admission is silent data loss with no audit trail. Selection, exclusion, and canonicalization are post-admission concerns — resolved by projections, canonicalization rules, and analysis — where an exclusion is itself observable and auditable rather than invisible. Offline-first sources legitimately deliver events days or weeks after authoring; the provenance model's distinction between client-authored timestamps and receiving-hop timestamps exists precisely so faithful recording and selective consumption can coexist, rather than forcing ingest to police timestamp age as a proxy for validity.
 
+**Why a finding for a database's own events at ingest (assertion H)?** A database's own events enter its log by its appends, and a channel carries only what its sender authored, so one of its own events arriving through ingest is a clone's or a tamperer's: it may duplicate an event the database holds, or re-enter at an origin position an event appended since reuses. Ingest records it as a finding, held or not, and stores it as received when it is not held, like any other event whose integrity it cannot vouch for. Storing it gives it no authority over the database's own destinations: the default destination-wedges view folds no event of the database's own identity that it does not hold as authored (`EVS-PRD-destinations/S`). A sender that lost its own events after a restore is rebuilt as a successor that restores them from its receiver (EVS-PRD-delivery-channel).
+
+**Why hold every event of an admitted delivery, and only deliveries the channel admits (assertions G, M and N)?** Admission is unconditional about content, age, integrity and whether a view can fold the event, not about order or form. A view that cannot fold an admitted event leaves it out of its rows and the library records a security finding naming the view and the event (`EVS-DEV-security-findings`), so one view's definition never holds back a delivery. A record the library cannot store as an event (malformed, or a reserved event it does not admit) is kept in full in a finding instead, so the log holds it and the rest of its delivery is admitted. As for order, a delivery that does not follow the receiver's record of its channel is refused whole, with the record, so the sender delivers again what the receiver lacks, or continues the channel on a new generation (EVS-PRD-delivery-channel). The refusal loses nothing: the events stay in the sender's queue. An entry point that admitted a single event outside a delivery would let an event reach the log with no channel record, so a receiver's record would no longer describe everything it received from a sender; the library's own tests of the per-event checks reach them through library-internal code, not a public operation.
+
+**Why a finding for a wrong or an unlisted successor (assertions I and J)?** A predecessor the receiver holds, but that another database authored or that its own database authored later, cannot be the event the sender authored before this one. An event that follows a held predecessor which another held event of its sender already follows, or that sits at an origin position another held event of its sender occupies, forks the sender's origin chain; a filter can hide the first of these facts but not the second. A sender that went back in time and appended, a clone, and tampering all produce these, and the chain cannot tell them apart, so every fork and every reused position is stored with a finding and delivery continues.
+
 ## Changelog
 
+- 2026-09-29 | 8ad47c04 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-09-30 | - | - | Michael Lewis (<michael@anspar.org>) | G: restated as the invariant that every event of an admitted delivery is held in the log, as an event or in full in a security finding, whatever its verification outcome, content, foldability or timestamp age. Add M: an event is admitted only as part of a delivery on a channel that admits it, split from G. Add N: every public operation that admits an event through ingest takes it as part of a delivery, split from G. Code and tests cite G for all three obligations; none cites M or N
+- 2026-09-29 | 67bc4bf5 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-09-29 | - | - | Michael Lewis (<michael@anspar.org>) | G: admission is independent of whether every view can fold the event. Code and tests cite G
+- 2026-09-25 | dd17064b | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-09-26 | - | - | Michael Lewis (<michael@anspar.org>) | J: every fork and every reused origin position is a finding, with no skip-event range. Retire L (no withheld-parent flag; per-delivery facts ride delivery attributes). Rationale: no own-identity recovery or skip event; an unexplained record continues the channel on a new generation. No code or test references J or L
+- 2026-09-25 | d60bdba5 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-09-25 | - | - | Michael Lewis (<michael@anspar.org>) | H: an event of the receiver's own identity that the receiver does not hold is stored as received, whatever its entry type. No code or test references H
+- 2026-09-25 | f878fb3d | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-09-25 | - | - | Michael Lewis (<michael@anspar.org>) | G: a record ingest cannot store as an event is kept in full in a security finding and the rest of its delivery is admitted. H: an event of the receiver's own identity is stored only when not held. No code or test references G or H
+- 2026-09-25 | cf78842f | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-09-25 | - | - | Michael Lewis (<michael@anspar.org>) | Security-finding model: D and G admit an event whose integrity verification fails as received, recording a security finding, instead of rejecting it; H, I, J and L record a finding instead of refusing. D is cited by code and tests and changes meaning: an event that fails verification is now admitted with a finding. No code or test references G, H, I, J or L
+- 2026-09-25 | 9acd7370 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-09-25 | - | - | Michael Lewis (<michael@anspar.org>) | J: a skip event that records no branch point covers the positions above 0 up to its abandoned head. No code or test references J
+- 2026-09-25 | f10e8753 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-09-25 | - | - | Michael Lewis (<michael@anspar.org>) | J: a fork or a reused origin position is admitted only within the range of positions a skip event records, above its branch point and up to its abandoned head. Retire K: ingest compares no declarations, since every holder reads the recorded kind and eligibility. Rationale of I and J: the skip is appended first in the recovery's transaction, and a receiver reached by another channel that meets the continuing branch first stops that channel. No code or test references J or K
+- 2026-09-25 | b0015099 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-09-25 | - | - | Michael Lewis (<michael@anspar.org>) | Split K into K and L: the declaration check compares the receiver's declaration of the event type; the withheld-parent contradiction is L
+- 2026-09-25 | e0ce5a1c | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: sync changelog hash
+- 2026-09-25 | - | - | Michael Lewis (<michael@anspar.org>) | Rationale of K: the withheld-parent flag is recorded and not interpreted
+- 2026-09-25 | e0ce5a1c | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-09-24 | - | - | Michael Lewis (<michael@anspar.org>) | Add H: every ingest entry point refuses an event the receiving database originated, held or not. Amend G: events are admitted only as part of a delivery its channel admits, and no public entry point admits an event outside a delivery. Add I-K: ingest refuses a predecessor the receiver holds that is not an earlier event of the same originating database, a fork whose successors no skip event it holds lists, an event whose declarations differ from the receiver's within one major, and a withheld-parent record the receiver's log contradicts. Purpose: ingest receives the events another deployment authored, on a delivery channel. Rationale: what ingest verification covers
 - 2026-09-24 | 79454334 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: sync changelog hash
 - 2026-09-24 | - | - | Michael Lewis (<michael@anspar.org>) | Rationale states what ingest verification covers
 - 2026-08-10 | 79454334 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-08-06 | a8814731 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: sync changelog hash
 - 2026-07-02 | 92f2bd91 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
-*End* *Ingest Path* | **Hash**: 79454334
+*End* *Ingest Path* | **Hash**: 8ad47c04

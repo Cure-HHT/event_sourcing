@@ -34,6 +34,7 @@ import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../test_support/fifo_entry_helpers.dart';
+import '../test_support/record_fixtures.dart';
 
 /// Run the backend-agnostic `StorageBackend` conformance suite against
 /// the implementation produced by [factory].
@@ -89,17 +90,20 @@ void runStorageBackendConformanceTests(
     });
 
     _registerTransactionTests(() => backend, () => initialized, factory);
+    _registerSavepointTests(() => backend, () => initialized);
     _registerEventLogTests(() => backend, () => initialized);
     _registerFindAllEventsFilterTests(() => backend, () => initialized);
     _registerOriginatorFilterTests(() => backend, () => initialized);
     _registerViewRowTests(() => backend, () => initialized);
-    _registerViewTargetVersionTests(() => backend, () => initialized);
+    _registerTableRowIndexTests(() => backend, () => initialized);
+    _registerViewCopyTests(() => backend, () => initialized);
     _registerFifoTests(() => backend, () => initialized);
     _registerListFifoEntriesTests(() => backend, () => initialized);
     _registerFillCursorTests(() => backend, () => initialized);
     _registerQueueRecordTests(() => backend, () => initialized);
     _registerBackendStateTests(() => backend, () => initialized);
     _registerEventByIdTests(() => backend, () => initialized);
+    _registerChainLookupTests(() => backend, () => initialized);
     _registerDrainLockTests(() => backend, () => initialized, reopen);
     _registerEventVersionColumnTests(
       () => backend,
@@ -134,7 +138,7 @@ StoredEvent _event(
     aggregateType: 'note',
     entryType: 'epistaxis_event',
     entryTypeVersion: const EntryTypeVersion(1, 0),
-    libFormatVersion: const DataFormatVersion(2, 0),
+    libFormatVersion: LibVersion.dataFormat,
     eventType: 'Event',
     sequenceNumber: sequenceNumber,
     data: const <String, dynamic>{},
@@ -142,6 +146,7 @@ StoredEvent _event(
     initiator: const UserInitiator('u'),
     clientTimestamp: DateTime.utc(2026, 4, 22),
     eventHash: 'hash-$eventId',
+    causal: kRootVersionCausal,
   );
 }
 
@@ -162,7 +167,7 @@ StoredEvent _eventWithProvenance({
   aggregateType: 'note',
   entryType: entryType,
   entryTypeVersion: const EntryTypeVersion(1, 0),
-  libFormatVersion: const DataFormatVersion(2, 0),
+  libFormatVersion: LibVersion.dataFormat,
   eventType: eventType,
   sequenceNumber: seq,
   data: const <String, Object?>{},
@@ -174,6 +179,8 @@ StoredEvent _eventWithProvenance({
         'received_at': '2026-04-26T00:00:00.000Z',
         'identifier': identifier,
         'software_version': 'app@1.0.0',
+        'database_id': kPeerDatabaseId,
+        'library_version': kPeerLibraryVersion,
       },
       ...laterHops,
     ],
@@ -181,6 +188,7 @@ StoredEvent _eventWithProvenance({
   initiator: const UserInitiator('u1'),
   clientTimestamp: clientTimestamp,
   eventHash: 'h$seq',
+  causal: kRootVersionCausal,
 );
 
 // Append [build] to the log, reserving its sequence number via
@@ -326,6 +334,110 @@ void _registerTransactionTests(
         });
       },
     );
+  });
+}
+
+// -------- Savepoint subgroup --------
+//
+// runInSavepointInTxn: on Postgres, a SAVEPOINT that RELEASEs on success
+// and ROLLBACK TOs on a throw, leaving the outer transaction usable after a
+// server-side error inside the body; on Sembast, the body runs as-is.
+void _registerSavepointTests(
+  StorageBackend Function() backendOf,
+  bool Function() initializedOf,
+) {
+  group('runInSavepointInTxn', () {
+    // Verifies: EVS-DEV-view-convergence/E
+    test(
+      'a server error inside the savepoint leaves the transaction usable',
+      () async {
+        if (!initializedOf()) return;
+        final backend = backendOf();
+        if (backend is! PostgresBackend) {
+          markTestSkipped(
+            'ROLLBACK TO SAVEPOINT recovery from a server-side error is '
+            'Postgres-specific; Sembast runs the body as-is',
+          );
+          return;
+        }
+        await backend.transaction((txn) async {
+          final s0 = await backend.nextSequenceNumber(txn);
+          await backend.appendEvent(txn, _event('ev-savepoint-pre', s0));
+
+          await expectLater(
+            backend.runInSavepointInTxn(txn, () async {
+              await backend.upsertViewRowInTxn(
+                txn,
+                'v_savepoint_fail',
+                'k-sp',
+                {'x': 1},
+              );
+              final s1 = await backend.nextSequenceNumber(txn);
+              // Re-appending the same event_id trips the events table's
+              // UNIQUE(event_id) constraint: a genuine server-side error,
+              // not a Dart-side precondition check.
+              await backend.appendEvent(txn, _event('ev-savepoint-pre', s1));
+            }),
+            throwsA(anything),
+          );
+
+          final s2 = await backend.nextSequenceNumber(txn);
+          await backend.appendEvent(txn, _event('ev-savepoint-post', s2));
+        });
+
+        final stored = await backend.findAllEvents();
+        expect(stored.map((e) => e.eventId), [
+          'ev-savepoint-pre',
+          'ev-savepoint-post',
+        ]);
+        final row = await backend.transaction(
+          (txn) async =>
+              backend.readViewRowInTxn(txn, 'v_savepoint_fail', 'k-sp'),
+        );
+        expect(row, isNull);
+      },
+    );
+
+    // Verifies: EVS-DEV-view-convergence/E
+    test('a savepoint body that returns a value commits its writes with the '
+        'outer transaction and returns the value', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      late final int result;
+      await backend.transaction((txn) async {
+        result = await backend.runInSavepointInTxn(txn, () async {
+          await backend.upsertViewRowInTxn(txn, 'v_savepoint_ok', 'k1', {
+            'x': 42,
+          });
+          return 7;
+        });
+      });
+      expect(result, 7);
+      final row = await backend.transaction(
+        (txn) async => backend.readViewRowInTxn(txn, 'v_savepoint_ok', 'k1'),
+      );
+      expect(row, {'x': 42});
+    });
+
+    // Verifies: EVS-DEV-view-convergence/E
+    test('a throw from the body propagates unchanged to the caller', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      await expectLater(
+        backend.transaction((txn) async {
+          await backend.runInSavepointInTxn(txn, () async {
+            throw StateError('boom-from-savepoint');
+          });
+        }),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            'boom-from-savepoint',
+          ),
+        ),
+      );
+    });
   });
 }
 
@@ -479,7 +591,7 @@ void _registerEventLogTests(
     // a mismatched sequence number rather than silently advancing the
     // counter implicitly.
     test('appendEvent throws when sequenceNumber does not match the reserved '
-        'counter value (Prereq B, Option 1)', () async {
+        'counter value (reserve-and-increment)', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
       await expectLater(
@@ -509,7 +621,7 @@ void _registerEventLogTests(
     });
 
     test('appendEvent consumes the reservation without '
-        're-advancing the counter (Prereq B, Option 1)', () async {
+        're-advancing the counter (reserve-and-increment)', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
       await backend.transaction((txn) async {
@@ -560,6 +672,79 @@ void _registerEventLogTests(
         await backend.appendEvent(txn, _event('ev-in-tx', s));
         // Sees the just-appended event's hash without leaving the txn.
         expect(await backend.readLatestEventHash(txn), 'hash-ev-in-tx');
+      });
+    });
+
+    // A transaction that reserves a sequence number and reads the tip
+    // before storing an event under it (the ingest and append shapes both
+    // do this, to compute the new event's previous_event_hash before the
+    // event object exists) sees the prior tip, not a gap.
+    // Verifies: EVS-DEV-chain-verification/C
+    test(
+      'readLatestEventHash reserved-but-not-stored sees the previous tip',
+      () async {
+        if (!initializedOf()) return;
+        final backend = backendOf();
+        await backend.transaction((txn) async {
+          final s = await backend.nextSequenceNumber(txn);
+          await backend.appendEvent(txn, _event('ev-1', s));
+        });
+        await backend.transaction((txn) async {
+          // Reserve sequence 2 but do not store an event under it yet.
+          await backend.nextSequenceNumber(txn);
+          expect(await backend.readLatestEventHash(txn), 'hash-ev-1');
+        });
+      },
+    );
+
+    test('readLatestEventHash reserved-but-not-stored on an empty log '
+        'returns null', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      await backend.transaction((txn) async {
+        // Reserve sequence 1 on an otherwise-empty log, but do not
+        // store an event under it yet.
+        await backend.nextSequenceNumber(txn);
+        expect(await backend.readLatestEventHash(txn), isNull);
+      });
+    });
+
+    test('readLatestEventHash reserved-and-stored sees the new tip', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      await backend.transaction((txn) async {
+        final s = await backend.nextSequenceNumber(txn);
+        await backend.appendEvent(txn, _event('ev-1', s));
+      });
+      await backend.transaction((txn) async {
+        final s = await backend.nextSequenceNumber(txn);
+        await backend.appendEvent(txn, _event('ev-2', s));
+        expect(await backend.readLatestEventHash(txn), 'hash-ev-2');
+      });
+    });
+
+    // Ingest and restore both store an event through the same appendEvent
+    // call as a local append, adding a receiver entry as the event's last
+    // provenance entry; readLatestEventHash reads the stored, re-stamped
+    // `event_hash` (what the storing transaction recorded), never the
+    // `arrival_hash` sealed by the originator. `_receivedEvent` builds
+    // that two-entry-provenance shape.
+    // Verifies: EVS-DEV-chain-verification/C
+    test('readLatestEventHash after a received (ingested or restored) event '
+        'returns its stored hash, not its sealed arrival hash', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      await backend.transaction((txn) async {
+        final s = await backend.nextSequenceNumber(txn);
+        final received = _receivedEvent(
+          s,
+          eventId: 'ev-received',
+          originDb: 'origin-db',
+          originPosition: 1,
+          holderDb: 'holder-db',
+        );
+        await backend.appendEvent(txn, received);
+        expect(await backend.readLatestEventHash(txn), 'restamped-ev-received');
       });
     });
 
@@ -1025,6 +1210,8 @@ void _registerOriginatorFilterTests(
                 'received_at': '2026-04-26T00:00:01.000Z',
                 'identifier': 'install-A',
                 'software_version': 'app@1.0.0',
+                'database_id': 'receiver-database',
+                'library_version': kPeerLibraryVersion,
               },
             ],
           ),
@@ -1313,320 +1500,363 @@ void _registerViewRowTests(
   });
 }
 
-// -------- View target versions --------
+// -------- TableProjectionSpec row index subgroup --------
 //
-// view-target-version persistence is
-//   part of the StorageBackend abstraction (round-trip, null-on-unknown,
-//   readAll, clear, cross-view isolation).
-void _registerViewTargetVersionTests(
+// upsertTableViewRowInTxn / findTableRowsBySourceAggregateInTxn: the
+// backend-owned index from a table view copy's source aggregate id to the
+// row keys its events produced, that the outstanding-finding refresh reads
+// instead of scanning the whole copy (EVS-DEV-causal-parents/H).
+void _registerTableRowIndexTests(
   StorageBackend Function() backendOf,
   bool Function() initializedOf,
 ) {
-  group('view_target_versions storage', () {
-    // Verifies: EVS-DEV-version-compatibility/L
-    // the catch-up mark: marking a stored pair sets it and a repeat is
-    //   harmless, marking an absent pair writes nothing, writing the pair's
-    //   target keeps the mark, clearing removes it, clearing a view's targets
-    //   removes its marks, a rolled-back mark leaves none, and the read by
-    //   entry type returns every view's target of that entry type.
-    test('catch-up mark: mark, keep across a target write, clear, roll '
-        'back; targets read by entry type', () async {
+  group('table row source-aggregate index', () {
+    // Verifies: EVS-DEV-causal-parents/H
+    test('findTableRowsBySourceAggregateInTxn returns exactly the rows each '
+        'of several interleaved aggregates produced', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
-      Future<bool> behind(String view, String entryType) => backend.transaction(
-        (txn) => backend.readViewTargetBehindInTxn(txn, view, entryType),
-      );
       await backend.transaction((txn) async {
-        await backend.writeViewTargetVersionInTxn(
+        await backend.upsertTableViewRowInTxn(txn, 'tri_copy', 'k1', {
+          'aggregateId': 'k1',
+          'v': 1,
+        }, sourceAggregateId: 'agg-a');
+        await backend.upsertTableViewRowInTxn(txn, 'tri_copy', 'k2', {
+          'aggregateId': 'k2',
+          'v': 2,
+        }, sourceAggregateId: 'agg-b');
+        await backend.upsertTableViewRowInTxn(txn, 'tri_copy', 'k3', {
+          'aggregateId': 'k3',
+          'v': 3,
+        }, sourceAggregateId: 'agg-a');
+      });
+      Set<Object?> valuesOf(List<Map<String, dynamic>> rows) =>
+          rows.map((r) => r['v']).toSet();
+      final forA = await backend.transaction(
+        (txn) => backend.findTableRowsBySourceAggregateInTxn(
           txn,
-          'v1',
-          'note',
-          const EntryTypeVersion(1, 2),
+          'tri_copy',
+          'agg-a',
+        ),
+      );
+      final forB = await backend.transaction(
+        (txn) => backend.findTableRowsBySourceAggregateInTxn(
+          txn,
+          'tri_copy',
+          'agg-b',
+        ),
+      );
+      final forNone = await backend.transaction(
+        (txn) => backend.findTableRowsBySourceAggregateInTxn(
+          txn,
+          'tri_copy',
+          'agg-none',
+        ),
+      );
+      expect(valuesOf(forA), {1, 3});
+      expect(valuesOf(forB), {2});
+      expect(forNone, isEmpty);
+    });
+
+    // Verifies: EVS-DEV-causal-parents/H
+    test('findTableRowsBySourceAggregateInTxn sees a row upserted earlier in '
+        'the same transaction', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      await backend.transaction((txn) async {
+        expect(
+          await backend.findTableRowsBySourceAggregateInTxn(
+            txn,
+            'tri_staged',
+            'agg-staged',
+          ),
+          isEmpty,
         );
-        await backend.writeViewTargetVersionInTxn(
-          txn,
-          'v2',
-          'note',
-          const EntryTypeVersion(1, 0),
-        );
-        await backend.writeViewTargetVersionInTxn(
-          txn,
-          'v2',
-          'other',
-          const EntryTypeVersion(3, 1),
+        await backend.upsertTableViewRowInTxn(txn, 'tri_staged', 'k1', {
+          'aggregateId': 'k1',
+          'v': 1,
+        }, sourceAggregateId: 'agg-staged');
+        expect(
+          await backend.findTableRowsBySourceAggregateInTxn(
+            txn,
+            'tri_staged',
+            'agg-staged',
+          ),
+          [
+            {'aggregateId': 'k1', 'v': 1},
+          ],
         );
       });
-      expect(
-        await backend.transaction(
-          (txn) => backend.readViewTargetsForEntryTypeInTxn(txn, 'note'),
-        ),
-        <String, EntryTypeVersion>{
-          'v1': const EntryTypeVersion(1, 2),
-          'v2': const EntryTypeVersion(1, 0),
-        },
-      );
-      expect(
-        await backend.transaction(
-          (txn) => backend.readViewTargetsForEntryTypeInTxn(txn, 'absent'),
-        ),
-        isEmpty,
-      );
-      expect(await behind('v1', 'note'), isFalse);
+    });
 
-      await expectLater(
-        backend.transaction<void>((txn) async {
-          await backend.markViewTargetBehindInTxn(txn, 'v1', 'note');
-          expect(
-            await backend.readViewTargetBehindInTxn(txn, 'v1', 'note'),
-            isTrue,
-          );
-          throw StateError('roll back');
-        }),
-        throwsStateError,
-      );
-      expect(await behind('v1', 'note'), isFalse);
-
+    // Verifies: EVS-DEV-causal-parents/H
+    test("a deleted row is absent from its source aggregate's rows", () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
       await backend.transaction((txn) async {
-        await backend.markViewTargetBehindInTxn(txn, 'v1', 'note');
-        await backend.markViewTargetBehindInTxn(txn, 'v1', 'note');
-        await backend.markViewTargetBehindInTxn(txn, 'absent', 'note');
+        await backend.upsertTableViewRowInTxn(txn, 'tri_delete', 'k1', {
+          'aggregateId': 'k1',
+          'v': 1,
+        }, sourceAggregateId: 'agg-a');
+        await backend.deleteViewRowInTxn(txn, 'tri_delete', 'k1');
       });
-      expect(await behind('v1', 'note'), isTrue);
-      expect(await behind('v2', 'note'), isFalse);
-      expect(await behind('absent', 'note'), isFalse);
+      final rows = await backend.transaction(
+        (txn) => backend.findTableRowsBySourceAggregateInTxn(
+          txn,
+          'tri_delete',
+          'agg-a',
+        ),
+      );
+      expect(rows, isEmpty);
+    });
+
+    // Verifies: EVS-DEV-causal-parents/H
+    test('a key upserted under a new source aggregate moves out of the old '
+        "aggregate's rows and into the new one's", () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      await backend.transaction((txn) async {
+        await backend.upsertTableViewRowInTxn(txn, 'tri_move', 'k1', {
+          'aggregateId': 'k1',
+          'v': 1,
+        }, sourceAggregateId: 'agg-old');
+      });
+      await backend.transaction((txn) async {
+        await backend.upsertTableViewRowInTxn(txn, 'tri_move', 'k1', {
+          'aggregateId': 'k1',
+          'v': 2,
+        }, sourceAggregateId: 'agg-new');
+      });
+      final old = await backend.transaction(
+        (txn) => backend.findTableRowsBySourceAggregateInTxn(
+          txn,
+          'tri_move',
+          'agg-old',
+        ),
+      );
+      final now = await backend.transaction(
+        (txn) => backend.findTableRowsBySourceAggregateInTxn(
+          txn,
+          'tri_move',
+          'agg-new',
+        ),
+      );
+      expect(old, isEmpty);
+      expect(now, [
+        {'aggregateId': 'k1', 'v': 2},
+      ]);
+    });
+
+    // Verifies: EVS-DEV-causal-parents/H
+    test(
+      "clearViewInTxn on one copy leaves another copy's index intact",
+      () async {
+        if (!initializedOf()) return;
+        final backend = backendOf();
+        await backend.transaction((txn) async {
+          await backend.upsertTableViewRowInTxn(txn, 'tri_clear_a', 'k1', {
+            'aggregateId': 'k1',
+            'v': 1,
+          }, sourceAggregateId: 'agg-a');
+          await backend.upsertTableViewRowInTxn(txn, 'tri_clear_b', 'k1', {
+            'aggregateId': 'k1',
+            'v': 1,
+          }, sourceAggregateId: 'agg-a');
+          await backend.clearViewInTxn(txn, 'tri_clear_a');
+        });
+        final cleared = await backend.transaction(
+          (txn) => backend.findTableRowsBySourceAggregateInTxn(
+            txn,
+            'tri_clear_a',
+            'agg-a',
+          ),
+        );
+        final untouched = await backend.transaction(
+          (txn) => backend.findTableRowsBySourceAggregateInTxn(
+            txn,
+            'tri_clear_b',
+            'agg-a',
+          ),
+        );
+        expect(cleared, isEmpty);
+        expect(untouched, [
+          {'aggregateId': 'k1', 'v': 1},
+        ]);
+      },
+    );
+  });
+}
+
+// -------- View copies subgroup --------
+//
+// View-copy record methods (createViewCopyInTxn, readViewCopiesInTxn,
+//   readUnmarkedViewCopyInTxn, setViewCopyWatermarkInTxn,
+//   markViewCopyForDeletionInTxn, deleteViewCopyRowsInTxn,
+//   deleteViewCopyRecordInTxn) are part of the StorageBackend abstraction.
+void _registerViewCopyTests(
+  StorageBackend Function() backendOf,
+  bool Function() initializedOf,
+) {
+  group('view copies', () {
+    // Verifies: EVS-DEV-view-convergence/A
+    // a fresh copy is created and read back by fingerprint.
+    test('create and read back by fingerprint', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final copyId = await backend.transaction(
+        (txn) => backend.createViewCopyInTxn(txn, 'notes', 'fp-1', 0),
+      );
+      expect(copyId, isNotEmpty);
+      final copy = await backend.transaction(
+        (txn) => backend.readUnmarkedViewCopyInTxn(txn, 'fp-1'),
+      );
+      expect(
+        copy,
+        ViewCopy(
+          copyId: copyId,
+          viewName: 'notes',
+          fingerprint: 'fp-1',
+          watermark: 0,
+          markedForDeletion: false,
+        ),
+      );
+      expect(await backend.transaction(backend.readViewCopiesInTxn), [copy]);
+    });
+
+    // Verifies: EVS-DEV-view-convergence/A
+    test('unmarked lookup of an unknown fingerprint returns null', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
       expect(
         await backend.transaction(
-          (txn) => backend.readViewTargetVersionInTxn(txn, 'absent', 'note'),
+          (txn) => backend.readUnmarkedViewCopyInTxn(txn, 'absent'),
         ),
         isNull,
       );
+    });
 
-      await backend.transaction(
-        (txn) => backend.writeViewTargetVersionInTxn(
-          txn,
-          'v1',
-          'note',
-          const EntryTypeVersion(1, 1),
-        ),
+    // Verifies: EVS-DEV-view-convergence/A
+    test(
+      'setting the watermark persists and leaves other copies alone',
+      () async {
+        if (!initializedOf()) return;
+        final backend = backendOf();
+        final a = await backend.transaction(
+          (txn) => backend.createViewCopyInTxn(txn, 'notes', 'fp-a', 0),
+        );
+        final b = await backend.transaction(
+          (txn) => backend.createViewCopyInTxn(txn, 'notes', 'fp-b', 0),
+        );
+        await backend.transaction(
+          (txn) => backend.setViewCopyWatermarkInTxn(txn, a, 42),
+        );
+        final copies = await backend.transaction(backend.readViewCopiesInTxn);
+        final byId = {for (final c in copies) c.copyId: c};
+        expect(byId[a]!.watermark, 42);
+        expect(byId[b]!.watermark, 0);
+      },
+    );
+
+    // Verifies: EVS-DEV-view-convergence/A
+    test('marking for deletion is idempotent and lets a fresh copy of the '
+        'same fingerprint be created', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final first = await backend.transaction(
+        (txn) => backend.createViewCopyInTxn(txn, 'notes', 'fp-1', 0),
       );
-      expect(await behind('v1', 'note'), isTrue);
+      await backend.transaction((txn) async {
+        await backend.markViewCopyForDeletionInTxn(txn, first);
+        await backend.markViewCopyForDeletionInTxn(txn, first);
+      });
       expect(
         await backend.transaction(
-          (txn) => backend.readViewTargetVersionInTxn(txn, 'v1', 'note'),
+          (txn) => backend.readUnmarkedViewCopyInTxn(txn, 'fp-1'),
         ),
-        const EntryTypeVersion(1, 1),
+        isNull,
       );
-
-      await backend.transaction(
-        (txn) => backend.clearViewTargetBehindInTxn(txn, 'v1', 'note'),
+      final second = await backend.transaction(
+        (txn) => backend.createViewCopyInTxn(txn, 'notes', 'fp-1', 0),
       );
-      expect(await behind('v1', 'note'), isFalse);
+      expect(second, isNot(first));
+      final copies = await backend.transaction(backend.readViewCopiesInTxn);
+      expect(copies.length, 2);
       expect(
-        await backend.transaction(
-          (txn) => backend.readViewTargetVersionInTxn(txn, 'v1', 'note'),
+        copies.firstWhere((c) => c.copyId == first).markedForDeletion,
+        isTrue,
+      );
+      expect(
+        copies.firstWhere((c) => c.copyId == second).markedForDeletion,
+        isFalse,
+      );
+    });
+
+    // Verifies: EVS-DEV-view-convergence/A
+    // at most one copy of a fingerprint that is not marked for deletion.
+    test('a second unmarked copy of one fingerprint is refused', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      await backend.transaction(
+        (txn) => backend.createViewCopyInTxn(txn, 'notes', 'fp-1', 0),
+      );
+      await expectLater(
+        backend.transaction(
+          (txn) => backend.createViewCopyInTxn(txn, 'notes', 'fp-1', 0),
         ),
-        const EntryTypeVersion(1, 1),
+        throwsStateError,
       );
+    });
 
+    // Verifies: EVS-DEV-view-convergence/A
+    test('deleting rows in bounded batches empties a copy, then its '
+        'record can be dropped', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final copyId = await backend.transaction(
+        (txn) => backend.createViewCopyInTxn(txn, 'notes', 'fp-1', 0),
+      );
+      await backend.transaction((txn) async {
+        for (var i = 0; i < 5; i++) {
+          await backend.upsertViewRowInTxn(txn, copyId, 'row-$i', {'i': i});
+        }
+      });
+      final firstBatch = await backend.transaction(
+        (txn) => backend.deleteViewCopyRowsInTxn(txn, copyId, limit: 3),
+      );
+      expect(firstBatch, 3);
+      final secondBatch = await backend.transaction(
+        (txn) => backend.deleteViewCopyRowsInTxn(txn, copyId, limit: 3),
+      );
+      expect(secondBatch, 2);
+      expect(await backend.findViewRows(copyId), isEmpty);
       await backend.transaction(
-        (txn) => backend.markViewTargetBehindInTxn(txn, 'v2', 'other'),
+        (txn) => backend.deleteViewCopyRecordInTxn(txn, copyId),
       );
+      final copies = await backend.transaction(backend.readViewCopiesInTxn);
+      expect(copies.where((c) => c.copyId == copyId), isEmpty);
+      // Deleting an already-absent copy record is a no-op, not an error.
       await backend.transaction(
-        (txn) => backend.clearViewTargetVersionsInTxn(txn, 'v2'),
+        (txn) => backend.deleteViewCopyRecordInTxn(txn, copyId),
       );
-      await backend.transaction(
-        (txn) => backend.writeViewTargetVersionInTxn(
-          txn,
-          'v2',
-          'other',
-          const EntryTypeVersion(3, 1),
-        ),
-      );
-      expect(await behind('v2', 'other'), isFalse);
     });
 
-    // Verifies: EVS-PRD-portability/D
-    // Verifies: EVS-DEV-version-compatibility/A
-    test('round-trip read/write keeps major and minor', () async {
-      if (!initializedOf()) return;
-      final backend = backendOf();
-      await backend.transaction((txn) async {
-        await backend.writeViewTargetVersionInTxn(
-          txn,
-          'diary_entries',
-          'demo_note',
-          const EntryTypeVersion(1, 3),
-        );
-      });
-      await backend.transaction((txn) async {
-        expect(
-          await backend.readViewTargetVersionInTxn(
-            txn,
-            'diary_entries',
-            'demo_note',
-          ),
-          const EntryTypeVersion(1, 3),
-        );
-      });
-    });
-
-    test('returns null for unknown (view, entry_type)', () async {
-      if (!initializedOf()) return;
-      final backend = backendOf();
-      await backend.transaction((txn) async {
-        expect(
-          await backend.readViewTargetVersionInTxn(
-            txn,
-            'diary_entries',
-            'unknown',
-          ),
-          isNull,
-        );
-      });
-    });
-
-    // Verifies: EVS-DEV-version-compatibility/A
-    test('readAll returns full map for one view', () async {
-      if (!initializedOf()) return;
-      final backend = backendOf();
-      await backend.transaction((txn) async {
-        await backend.writeViewTargetVersionInTxn(
-          txn,
-          'diary_entries',
-          'demo_note',
-          const EntryTypeVersion(2, 1),
-        );
-        await backend.writeViewTargetVersionInTxn(
-          txn,
-          'diary_entries',
-          'epistaxis',
-          const EntryTypeVersion(5, 0),
-        );
-        await backend.writeViewTargetVersionInTxn(
-          txn,
-          'other_view',
-          'demo_note',
-          const EntryTypeVersion(1, 0),
-        );
-      });
-      await backend.transaction((txn) async {
-        final map = await backend.readAllViewTargetVersionsInTxn(
-          txn,
-          'diary_entries',
-        );
-        expect(map, const <String, EntryTypeVersion>{
-          'demo_note': EntryTypeVersion(2, 1),
-          'epistaxis': EntryTypeVersion(5, 0),
-        });
-      });
-    });
-
-    test('clear removes only the named view', () async {
-      if (!initializedOf()) return;
-      final backend = backendOf();
-      await backend.transaction((txn) async {
-        await backend.writeViewTargetVersionInTxn(
-          txn,
-          'view_a',
-          'x',
-          const EntryTypeVersion(1, 0),
-        );
-        await backend.writeViewTargetVersionInTxn(
-          txn,
-          'view_b',
-          'x',
-          const EntryTypeVersion(2, 0),
-        );
-      });
-      await backend.transaction((txn) async {
-        await backend.clearViewTargetVersionsInTxn(txn, 'view_a');
-      });
-      await backend.transaction((txn) async {
-        expect(
-          await backend.readViewTargetVersionInTxn(txn, 'view_a', 'x'),
-          isNull,
-        );
-        expect(
-          await backend.readViewTargetVersionInTxn(txn, 'view_b', 'x'),
-          const EntryTypeVersion(2, 0),
-        );
-      });
-    });
-
-    // Verifies: EVS-DEV-version-compatibility/A
-    test('overwrite, including a lower minor within the major', () async {
-      if (!initializedOf()) return;
-      final backend = backendOf();
-      await backend.transaction((txn) async {
-        await backend.writeViewTargetVersionInTxn(
-          txn,
-          'v',
-          'e',
-          const EntryTypeVersion(1, 1),
-        );
-        await backend.writeViewTargetVersionInTxn(
-          txn,
-          'v',
-          'e',
-          const EntryTypeVersion(1, 1),
-        );
-        await backend.writeViewTargetVersionInTxn(
-          txn,
-          'v',
-          'e',
-          const EntryTypeVersion(1, 4),
-        );
-        expect(
-          await backend.readViewTargetVersionInTxn(txn, 'v', 'e'),
-          const EntryTypeVersion(1, 4),
-        );
-      });
-      await backend.transaction((txn) async {
-        await backend.writeViewTargetVersionInTxn(
-          txn,
-          'v',
-          'e',
-          const EntryTypeVersion(1, 2),
-        );
-      });
-      await backend.transaction((txn) async {
-        expect(
-          await backend.readViewTargetVersionInTxn(txn, 'v', 'e'),
-          const EntryTypeVersion(1, 2),
-        );
-      });
-    });
-
-    // Verifies: EVS-DEV-version-compatibility/E
+    // Verifies: EVS-DEV-view-convergence/A
     test('a write in a transaction that throws is rolled back', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
-      await backend.transaction((txn) async {
-        await backend.writeViewTargetVersionInTxn(
-          txn,
-          'v',
-          'e',
-          const EntryTypeVersion(1, 3),
-        );
-      });
       await expectLater(
-        backend.transaction((txn) async {
-          await backend.writeViewTargetVersionInTxn(
-            txn,
-            'v',
-            'e',
-            const EntryTypeVersion(1, 0),
-          );
-          throw StateError('injected failure after the write');
+        backend.transaction<void>((txn) async {
+          await backend.createViewCopyInTxn(txn, 'notes', 'fp-1', 0);
+          throw StateError('injected failure after the create');
         }),
         throwsStateError,
       );
-      await backend.transaction((txn) async {
-        expect(
-          await backend.readViewTargetVersionInTxn(txn, 'v', 'e'),
-          const EntryTypeVersion(1, 3),
-        );
-      });
+      expect(
+        await backend.transaction(
+          (txn) => backend.readUnmarkedViewCopyInTxn(txn, 'fp-1'),
+        ),
+        isNull,
+      );
     });
   });
 }
@@ -1677,6 +1907,33 @@ void _registerFifoTests(
       // hand-listed fields makes that divergence a test failure instead of
       // something a reviewer has to notice.
       expect(head, equals(enqueued));
+    });
+
+    // Verifies: EVS-DEV-delivery-resume/M
+    test('enqueueFifoTxn with resendsDeliveryNumber persists and '
+        'round-trips it; an ordinary item reads it as null', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final ordinary = await enqueueSingle(
+        backend,
+        'primary',
+        eventId: 'e1',
+        sequenceNumber: 1,
+      );
+      expect(ordinary.resendsDeliveryNumber, isNull);
+
+      final resend = await enqueueSingle(
+        backend,
+        'primary',
+        eventId: 'e2',
+        sequenceNumber: 2,
+        resendsDeliveryNumber: 8,
+      );
+      expect(resend.resendsDeliveryNumber, 8);
+      final head = (await backend.listFifoEntries('primary')).last;
+      expect(head.entryId, resend.entryId);
+      expect(head.resendsDeliveryNumber, 8);
+      expect(head, equals(resend));
     });
 
     test('enqueueFifoTxn rejects an empty batch with ArgumentError', () async {
@@ -1744,13 +2001,21 @@ void _registerFifoTests(
       if (!initializedOf()) return;
       final backend = backendOf();
       final event = storedEventFixture(eventId: 'e1', sequenceNumber: 1);
+      const channel = DeliveryChannel(
+        senderDatabaseId: 'db-1',
+        destinationId: 'dest',
+        registrationId: 'reg-1',
+        generation: 1,
+      );
       final envelope = BatchEnvelopeMetadata(
-        batchFormatVersion: '2',
+        batchFormatVersion: '3',
         batchId: 'batch-x',
         senderHop: 'mobile-1',
         senderIdentifier: 'device-uuid',
         senderSoftwareVersion: 'diary@1.2.3',
         sentAt: DateTime.utc(2026, 4, 25, 12),
+        channel: channel,
+        attributes: const <String, Object?>{},
       );
       await backend.transaction(
         (txn) => backend.enqueueFifoTxn(txn, 'dest', [
@@ -1769,8 +2034,10 @@ void _registerFifoTests(
       expect(head.envelopeMetadata!.senderHop, 'mobile-1');
       expect(head.envelopeMetadata!.senderIdentifier, 'device-uuid');
       expect(head.envelopeMetadata!.senderSoftwareVersion, 'diary@1.2.3');
-      expect(head.envelopeMetadata!.batchFormatVersion, '2');
-      expect(head.wireFormat, BatchEnvelope.wireFormat);
+      expect(head.envelopeMetadata!.batchFormatVersion, '3');
+      expect(head.envelopeMetadata!.channel, channel);
+      expect(head.envelopeMetadata!.attributes, isEmpty);
+      expect(head.wireFormat, DeliveryEnvelope.wireFormat);
       expect(
         head.transformVersion,
         isNull,
@@ -1820,12 +2087,19 @@ void _registerFifoTests(
             [event],
             wirePayload: wirePayloadJson(const {'k': 'v'}),
             nativeEnvelope: BatchEnvelopeMetadata(
-              batchFormatVersion: '2',
+              batchFormatVersion: '3',
               batchId: 'batch-x',
               senderHop: 'mobile-1',
               senderIdentifier: 'device-uuid',
               senderSoftwareVersion: 'diary@1.2.3',
               sentAt: DateTime.utc(2026, 4, 25, 12),
+              channel: const DeliveryChannel(
+                senderDatabaseId: 'db-1',
+                destinationId: 'dest',
+                registrationId: 'reg-1',
+                generation: 1,
+              ),
+              attributes: const <String, Object?>{},
             ),
           ),
         ),
@@ -2162,9 +2436,340 @@ void _registerFifoTests(
     });
 
     // Verifies: EVS-DEV-destination-drain/B
-    // every transition other than
-    //   null -> sent, null -> wedged and wedged -> tombstoned throws, and the
-    //   item is unchanged.
+    // a pending item that carries attempts moves to tombstoned, keeping its
+    //   attempts and leaving sent_at unset; a pending item that carries none
+    //   is refused and unchanged.
+    test('pending -> tombstoned only for an item carrying attempts', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final attempted = await enqueueSingle(
+        backend,
+        'primary',
+        eventId: 'a1',
+        sequenceNumber: 1,
+      );
+      final attempt = AttemptResult(
+        attemptedAt: DateTime.utc(2026, 4, 22, 9),
+        outcome: 'transient',
+        errorMessage: 'busy',
+        deliveryNumber: 1,
+        deliveryHash: 'h1',
+      );
+      await appendAttemptForTest(
+        backend,
+        'primary',
+        attempted.entryId,
+        attempt,
+      );
+      await setStatusForTest(
+        backend,
+        'primary',
+        attempted.entryId,
+        FinalStatus.tombstoned,
+      );
+      final row = await backend.readFifoRow('primary', attempted.entryId);
+      expect(row!.finalStatus, FinalStatus.tombstoned);
+      expect(row.attempts, [attempt]);
+      expect(row.sentAt, isNull);
+      expect(row.deliveryNumber, isNull);
+
+      final fresh = await enqueueSingle(
+        backend,
+        'primary',
+        eventId: 'a2',
+        sequenceNumber: 2,
+      );
+      final before = await backend.readFifoRow('primary', fresh.entryId);
+      await expectLater(
+        setStatusForTest(
+          backend,
+          'primary',
+          fresh.entryId,
+          FinalStatus.tombstoned,
+        ),
+        throwsStateError,
+      );
+      expect(
+        (await backend.readFifoRow('primary', fresh.entryId))!.toJson(),
+        before!.toJson(),
+      );
+    });
+
+    // Verifies: EVS-DEV-delivery-channel/J
+    // the change that marks a queue item sent records the generation,
+    //   delivery number and delivery hash it was acknowledged under, and
+    //   stamps sent_at; the plain change leaves the three null.
+    // Verifies: EVS-DEV-destination-drain/B
+    // marking sent with a delivery is the pending -> sent change: a terminal
+    //   or missing item is refused and unchanged.
+    test('mark sent records the delivery triple', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final e1 = await enqueueSingle(
+        backend,
+        'primary',
+        eventId: 'e1',
+        sequenceNumber: 1,
+      );
+      final pending = await backend.readFifoRow('primary', e1.entryId);
+      expect(pending!.deliveryGeneration, isNull);
+      expect(pending.deliveryNumber, isNull);
+      expect(pending.deliveryHash, isNull);
+      final before = DateTime.now().toUtc();
+      await markSentForTest(
+        backend,
+        'primary',
+        e1.entryId,
+        generation: 2,
+        deliveryNumber: 4,
+        deliveryHash: 'h4',
+      );
+      final sent = await backend.readFifoRow('primary', e1.entryId);
+      expect(sent!.finalStatus, FinalStatus.sent);
+      expect(sent.deliveryGeneration, 2);
+      expect(sent.deliveryNumber, 4);
+      expect(sent.deliveryHash, 'h4');
+      expect(sent.sentAt, isNotNull);
+      expect(sent.sentAt!.isBefore(before), isFalse);
+      // The listing and the per-row read agree field for field.
+      expect((await backend.listFifoEntries('primary')).single, sent);
+
+      final again = await backend.readFifoRow('primary', e1.entryId);
+      await expectLater(
+        markSentForTest(
+          backend,
+          'primary',
+          e1.entryId,
+          generation: 2,
+          deliveryNumber: 5,
+          deliveryHash: 'h5',
+        ),
+        throwsStateError,
+      );
+      expect(
+        (await backend.readFifoRow('primary', e1.entryId))!.toJson(),
+        again!.toJson(),
+      );
+      await expectLater(
+        markSentForTest(
+          backend,
+          'primary',
+          'ghost',
+          generation: 1,
+          deliveryNumber: 1,
+          deliveryHash: 'h1',
+        ),
+        throwsStateError,
+      );
+
+      final plain = await enqueueSingle(
+        backend,
+        'primary',
+        eventId: 'e2',
+        sequenceNumber: 2,
+      );
+      await seedSentRowForTest(backend, 'primary', plain.entryId);
+      final plainRow = await backend.readFifoRow('primary', plain.entryId);
+      expect(plainRow!.deliveryGeneration, isNull);
+      expect(plainRow.deliveryNumber, isNull);
+      expect(plainRow.deliveryHash, isNull);
+    });
+
+    // Verifies: EVS-DEV-delivery-channel/I
+    // an attempt recorded with a delivery number and hash reads back with
+    //   them.
+    test('an attempt keeps its delivery number and hash', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final e1 = await enqueueSingle(
+        backend,
+        'primary',
+        eventId: 'e1',
+        sequenceNumber: 1,
+      );
+      final attempt = AttemptResult(
+        attemptedAt: DateTime.utc(2026, 4, 22, 9),
+        outcome: 'transient',
+        deliveryNumber: 1,
+        deliveryHash: 'h1',
+      );
+      await appendAttemptForTest(backend, 'primary', e1.entryId, attempt);
+      expect((await backend.readFifoRow('primary', e1.entryId))!.attempts, [
+        attempt,
+      ]);
+    });
+
+    // A pending item that carries no attempt is deleted; a pending item that
+    // carries attempts, a terminal item and a missing item are refused, and
+    // nothing changes.
+    test('delete removes only a pending item that carries no '
+        'attempt', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final fresh = await enqueueSingle(
+        backend,
+        'primary',
+        eventId: 'd1',
+        sequenceNumber: 1,
+      );
+      final attempted = await enqueueSingle(
+        backend,
+        'primary',
+        eventId: 'd2',
+        sequenceNumber: 2,
+      );
+      await appendAttemptForTest(
+        backend,
+        'primary',
+        attempted.entryId,
+        AttemptResult(
+          attemptedAt: DateTime.utc(2026, 4, 22, 9),
+          outcome: 'transient',
+        ),
+      );
+      final sent = await enqueueSingle(
+        backend,
+        'primary',
+        eventId: 'd3',
+        sequenceNumber: 3,
+      );
+      await seedSentRowForTest(backend, 'primary', sent.entryId);
+      final wedged = await enqueueSingle(
+        backend,
+        'primary',
+        eventId: 'd4',
+        sequenceNumber: 4,
+      );
+      await setStatusForTest(
+        backend,
+        'primary',
+        wedged.entryId,
+        FinalStatus.wedged,
+      );
+      Future<void> delete(String entryId) => backend.transaction(
+        (txn) => backend.deleteFifoEntryTxn(txn, 'primary', entryId),
+      );
+
+      final before = [
+        for (final r in await backend.listFifoEntries('primary')) r.toJson(),
+      ];
+      for (final refused in <String>[
+        attempted.entryId,
+        sent.entryId,
+        wedged.entryId,
+        'ghost',
+      ]) {
+        await expectLater(delete(refused), throwsStateError, reason: refused);
+      }
+      expect([
+        for (final r in await backend.listFifoEntries('primary')) r.toJson(),
+      ], before);
+
+      await delete(fresh.entryId);
+      expect(await backend.readFifoRow('primary', fresh.entryId), isNull);
+      expect((await backend.listFifoEntries('primary')).length, 3);
+    });
+
+    // Verifies: EVS-DEV-delivery-resume/W
+    // the retained delivery at a number is the item the queue last marked
+    //   sent at that number under the given generation; an item sent at that
+    //   number under an earlier generation, a pending, wedged or tombstoned
+    //   item, and another destination's item are not; a number with none
+    //   reads none.
+    test('the retained delivery is the last sent at the number under the '
+        'generation', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      Future<FifoEntry> sentAt(
+        String eventId,
+        int seq, {
+        required int generation,
+        required int number,
+        String dest = 'primary',
+      }) async {
+        final e = await enqueueSingle(
+          backend,
+          dest,
+          eventId: eventId,
+          sequenceNumber: seq,
+        );
+        await markSentForTest(
+          backend,
+          dest,
+          e.entryId,
+          generation: generation,
+          deliveryNumber: number,
+          deliveryHash: 'h-$eventId',
+        );
+        return (await backend.readFifoRow(dest, e.entryId))!;
+      }
+
+      Future<FifoEntry?> retained(int generation, int number) =>
+          backend.transaction(
+            (txn) => backend.readRetainedDeliveryTxn(
+              txn,
+              'primary',
+              generation: generation,
+              deliveryNumber: number,
+            ),
+          );
+
+      // Generation 1 sent 1 and 2; generation 2 sent 1, then resent 1.
+      await sentAt('g1n1', 1, generation: 1, number: 1);
+      final g1n2 = await sentAt('g1n2', 2, generation: 1, number: 2);
+      await sentAt('g2n1', 3, generation: 2, number: 1);
+      final g2n1again = await sentAt('g2n1b', 4, generation: 2, number: 1);
+      await sentAt('other', 5, generation: 2, number: 2, dest: 'other');
+      // A pending item and a tombstoned one never count.
+      final pending = await enqueueSingle(
+        backend,
+        'primary',
+        eventId: 'p',
+        sequenceNumber: 6,
+      );
+      await appendAttemptForTest(
+        backend,
+        'primary',
+        pending.entryId,
+        AttemptResult(
+          attemptedAt: DateTime.utc(2026, 4, 22, 9),
+          outcome: 'transient',
+          deliveryNumber: 2,
+          deliveryHash: 'h-p',
+        ),
+      );
+
+      expect(await retained(2, 1), g2n1again);
+      expect(await retained(1, 2), g1n2);
+      // Generation 2 has sent nothing at 2 on this destination, though
+      // generation 1 did and another destination did.
+      expect(await retained(2, 2), isNull);
+      expect(await retained(3, 1), isNull);
+      expect(await retained(1, 3), isNull);
+      // The read sees a mark staged in its own transaction.
+      final staged = await backend.transaction((txn) async {
+        await backend.markSentTxn(
+          txn,
+          'primary',
+          pending.entryId,
+          generation: 2,
+          deliveryNumber: 2,
+          deliveryHash: 'h-p',
+        );
+        return backend.readRetainedDeliveryTxn(
+          txn,
+          'primary',
+          generation: 2,
+          deliveryNumber: 2,
+        );
+      });
+      expect(staged?.entryId, pending.entryId);
+    });
+
+    // Verifies: EVS-DEV-destination-drain/B
+    // every transition other than null -> sent, null -> wedged, wedged ->
+    //   tombstoned and, for an item carrying attempts, null -> tombstoned
+    //   throws, and the item is unchanged (the items here carry no attempt).
     test('every illegal transition throws and leaves the item '
         'unchanged', () async {
       if (!initializedOf()) return;
@@ -3173,6 +3778,75 @@ void _registerQueueRecordTests(
       expect(await read('dest'), isNull);
     });
 
+    // Verifies: EVS-DEV-destination-drain/Y
+    // the transform failure record round-trips its failure times and
+    //   sequence range, is overwritten, rolls back with its transaction, is
+    //   kept per destination and is cleared.
+    test(
+      'transform failure record write, overwrite, rollback and clear',
+      () async {
+        if (!initializedOf()) return;
+        final backend = backendOf();
+        final first = TransformFailureRecord(
+          failureTimes: [DateTime.utc(2026, 1, 1)],
+          sequenceRange: (firstSeq: 1, lastSeq: 1),
+        );
+        final second = TransformFailureRecord(
+          failureTimes: [
+            DateTime.utc(2026, 1, 1),
+            DateTime.utc(2026, 1, 1, 0, 1),
+          ],
+          sequenceRange: (firstSeq: 1, lastSeq: 3),
+        );
+        Future<TransformFailureRecord?> read(String dest) =>
+            backend.transaction(
+              (txn) => backend.readTransformFailureRecordTxn(txn, dest),
+            );
+
+        expect(await read('dest'), isNull);
+        final sameTxn = await backend.transaction((txn) async {
+          await backend.writeTransformFailureRecordTxn(txn, 'dest', first);
+          return backend.readTransformFailureRecordTxn(txn, 'dest');
+        });
+        expect(sameTxn, first);
+        expect(await read('dest'), first);
+        expect(await read('other'), isNull);
+
+        await backend.transaction(
+          (txn) => backend.writeTransformFailureRecordTxn(txn, 'dest', second),
+        );
+        expect(await read('dest'), second);
+
+        await expectLater(
+          backend.transaction((txn) async {
+            await backend.writeTransformFailureRecordTxn(txn, 'dest', first);
+            throw StateError('simulated failure');
+          }),
+          throwsStateError,
+        );
+        expect(await read('dest'), second);
+
+        await expectLater(
+          backend.transaction((txn) async {
+            await backend.clearTransformFailureRecordTxn(txn, 'dest');
+            throw StateError('simulated failure');
+          }),
+          throwsStateError,
+        );
+        expect(await read('dest'), second);
+
+        await backend.transaction(
+          (txn) => backend.clearTransformFailureRecordTxn(txn, 'dest'),
+        );
+        expect(await read('dest'), isNull);
+        // Clearing an absent record is a no-op.
+        await backend.transaction(
+          (txn) => backend.clearTransformFailureRecordTxn(txn, 'dest'),
+        );
+        expect(await read('dest'), isNull);
+      },
+    );
+
     // Verifies: EVS-DEV-destination-drain/N
     // the halt request round-trips every
     //   field, is overwritten, rolls back with its transaction, is kept per
@@ -3291,6 +3965,88 @@ void _registerQueueRecordTests(
         (txn) => backend.clearSendFenceTxn(txn, 'dest'),
       );
       expect(await read('dest'), isNull);
+    });
+
+    // Verifies: EVS-DEV-delivery-channel/D
+    // the sender channel record keeps the generation, the receiver record's
+    //   number and hash and the receiver identity; it round-trips, is
+    //   overwritten, rolls back with its transaction, is kept per
+    //   destination and is cleared.
+    test('sender channel record write, overwrite, rollback and '
+        'clear', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      const advanced = SenderChannelRecord(
+        generation: 2,
+        receiverRecord: DeliveryRecord(deliveryNumber: 3, deliveryHash: 'h3'),
+        receiverDatabaseId: 'receiver-db',
+      );
+      Future<SenderChannelRecord?> read(String dest) => backend.transaction(
+        (txn) => backend.readSenderChannelRecordTxn(txn, dest),
+      );
+
+      expect(await read('dest'), isNull);
+      final sameTxn = await backend.transaction((txn) async {
+        await backend.writeSenderChannelRecordTxn(
+          txn,
+          'dest',
+          SenderChannelRecord.initial,
+        );
+        return backend.readSenderChannelRecordTxn(txn, 'dest');
+      });
+      expect(sameTxn, SenderChannelRecord.initial);
+      expect(await read('dest'), SenderChannelRecord.initial);
+      expect(await read('other'), isNull);
+
+      await backend.transaction(
+        (txn) => backend.writeSenderChannelRecordTxn(txn, 'dest', advanced),
+      );
+      expect(await read('dest'), advanced);
+
+      await expectLater(
+        backend.transaction((txn) async {
+          await backend.writeSenderChannelRecordTxn(
+            txn,
+            'dest',
+            SenderChannelRecord.initial,
+          );
+          throw StateError('simulated failure');
+        }),
+        throwsStateError,
+      );
+      expect(await read('dest'), advanced);
+
+      await backend.transaction(
+        (txn) => backend.clearSenderChannelRecordTxn(txn, 'dest'),
+      );
+      expect(await read('dest'), isNull);
+      await backend.transaction(
+        (txn) => backend.clearSenderChannelRecordTxn(txn, 'dest'),
+      );
+      expect(await read('dest'), isNull);
+    });
+
+    // Verifies: EVS-DEV-delivery-channel/I
+    // a send fence naming a delivery keeps its number and hash.
+    test('a send fence keeps its delivery number and hash', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final fence = SendFence(
+        entryId: 'entry-1',
+        attemptCount: 0,
+        at: DateTime.utc(2026, 4, 1, 2, 3, 4),
+        deliveryNumber: 7,
+        deliveryHash: 'h7',
+      );
+      await backend.transaction(
+        (txn) => backend.writeSendFenceTxn(txn, 'dest', fence),
+      );
+      expect(
+        await backend.transaction(
+          (txn) => backend.readSendFenceTxn(txn, 'dest'),
+        ),
+        fence,
+      );
     });
 
     // Verifies: EVS-DEV-destination-drain/T
@@ -4003,6 +4759,1034 @@ void _registerEventByIdTests(
   });
 }
 
+// -------- Chain lookup subgroup --------
+//
+// The lookups by sealed hash, by predecessor, by origin position, of the
+// latest event held as authored and of an aggregate's latest eligible
+// version are reads over the log inside a transaction: they see the events
+// stored earlier in it and none a rolled-back transaction stored.
+
+/// The originating database of the remote events the chain lookup cases
+/// store as ingested.
+const _remoteDb = 'db-remote';
+
+/// An event the database [databaseId] authored, stored at [seq]: one
+/// provenance entry naming [databaseId], sealed under `sealed-$eventId`.
+StoredEvent _authoredEvent(
+  int seq, {
+  required String eventId,
+  required String databaseId,
+  String? previousEventHash,
+  String aggregateId = 'agg-chain',
+  CausalRecord? causal,
+}) => StoredEvent(
+  key: 0,
+  eventId: eventId,
+  aggregateId: aggregateId,
+  aggregateType: 'note',
+  entryType: 'epistaxis_event',
+  entryTypeVersion: const EntryTypeVersion(1, 0),
+  libFormatVersion: LibVersion.dataFormat,
+  eventType: 'Event',
+  sequenceNumber: seq,
+  data: const <String, Object?>{},
+  metadata: <String, Object?>{
+    'provenance': <Map<String, Object?>>[
+      <String, Object?>{
+        'hop': 'mobile-device',
+        'received_at': '2026-04-26T00:00:00.000Z',
+        'identifier': 'install-A',
+        'software_version': 'app@1.0.0',
+        'database_id': databaseId,
+        'library_version': kPeerLibraryVersion,
+      },
+    ],
+  },
+  initiator: const UserInitiator('u1'),
+  clientTimestamp: DateTime.utc(2026, 4, 26),
+  eventHash: 'sealed-$eventId',
+  previousEventHash: previousEventHash,
+  causal: causal ?? kRootVersionCausal,
+);
+
+/// A copy of an event [originDb] authored at [originPosition] under
+/// `sealed-$eventId`, stored at [seq] with a receiver entry and re-stamped
+/// under another hash, as an ingest or a recovery stores it.
+StoredEvent _receivedEvent(
+  int seq, {
+  required String eventId,
+  required String originDb,
+  required int originPosition,
+  required String holderDb,
+  String? previousEventHash,
+  String aggregateId = 'agg-chain',
+  CausalRecord? causal,
+}) => StoredEvent(
+  key: 0,
+  eventId: eventId,
+  aggregateId: aggregateId,
+  aggregateType: 'note',
+  entryType: 'epistaxis_event',
+  entryTypeVersion: const EntryTypeVersion(1, 0),
+  libFormatVersion: LibVersion.dataFormat,
+  eventType: 'Event',
+  sequenceNumber: seq,
+  data: const <String, Object?>{},
+  metadata: <String, Object?>{
+    'provenance': <Map<String, Object?>>[
+      <String, Object?>{
+        'hop': 'mobile-device',
+        'received_at': '2026-04-26T00:00:00.000Z',
+        'identifier': 'install-B',
+        'software_version': 'app@1.0.0',
+        'database_id': originDb,
+        'library_version': kPeerLibraryVersion,
+      },
+      <String, Object?>{
+        'hop': 'relay-server',
+        'received_at': '2026-04-26T00:00:01.000Z',
+        'identifier': 'relay-1',
+        'software_version': 'relay@1.0.0',
+        'arrival_hash': 'sealed-$eventId',
+        'origin_sequence_number': originPosition,
+        'ingest_sequence_number': seq,
+        'database_id': holderDb,
+        'library_version': kPeerLibraryVersion,
+      },
+    ],
+  },
+  initiator: const UserInitiator('u1'),
+  clientTimestamp: DateTime.utc(2026, 4, 26),
+  eventHash: 'restamped-$eventId',
+  previousEventHash: previousEventHash,
+  causal: causal ?? kRootVersionCausal,
+);
+
+/// Mints the database identity of [backend] and returns it.
+Future<String> _holderIdentity(StorageBackend backend) =>
+    backend.transaction(backend.readOrCreateDatabaseIdTxn);
+
+/// Runs [read] in one transaction of [backend].
+Future<T> _readLookups<T>(
+  StorageBackend backend,
+  Future<T> Function(Transaction txn) read,
+) => backend.transaction(read);
+
+/// The identifiers of [events], in order.
+List<String> _ids(Iterable<StoredEvent> events) =>
+    events.map((e) => e.eventId).toList();
+
+/// A causal record of [kind] and [eligible] naming no parent.
+CausalRecord _causal(CausalKind kind, {required bool eligible}) =>
+    CausalRecord(kind: kind, eligible: eligible, parents: const <CausalRef>[]);
+
+void _registerChainLookupTests(
+  StorageBackend Function() backendOf,
+  bool Function() initializedOf,
+) {
+  group('chain lookups', () {
+    // Verifies: EVS-DEV-chain-verification/A
+    // Verifies: EVS-DEV-chain-verification/B
+    test('each lookup returns the stored event after an append', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final holder = await _holderIdentity(backend);
+      final first = await _appendBuilt(
+        backend,
+        (seq) => _authoredEvent(seq, eventId: 'a1', databaseId: holder),
+      );
+      final second = await _appendBuilt(
+        backend,
+        (seq) => _authoredEvent(
+          seq,
+          eventId: 'a2',
+          databaseId: holder,
+          previousEventHash: 'sealed-a1',
+        ),
+      );
+      await _readLookups(backend, (txn) async {
+        final bySealed = await backend.findEventsBySealedHashInTxn(
+          txn,
+          'sealed-a2',
+        );
+        expect(bySealed.map((e) => e.toMap()), [second.toMap()]);
+        expect(
+          _ids(
+            await backend.findEventsByPredecessorInTxn(
+              txn,
+              originatingDatabaseId: holder,
+              previousEventHash: 'sealed-a1',
+            ),
+          ),
+          ['a2'],
+        );
+        expect(
+          _ids(
+            await backend.findEventsByOriginPositionInTxn(
+              txn,
+              originatingDatabaseId: holder,
+              originPosition: first.sequenceNumber,
+            ),
+          ),
+          ['a1'],
+        );
+        final latest = await backend.readLatestHeldAsAuthoredInTxn(txn, holder);
+        expect(latest?.toMap(), second.toMap());
+      });
+    });
+
+    // Verifies: EVS-DEV-chain-verification/A
+    test('a null predecessor matches the events of that database that name '
+        'none, and no other', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final holder = await _holderIdentity(backend);
+      await _appendBuilt(
+        backend,
+        (seq) => _authoredEvent(seq, eventId: 'a1', databaseId: holder),
+      );
+      await _appendBuilt(
+        backend,
+        (seq) => _authoredEvent(
+          seq,
+          eventId: 'a2',
+          databaseId: holder,
+          previousEventHash: 'sealed-a1',
+        ),
+      );
+      await _appendBuilt(
+        backend,
+        (seq) => _receivedEvent(
+          seq,
+          eventId: 'r1',
+          originDb: _remoteDb,
+          originPosition: 1,
+          holderDb: holder,
+        ),
+      );
+      await _readLookups(backend, (txn) async {
+        expect(
+          _ids(
+            await backend.findEventsByPredecessorInTxn(
+              txn,
+              originatingDatabaseId: holder,
+              previousEventHash: null,
+            ),
+          ),
+          ['a1'],
+        );
+        expect(
+          _ids(
+            await backend.findEventsByPredecessorInTxn(
+              txn,
+              originatingDatabaseId: _remoteDb,
+              previousEventHash: null,
+            ),
+          ),
+          ['r1'],
+        );
+      });
+    });
+
+    // Verifies: EVS-DEV-chain-verification/A
+    test('an ingested copy is found by its sealed hash and origin position, '
+        'not its re-stamped ones', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final holder = await _holderIdentity(backend);
+      await _appendBuilt(
+        backend,
+        (seq) => _authoredEvent(seq, eventId: 'a1', databaseId: holder),
+      );
+      final received = await _appendBuilt(
+        backend,
+        (seq) => _receivedEvent(
+          seq,
+          eventId: 'r7',
+          originDb: _remoteDb,
+          originPosition: 7,
+          holderDb: holder,
+          previousEventHash: 'sealed-r6',
+        ),
+      );
+      await _readLookups(backend, (txn) async {
+        expect(
+          _ids(await backend.findEventsBySealedHashInTxn(txn, 'sealed-r7')),
+          ['r7'],
+        );
+        expect(
+          await backend.findEventsBySealedHashInTxn(txn, 'restamped-r7'),
+          isEmpty,
+        );
+        expect(
+          _ids(
+            await backend.findEventsByPredecessorInTxn(
+              txn,
+              originatingDatabaseId: _remoteDb,
+              previousEventHash: 'sealed-r6',
+            ),
+          ),
+          ['r7'],
+        );
+        expect(
+          await backend.findEventsByPredecessorInTxn(
+            txn,
+            originatingDatabaseId: holder,
+            previousEventHash: 'sealed-r6',
+          ),
+          isEmpty,
+        );
+        expect(
+          _ids(
+            await backend.findEventsByOriginPositionInTxn(
+              txn,
+              originatingDatabaseId: _remoteDb,
+              originPosition: 7,
+            ),
+          ),
+          ['r7'],
+        );
+        expect(
+          await backend.findEventsByOriginPositionInTxn(
+            txn,
+            originatingDatabaseId: _remoteDb,
+            originPosition: received.sequenceNumber,
+          ),
+          isEmpty,
+        );
+      });
+    });
+
+    // Verifies: EVS-DEV-chain-verification/B
+    test('the latest event held as authored ignores ingested copies, copies '
+        'of its own events stored with a receiver entry, and one-entry copies '
+        'naming another database', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final holder = await _holderIdentity(backend);
+      final authored = await _appendBuilt(
+        backend,
+        (seq) => _authoredEvent(seq, eventId: 'a1', databaseId: holder),
+      );
+      await _appendBuilt(
+        backend,
+        (seq) => _receivedEvent(
+          seq,
+          eventId: 'r1',
+          originDb: _remoteDb,
+          originPosition: 1,
+          holderDb: holder,
+        ),
+      );
+      await _appendBuilt(
+        backend,
+        (seq) => _receivedEvent(
+          seq,
+          eventId: 'own-received',
+          originDb: holder,
+          originPosition: 40,
+          holderDb: holder,
+        ),
+      );
+      await _appendBuilt(
+        backend,
+        (seq) => _authoredEvent(seq, eventId: 'foreign', databaseId: _remoteDb),
+      );
+      await _readLookups(backend, (txn) async {
+        final latest = await backend.readLatestHeldAsAuthoredInTxn(txn, holder);
+        expect(latest?.eventId, 'a1');
+        expect(latest?.sequenceNumber, authored.sequenceNumber);
+        expect(latest?.eventHash, 'sealed-a1');
+        // Held as authored means naming the holding database: a one-entry
+        // copy naming another database is held as authored by no one here.
+        expect(
+          await backend.readLatestHeldAsAuthoredInTxn(txn, _remoteDb),
+          isNull,
+        );
+      });
+    });
+
+    // Verifies: EVS-DEV-chain-verification/B
+    test('the latest event held as authored is null while the database '
+        'holds none', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final holder = await _holderIdentity(backend);
+      expect(
+        await _readLookups(
+          backend,
+          (txn) => backend.readLatestHeldAsAuthoredInTxn(txn, holder),
+        ),
+        isNull,
+      );
+      await _appendBuilt(
+        backend,
+        (seq) => _receivedEvent(
+          seq,
+          eventId: 'r1',
+          originDb: _remoteDb,
+          originPosition: 1,
+          holderDb: holder,
+        ),
+      );
+      expect(
+        await _readLookups(
+          backend,
+          (txn) => backend.readLatestHeldAsAuthoredInTxn(txn, holder),
+        ),
+        isNull,
+      );
+    });
+
+    // Verifies: EVS-DEV-chain-verification/B
+    // Verifies: EVS-DEV-causal-parents/H
+    test('a lookup inside the storing transaction sees an event stored '
+        'earlier in it', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final holder = await _holderIdentity(backend);
+      await backend.transaction((txn) async {
+        final s1 = await backend.nextSequenceNumber(txn);
+        await backend.appendEvent(
+          txn,
+          _authoredEvent(s1, eventId: 'a1', databaseId: holder),
+        );
+        final latest = await backend.readLatestHeldAsAuthoredInTxn(txn, holder);
+        expect(latest?.eventId, 'a1');
+        expect(
+          (await backend.readLatestEligibleVersionInTxn(
+            txn,
+            'agg-chain',
+          ))?.eventId,
+          'a1',
+        );
+        final s2 = await backend.nextSequenceNumber(txn);
+        await backend.appendEvent(
+          txn,
+          _authoredEvent(
+            s2,
+            eventId: 'a2',
+            databaseId: holder,
+            previousEventHash: latest?.eventHash,
+          ),
+        );
+        expect(
+          (await backend.readLatestHeldAsAuthoredInTxn(txn, holder))?.eventId,
+          'a2',
+        );
+        expect(
+          _ids(await backend.findEventsBySealedHashInTxn(txn, 'sealed-a2')),
+          ['a2'],
+        );
+        expect(
+          _ids(
+            await backend.findEventsByPredecessorInTxn(
+              txn,
+              originatingDatabaseId: holder,
+              previousEventHash: 'sealed-a1',
+            ),
+          ),
+          ['a2'],
+        );
+        expect(
+          _ids(
+            await backend.findEventsByOriginPositionInTxn(
+              txn,
+              originatingDatabaseId: holder,
+              originPosition: s2,
+            ),
+          ),
+          ['a2'],
+        );
+        expect(
+          (await backend.readLatestEligibleVersionInTxn(
+            txn,
+            'agg-chain',
+          ))?.eventId,
+          'a2',
+        );
+      });
+    });
+
+    // Verifies: EVS-DEV-chain-verification/B
+    // Verifies: EVS-DEV-causal-parents/H
+    test('a rolled-back transaction leaves every lookup as it was', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final holder = await _holderIdentity(backend);
+      await _appendBuilt(
+        backend,
+        (seq) => _authoredEvent(seq, eventId: 'a1', databaseId: holder),
+      );
+      await expectLater(
+        backend.transaction((txn) async {
+          final s2 = await backend.nextSequenceNumber(txn);
+          await backend.appendEvent(
+            txn,
+            _authoredEvent(
+              s2,
+              eventId: 'a2',
+              databaseId: holder,
+              previousEventHash: 'sealed-a1',
+            ),
+          );
+          final s3 = await backend.nextSequenceNumber(txn);
+          await backend.appendEvent(
+            txn,
+            _receivedEvent(
+              s3,
+              eventId: 'r1',
+              originDb: _remoteDb,
+              originPosition: 1,
+              holderDb: holder,
+            ),
+          );
+          throw StateError('simulated failure');
+        }),
+        throwsStateError,
+      );
+      await _readLookups(backend, (txn) async {
+        expect(
+          (await backend.readLatestHeldAsAuthoredInTxn(txn, holder))?.eventId,
+          'a1',
+        );
+        expect(
+          (await backend.readLatestEligibleVersionInTxn(
+            txn,
+            'agg-chain',
+          ))?.eventId,
+          'a1',
+        );
+        expect(
+          await backend.findEventsBySealedHashInTxn(txn, 'sealed-a2'),
+          isEmpty,
+        );
+        expect(
+          await backend.findEventsBySealedHashInTxn(txn, 'sealed-r1'),
+          isEmpty,
+        );
+        expect(
+          await backend.findEventsByPredecessorInTxn(
+            txn,
+            originatingDatabaseId: holder,
+            previousEventHash: 'sealed-a1',
+          ),
+          isEmpty,
+        );
+        expect(
+          await backend.findEventsByOriginPositionInTxn(
+            txn,
+            originatingDatabaseId: _remoteDb,
+            originPosition: 1,
+          ),
+          isEmpty,
+        );
+      });
+    });
+
+    // Verifies: EVS-DEV-chain-verification/A
+    test('a fork and a reused origin position are both returned, in local '
+        'sequence order', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final holder = await _holderIdentity(backend);
+      final one = await _appendBuilt(
+        backend,
+        (seq) => _receivedEvent(
+          seq,
+          eventId: 'r5',
+          originDb: _remoteDb,
+          originPosition: 5,
+          holderDb: holder,
+          previousEventHash: 'sealed-r4',
+        ),
+      );
+      final two = await _appendBuilt(
+        backend,
+        (seq) => _receivedEvent(
+          seq,
+          eventId: 'r5-again',
+          originDb: _remoteDb,
+          originPosition: 5,
+          holderDb: holder,
+          previousEventHash: 'sealed-r4',
+        ),
+      );
+      final three = await _appendBuilt(
+        backend,
+        (seq) => _receivedEvent(
+          seq,
+          eventId: 'r6-fork',
+          originDb: _remoteDb,
+          originPosition: 6,
+          holderDb: holder,
+          previousEventHash: 'sealed-r4',
+        ),
+      );
+      await _readLookups(backend, (txn) async {
+        expect(
+          (await backend.findEventsByPredecessorInTxn(
+            txn,
+            originatingDatabaseId: _remoteDb,
+            previousEventHash: 'sealed-r4',
+          )).map((e) => e.sequenceNumber),
+          [one.sequenceNumber, two.sequenceNumber, three.sequenceNumber],
+        );
+        expect(
+          _ids(
+            await backend.findEventsByOriginPositionInTxn(
+              txn,
+              originatingDatabaseId: _remoteDb,
+              originPosition: 5,
+            ),
+          ),
+          ['r5', 'r5-again'],
+        );
+      });
+    });
+
+    // Verifies: EVS-DEV-causal-parents/H
+    test('the latest eligible version skips annotations, ineligible events '
+        'and other aggregates, and counts ingested copies', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final holder = await _holderIdentity(backend);
+      Future<void> read(String? expected) => _readLookups(backend, (txn) async {
+        final latest = await backend.readLatestEligibleVersionInTxn(
+          txn,
+          'agg-e',
+        );
+        expect(latest?.eventId, expected);
+      });
+
+      await read(null);
+      await _appendBuilt(
+        backend,
+        (seq) => _authoredEvent(
+          seq,
+          eventId: 'draft',
+          databaseId: holder,
+          aggregateId: 'agg-e',
+          causal: _causal(CausalKind.version, eligible: false),
+        ),
+      );
+      await read(null);
+      await _appendBuilt(
+        backend,
+        (seq) => _authoredEvent(
+          seq,
+          eventId: 'v1',
+          databaseId: holder,
+          aggregateId: 'agg-e',
+          causal: _causal(CausalKind.version, eligible: true),
+        ),
+      );
+      await _appendBuilt(
+        backend,
+        (seq) => _authoredEvent(
+          seq,
+          eventId: 'note',
+          databaseId: holder,
+          aggregateId: 'agg-e',
+          causal: _causal(CausalKind.annotation, eligible: false),
+        ),
+      );
+      await _appendBuilt(
+        backend,
+        (seq) => _authoredEvent(
+          seq,
+          eventId: 'eligible-note',
+          databaseId: holder,
+          aggregateId: 'agg-e',
+          causal: _causal(CausalKind.annotation, eligible: true),
+        ),
+      );
+      await _appendBuilt(
+        backend,
+        (seq) => _authoredEvent(
+          seq,
+          eventId: 'draft-2',
+          databaseId: holder,
+          aggregateId: 'agg-e',
+          causal: _causal(CausalKind.version, eligible: false),
+        ),
+      );
+      await _appendBuilt(
+        backend,
+        (seq) => _authoredEvent(
+          seq,
+          eventId: 'other-aggregate',
+          databaseId: holder,
+          aggregateId: 'agg-other',
+          causal: _causal(CausalKind.version, eligible: true),
+        ),
+      );
+      await read('v1');
+      await _appendBuilt(
+        backend,
+        (seq) => _receivedEvent(
+          seq,
+          eventId: 'r-v2',
+          originDb: _remoteDb,
+          originPosition: 3,
+          holderDb: holder,
+          aggregateId: 'agg-e',
+          causal: _causal(CausalKind.version, eligible: true),
+        ),
+      );
+      await read('r-v2');
+    });
+
+    // Verifies: EVS-DEV-causal-parents/H
+    test('the latest eligible version of each of several interleaved '
+        "aggregates tracks only that aggregate's own events", () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final holder = await _holderIdentity(backend);
+      Future<String?> latestOf(String aggregateId) async {
+        final latest = await _readLookups(
+          backend,
+          (txn) => backend.readLatestEligibleVersionInTxn(txn, aggregateId),
+        );
+        return latest?.eventId;
+      }
+
+      await _appendBuilt(
+        backend,
+        (seq) => _authoredEvent(
+          seq,
+          eventId: 'x1',
+          databaseId: holder,
+          aggregateId: 'agg-x',
+          causal: _causal(CausalKind.version, eligible: true),
+        ),
+      );
+      await _appendBuilt(
+        backend,
+        (seq) => _authoredEvent(
+          seq,
+          eventId: 'y1',
+          databaseId: holder,
+          aggregateId: 'agg-y',
+          causal: _causal(CausalKind.version, eligible: true),
+        ),
+      );
+      await _appendBuilt(
+        backend,
+        (seq) => _authoredEvent(
+          seq,
+          eventId: 'x2',
+          databaseId: holder,
+          aggregateId: 'agg-x',
+          causal: _causal(CausalKind.version, eligible: true),
+        ),
+      );
+      await _appendBuilt(
+        backend,
+        (seq) => _authoredEvent(
+          seq,
+          eventId: 'z1',
+          databaseId: holder,
+          aggregateId: 'agg-z',
+          causal: _causal(CausalKind.version, eligible: true),
+        ),
+      );
+      await _appendBuilt(
+        backend,
+        (seq) => _authoredEvent(
+          seq,
+          eventId: 'y2',
+          databaseId: holder,
+          aggregateId: 'agg-y',
+          causal: _causal(CausalKind.version, eligible: true),
+        ),
+      );
+      expect(await latestOf('agg-x'), 'x2');
+      expect(await latestOf('agg-y'), 'y2');
+      expect(await latestOf('agg-z'), 'z1');
+    });
+
+    // Verifies: EVS-DEV-causal-parents/H
+    test('an aggregate whose only events are annotations has no eligible '
+        'version', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final holder = await _holderIdentity(backend);
+      await _appendBuilt(
+        backend,
+        (seq) => _authoredEvent(
+          seq,
+          eventId: 'note-only-1',
+          databaseId: holder,
+          aggregateId: 'agg-notes-only',
+          causal: _causal(CausalKind.annotation, eligible: true),
+        ),
+      );
+      await _appendBuilt(
+        backend,
+        (seq) => _authoredEvent(
+          seq,
+          eventId: 'note-only-2',
+          databaseId: holder,
+          aggregateId: 'agg-notes-only',
+          causal: _causal(CausalKind.annotation, eligible: false),
+        ),
+      );
+      final latest = await _readLookups(
+        backend,
+        (txn) => backend.readLatestEligibleVersionInTxn(txn, 'agg-notes-only'),
+      );
+      expect(latest, isNull);
+    });
+
+    // Verifies: EVS-PRD-materializer/E
+    test(
+      'aggregate authorship names every originating database with a '
+      'held event of the aggregate, at its highest origin position',
+      () async {
+        if (!initializedOf()) return;
+        final backend = backendOf();
+        final holder = await _holderIdentity(backend);
+        final authored = await _appendBuilt(
+          backend,
+          (seq) => _authoredEvent(
+            seq,
+            eventId: 'auth-own',
+            databaseId: holder,
+            aggregateId: 'agg-authorship-1',
+          ),
+        );
+        await _appendBuilt(
+          backend,
+          (seq) => _receivedEvent(
+            seq,
+            eventId: 'auth-remote-high',
+            originDb: _remoteDb,
+            originPosition: 5,
+            holderDb: holder,
+            aggregateId: 'agg-authorship-1',
+          ),
+        );
+        // Stored after the higher-position copy, so a fold that took the
+        // last-seen value rather than the maximum would get this wrong.
+        await _appendBuilt(
+          backend,
+          (seq) => _receivedEvent(
+            seq,
+            eventId: 'auth-remote-low',
+            originDb: _remoteDb,
+            originPosition: 3,
+            holderDb: holder,
+            aggregateId: 'agg-authorship-1',
+          ),
+        );
+        await _appendBuilt(
+          backend,
+          (seq) => _receivedEvent(
+            seq,
+            eventId: 'auth-other-agg',
+            originDb: _remoteDb,
+            originPosition: 1,
+            holderDb: holder,
+            aggregateId: 'agg-authorship-2',
+          ),
+        );
+
+        final authorship1 = await _readLookups(
+          backend,
+          (txn) =>
+              backend.readAggregateAuthorshipInTxn(txn, 'agg-authorship-1'),
+        );
+        expect(authorship1, {holder: authored.sequenceNumber, _remoteDb: 5});
+
+        final authorship2 = await _readLookups(
+          backend,
+          (txn) =>
+              backend.readAggregateAuthorshipInTxn(txn, 'agg-authorship-2'),
+        );
+        expect(authorship2, {_remoteDb: 1});
+
+        final authorshipNone = await _readLookups(
+          backend,
+          (txn) => backend.readAggregateAuthorshipInTxn(txn, 'agg-no-events'),
+        );
+        expect(authorshipNone, isEmpty);
+      },
+    );
+
+    // Verifies: EVS-PRD-materializer/E
+    test('the lowest origin position sharing a predecessor is read '
+        'regardless of storage order, and a null predecessor is its own '
+        'key', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final holder = await _holderIdentity(backend);
+      // Stored highest-first, so a fold that took the first-seen value
+      // rather than the minimum would get this wrong.
+      await _appendBuilt(
+        backend,
+        (seq) => _receivedEvent(
+          seq,
+          eventId: 'fork-high',
+          originDb: _remoteDb,
+          originPosition: 9,
+          holderDb: holder,
+          previousEventHash: 'sealed-fork-pred',
+          aggregateId: 'agg-fork-1',
+        ),
+      );
+      await _appendBuilt(
+        backend,
+        (seq) => _receivedEvent(
+          seq,
+          eventId: 'fork-low',
+          originDb: _remoteDb,
+          originPosition: 4,
+          holderDb: holder,
+          previousEventHash: 'sealed-fork-pred',
+          aggregateId: 'agg-fork-2',
+        ),
+      );
+      await _appendBuilt(
+        backend,
+        (seq) => _receivedEvent(
+          seq,
+          eventId: 'null-pred-high',
+          originDb: _remoteDb,
+          originPosition: 6,
+          holderDb: holder,
+          aggregateId: 'agg-fork-3',
+        ),
+      );
+      await _appendBuilt(
+        backend,
+        (seq) => _receivedEvent(
+          seq,
+          eventId: 'null-pred-low',
+          originDb: _remoteDb,
+          originPosition: 2,
+          holderDb: holder,
+          aggregateId: 'agg-fork-4',
+        ),
+      );
+
+      final withPredecessor = await _readLookups(
+        backend,
+        (txn) => backend.readLowestOriginPositionByPredecessorInTxn(
+          txn,
+          originatingDatabaseId: _remoteDb,
+          previousEventHash: 'sealed-fork-pred',
+        ),
+      );
+      expect(withPredecessor, 4);
+
+      final withNullPredecessor = await _readLookups(
+        backend,
+        (txn) => backend.readLowestOriginPositionByPredecessorInTxn(
+          txn,
+          originatingDatabaseId: _remoteDb,
+          previousEventHash: null,
+        ),
+      );
+      expect(withNullPredecessor, 2);
+
+      final none = await _readLookups(
+        backend,
+        (txn) => backend.readLowestOriginPositionByPredecessorInTxn(
+          txn,
+          originatingDatabaseId: _remoteDb,
+          previousEventHash: 'sealed-unmatched',
+        ),
+      );
+      expect(none, isNull);
+    });
+
+    // Verifies: EVS-DEV-causal-parents/H
+    test('findEventsForAggregateInTxn returns each of several interleaved '
+        "aggregates' events, in ascending sequence order, authored and "
+        'received alike', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final holder = await _holderIdentity(backend);
+      await _appendBuilt(
+        backend,
+        (seq) => _authoredEvent(
+          seq,
+          eventId: 'ifa-x1',
+          databaseId: holder,
+          aggregateId: 'agg-ifa-x',
+        ),
+      );
+      await _appendBuilt(
+        backend,
+        (seq) => _authoredEvent(
+          seq,
+          eventId: 'ifa-y1',
+          databaseId: holder,
+          aggregateId: 'agg-ifa-y',
+        ),
+      );
+      await _appendBuilt(
+        backend,
+        (seq) => _receivedEvent(
+          seq,
+          eventId: 'ifa-x2',
+          originDb: _remoteDb,
+          originPosition: 1,
+          holderDb: holder,
+          aggregateId: 'agg-ifa-x',
+        ),
+      );
+      await _appendBuilt(
+        backend,
+        (seq) => _authoredEvent(
+          seq,
+          eventId: 'ifa-y2',
+          databaseId: holder,
+          aggregateId: 'agg-ifa-y',
+        ),
+      );
+
+      await _readLookups(backend, (txn) async {
+        expect(
+          _ids(await backend.findEventsForAggregateInTxn(txn, 'agg-ifa-x')),
+          ['ifa-x1', 'ifa-x2'],
+        );
+        expect(
+          _ids(await backend.findEventsForAggregateInTxn(txn, 'agg-ifa-y')),
+          ['ifa-y1', 'ifa-y2'],
+        );
+        expect(
+          await backend.findEventsForAggregateInTxn(txn, 'agg-ifa-none'),
+          isEmpty,
+        );
+      });
+    });
+
+    // Verifies: EVS-DEV-causal-parents/H
+    test('findEventsForAggregateInTxn sees an event staged earlier in the '
+        'same transaction', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      await backend.transaction((txn) async {
+        expect(
+          await backend.findEventsForAggregateInTxn(txn, 'agg-staged'),
+          isEmpty,
+        );
+        final s = await backend.nextSequenceNumber(txn);
+        await backend.appendEvent(
+          txn,
+          _event('staged-1', s, aggregateId: 'agg-staged'),
+        );
+        expect(
+          _ids(await backend.findEventsForAggregateInTxn(txn, 'agg-staged')),
+          ['staged-1'],
+        );
+      });
+    });
+  });
+}
+
 // -------- Close subgroup --------
 //
 // close() releases resources; subsequent
@@ -4042,12 +5826,13 @@ void _registerEventVersionColumnTests(
 ) {
   group('event version columns', () {
     // Verifies: EVS-DEV-version-compatibility/A+C
-    test('an event stamped entry type 1.3 and data format 2.1 reads back '
-        'exactly through every read path, and its hash verifies', () async {
+    test('an event stamped entry type 1.3 and a later minor of the data '
+        'format reads back exactly through every read path, and its hash '
+        'verifies', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
       const entryVersion = EntryTypeVersion(1, 3);
-      const dataFormat = DataFormatVersion(2, 1);
+      final dataFormat = LibVersion.dataFormat.nextMinor;
       final recordedAt = DateTime.utc(2026, 5, 1, 12);
 
       late StoredEvent appended;
@@ -4071,6 +5856,8 @@ void _registerEventVersionColumnTests(
                 'received_at': '2026-05-01T12:00:00.000Z',
                 'identifier': 'install-A',
                 'software_version': 'app@1.0.0',
+                'database_id': kPeerDatabaseId,
+                'library_version': kPeerLibraryVersion,
               },
             ],
           },
@@ -4078,6 +5865,7 @@ void _registerEventVersionColumnTests(
           'flow_token': 'flow-versions',
           'client_timestamp': recordedAt.toIso8601String(),
           'previous_event_hash': null,
+          'causal': kRootVersionCausalJson,
         };
         record['event_hash'] = canonicalEventHash(record);
         appended = StoredEvent.fromMap(record, seq);
@@ -4300,6 +6088,8 @@ void _registerEventSpellingTests(
                   'received_at': '2026-05-01T12:00:00Z',
                   'identifier': 'install-A',
                   'software_version': 'app@1.0.0',
+                  'database_id': kPeerDatabaseId,
+                  'library_version': kPeerLibraryVersion,
                 },
               ],
             },
@@ -4307,6 +6097,7 @@ void _registerEventSpellingTests(
             'flow_token': flowToken,
             'client_timestamp': timestamp,
             'previous_event_hash': null,
+            'causal': kRootVersionCausalJson,
           };
           record['event_hash'] = canonicalEventHash(record);
           appended = StoredEvent.fromMap(record, seq);
@@ -4379,6 +6170,7 @@ void _registerEventSpellingTests(
           'client_timestamp': timestamp,
           'event_hash': 'h',
           'previous_event_hash': null,
+          'causal': kRootVersionCausalJson,
         };
         expect(
           () => StoredEvent.fromMap(record, 1),
@@ -4392,6 +6184,83 @@ void _registerEventSpellingTests(
           reason: timestamp,
         );
       }
+    });
+
+    // Verifies: EVS-DEV-event-record/H
+    // Verifies: EVS-DEV-causal-parents/B
+    test('appendEvent refuses an event with no causal object, or with a '
+        'provenance entry lacking library_version or carrying an empty '
+        'database_id, naming the field and writing nothing', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final entry = ProvenanceEntry(
+        hop: 'mobile-device',
+        receivedAt: DateTime.utc(2026, 5),
+        identifier: 'device-1',
+        softwareVersion: 'app@1.0.0',
+        databaseId: 'database-1',
+        libraryVersion: LibVersion.version,
+      ).toJson();
+      StoredEvent event(
+        int seq,
+        String id, {
+        required Map<String, Object?> provenanceEntry,
+        bool withCausal = true,
+      }) => StoredEvent(
+        key: seq,
+        eventId: id,
+        aggregateId: 'agg-$id',
+        aggregateType: 'note',
+        entryType: 'spelled_note',
+        entryTypeVersion: const EntryTypeVersion(1, 0),
+        libFormatVersion: LibVersion.dataFormat,
+        eventType: 'finalized',
+        sequenceNumber: seq,
+        data: const <String, dynamic>{},
+        metadata: <String, dynamic>{
+          'provenance': <Map<String, Object?>>[provenanceEntry],
+        },
+        initiator: const UserInitiator('u-spelling'),
+        clientTimestamp: DateTime.utc(2026, 5),
+        eventHash: 'h',
+        causal: withCausal ? kRootVersionCausal : null,
+      );
+      final cases = <String, StoredEvent Function(int)>{
+        '"causal"': (seq) =>
+            event(seq, 'no-causal', provenanceEntry: entry, withCausal: false),
+        '"library_version"': (seq) => event(
+          seq,
+          'no-library-version',
+          provenanceEntry: <String, Object?>{...entry}
+            ..remove('library_version'),
+        ),
+        '"database_id"': (seq) => event(
+          seq,
+          'empty-database-id',
+          provenanceEntry: <String, Object?>{...entry, 'database_id': ''},
+        ),
+      };
+      final before = await backend.findAllEvents();
+      for (final c in cases.entries) {
+        await expectLater(
+          backend.transaction((txn) async {
+            final seq = await backend.nextSequenceNumber(txn);
+            await backend.appendEvent(txn, c.value(seq));
+          }),
+          throwsA(
+            isA<FormatException>().having(
+              (e) => e.message,
+              'message',
+              contains(c.key),
+            ),
+          ),
+          reason: c.key,
+        );
+      }
+      expect(
+        (await backend.findAllEvents()).map((e) => e.eventId),
+        before.map((e) => e.eventId),
+      );
     });
 
     // Verifies: EVS-DEV-event-record/A
@@ -4515,7 +6384,7 @@ void _registerRecordedAtComparisonTests(
               aggregateType: 'note',
               entryType: 'epistaxis_event',
               entryTypeVersion: const EntryTypeVersion(1, 0),
-              libFormatVersion: const DataFormatVersion(2, 0),
+              libFormatVersion: LibVersion.dataFormat,
               eventType: 'Event',
               sequenceNumber: seq,
               data: const <String, dynamic>{},
@@ -4524,6 +6393,7 @@ void _registerRecordedAtComparisonTests(
               clientTimestamp: entry.value,
               eventHash: 'hash-${entry.key}',
               flowToken: 'flow-recorded',
+              causal: kRootVersionCausal,
             ),
           );
           await securityStoreOf(backend).writeInTxn(

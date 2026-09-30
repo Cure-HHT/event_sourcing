@@ -8,7 +8,13 @@
 // the fold is deterministic: upsert on
 //   insert, delete on remove, no-op on absent row; applying the same events
 //   in the same order from the same state yields identical results.
+// The row key and row data extractors are two of the four computation
+//   sites the fold wraps as a FoldFailure (`EVS-DEV-view-convergence`
+//   Terms); each runs before any row write.
+import 'package:event_sourcing/src/projections/integrity_marks.dart';
 import 'package:event_sourcing/src/projections/interpreter/aggregate_fold.dart';
+import 'package:event_sourcing/src/projections/interpreter/fold_failure.dart';
+import 'package:event_sourcing/src/projections/interpreter/view_row_access.dart';
 import 'package:event_sourcing/src/projections/projection_spec.dart';
 import 'package:event_sourcing/src/storage/storage_backend.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
@@ -16,16 +22,36 @@ import 'package:event_sourcing/src/storage/transaction.dart';
 import 'package:meta/meta.dart' show internal;
 
 class TableFold {
+  /// Applies one [event] to the table view of [spec], inside [txn]: an
+  /// insert event upserts the row its key extracts, stamped with
+  /// [integrity], the findings that mark the event's aggregate, and indexed
+  /// by the event's aggregate id as its producer
+  /// (`upsertTableViewRowInTxn`), so the outstanding-finding refresh can
+  /// later find the rows one aggregate produced without scanning the view;
+  /// a remove event deletes it.
+  /// Reads and writes the row through [rows] when given, otherwise straight
+  /// through [backend] in [txn] at [copyId].
   @internal
   static Future<AggregateFoldChange?> applyEvent({
     required Transaction txn,
     required StorageBackend backend,
     required TableProjectionSpec spec,
     required StoredEvent event,
+    required List<String> integrity,
+    required String copyId,
+    ViewRowAccess? rows,
   }) async {
+    final access = rows ?? DirectViewRowAccess(backend, txn, copyId);
     if (spec.insertEventTypes.contains(event.eventType)) {
-      final key = spec.rowKey.extract(event);
+      final key = guardFold(
+        FoldFailureReason.rowKeyFailed,
+        () => spec.rowKey.extract(event),
+      );
       final keyStr = key.toString();
+      final rowData = guardFold(
+        FoldFailureReason.rowDataFailed,
+        () => spec.rowData.extract(event),
+      );
       // Stamp the substrate-owned identity (`aggregateId`) and ordering
       // (`sequence`) fields into the row, mirroring AggregateFold. Without
       // them, TableProjectionSpec rows would violate the view-row contract
@@ -35,11 +61,19 @@ class TableFold {
       // Stamped last so they win over any colliding payload key, as in
       // AggregateFold.
       final row = <String, Object?>{
-        ...spec.rowData.extract(event),
+        ...rowData,
         'aggregateId': keyStr,
         'sequence': event.sequenceNumber,
+        // Implements: EVS-PRD-materializer/F
+        // a table row carries `$integrity`, the ascending ids of the
+        //   findings that mark the aggregate whose event produced its key.
+        kIntegrityRowKey: integrityValue(integrity),
       };
-      await backend.upsertViewRowInTxn(txn, spec.viewName, keyStr, row);
+      await access.upsertTableRow(
+        keyStr,
+        row,
+        sourceAggregateId: event.aggregateId,
+      );
       return AggregateFoldChange(
         viewName: spec.viewName,
         aggregateId: keyStr,
@@ -50,18 +84,17 @@ class TableFold {
       );
     }
     if (spec.removeEventTypes.contains(event.eventType)) {
-      final key = spec.rowKey.extract(event);
+      final key = guardFold(
+        FoldFailureReason.rowKeyFailed,
+        () => spec.rowKey.extract(event),
+      );
       final keyStr = key.toString();
       // Only emit a tombstone change when the row actually existed; a
       // remove event targeting a nonexistent row is a silent no-op so
       // subscribers never receive a spurious Tombstone<T>.
-      final priorRow = await backend.readViewRowInTxn(
-        txn,
-        spec.viewName,
-        keyStr,
-      );
+      final priorRow = await access.readRow(keyStr);
       if (priorRow == null) return null;
-      await backend.deleteViewRowInTxn(txn, spec.viewName, keyStr);
+      await access.deleteRow(keyStr);
       return AggregateFoldChange(
         viewName: spec.viewName,
         aggregateId: keyStr,

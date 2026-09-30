@@ -13,6 +13,8 @@ class SyncPolicyBar extends StatefulWidget {
   State<SyncPolicyBar> createState() => _SyncPolicyBarState();
 }
 
+const int _thirtyDaysInSeconds = 30 * 24 * 60 * 60;
+
 class _SyncPolicyBarState extends State<SyncPolicyBar> {
   @override
   void initState() {
@@ -37,6 +39,7 @@ class _SyncPolicyBarState extends State<SyncPolicyBar> {
     Duration? maxBackoff,
     double? jitterFraction,
     int? maxAttempts,
+    Duration? maxRetryTime,
   }) {
     final p = widget.notifier.value;
     return SyncPolicy(
@@ -45,6 +48,7 @@ class _SyncPolicyBarState extends State<SyncPolicyBar> {
       maxBackoff: maxBackoff ?? p.maxBackoff,
       jitterFraction: jitterFraction ?? p.jitterFraction,
       maxAttempts: maxAttempts ?? p.maxAttempts,
+      maxRetryTime: maxRetryTime ?? p.maxRetryTime,
     );
   }
 
@@ -106,6 +110,24 @@ class _SyncPolicyBarState extends State<SyncPolicyBar> {
             display: p.maxAttempts.toString(),
             onChanged: (v) => widget.notifier.value = _copy(
               maxAttempts: max(1, pow(1000000, v).round()),
+            ),
+          ),
+          _slider(
+            label: 'time',
+            // Log-scaled slider for maxRetryTime: map [0, 1] to
+            // [1 second, 30 days] so the same drag range that reaches
+            // one attempt at one extreme reaches a generous ceiling at
+            // the other.
+            value:
+                log(max(1, p.maxRetryTime.inSeconds)) /
+                log(_thirtyDaysInSeconds),
+            min: 0,
+            max: 1,
+            display: '${p.maxRetryTime.inMinutes}m',
+            onChanged: (v) => widget.notifier.value = _copy(
+              maxRetryTime: Duration(
+                seconds: max(1, pow(_thirtyDaysInSeconds, v).round()),
+              ),
             ),
           ),
         ],

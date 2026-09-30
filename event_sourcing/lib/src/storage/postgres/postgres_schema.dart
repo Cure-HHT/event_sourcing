@@ -1,10 +1,34 @@
 // Implements: EVS-DEV-postgres-backend/G
-// the ordered migration list whose steps provisioning applies; this build
-//   ships one step, version 1, holding the whole DDL.
+// the ordered migration list whose steps provisioning applies: version 1
+//   holds the tables of the log, the views, the queues and the sidecars;
+//   version 2 adds the declared library roles and keeps the minimum;
+//   version 3 adds the chain lookup columns and indexes, the causal column
+//   and the latest-eligible-version index to the events table and raises
+//   the minimum to itself; version 4 adds the delivery columns and the
+//   retained-delivery index to the queue table, rewrites its guard, and
+//   raises the minimum to itself; version 5 adds the transform-failed
+//   columns to the queue table and rewrites its guard, and raises the
+//   minimum to itself; version 6 adds the `view_copies` table with its
+//   partial unique index on an unmarked fingerprint, renames `view_rows`'
+//   `view_name` column to `copy_id`, and raises the minimum to itself;
+//   version 7 adds `view_rows.source_aggregate_id` with its partial index
+//   and raises the minimum to itself; version 8 adds
+//   `fifo_entries.resends_delivery_number`, rewrites the guard to hold it
+//   immutable, and raises the minimum to itself.
+// Implements: EVS-DEV-chain-verification/A
+// the chain lookups on Postgres: columns of the events table holding the
+//   originating database, sealed hash and origin position each stored copy
+//   yields, written by the insert that stores it, and the non-unique
+//   indexes the lookups read.
+// Implements: EVS-DEV-postgres-backend/P
+// the `library_roles` table in the library's schema, created by the owner,
+//   in which provisioning records the declared runtime and lock roles.
 // Implements: EVS-DEV-destination-drain/S
 // the queue table's status check and the `fifo_entries_guard` triggers,
 //   created by provisioning with the table they guard.
 
+import 'package:event_sourcing/src/security/system_entry_types.dart'
+    show kSecurityFindingEntryType;
 import 'package:event_sourcing/src/storage/postgres/postgres_migration.dart';
 import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:meta/meta.dart' show internal;
@@ -18,13 +42,13 @@ import 'package:meta/meta.dart' show internal;
 /// and keeps [postgresMinCompatibleSchemaVersion]; a data-format major is
 /// provisioned only after every instance of the old major has stopped,
 /// which the incompatible-generation guard enforces.
-const int postgresSchemaVersion = 1;
+const int postgresSchemaVersion = 8;
 
 /// The minimum compatible schema version this build records when it
 /// provisions: the last migration step's `minCompatibleVersion`. A build
 /// whose [postgresSchemaVersion] is below the minimum stored in a database
 /// refuses to open it.
-const int postgresMinCompatibleSchemaVersion = 1;
+const int postgresMinCompatibleSchemaVersion = 8;
 
 /// The ordered migration steps of this build. Step `n` brings a schema at
 /// the previous step's version to its `toVersion`.
@@ -44,7 +68,6 @@ const List<PostgresMigrationStep> postgresMigrations = <PostgresMigrationStep>[
       // the log.
       _eventsTypeSeqIdx,
       _viewRowsTable,
-      _viewTargetVersionsTable,
       _fifoEntriesTable,
       _fifoEntriesHeadIdx,
       _fifoEntriesGuardFunction,
@@ -60,6 +83,81 @@ const List<PostgresMigrationStep> postgresMigrations = <PostgresMigrationStep>[
       _idempotencyTable,
     ],
   ),
+  PostgresMigrationStep(
+    toVersion: 2,
+    minCompatibleVersion: 1,
+    ddl: <String>[_libraryRolesTable],
+  ),
+  // A build before this step inserts events without their chain lookup and
+  // causal columns, so the step raises the minimum: such a build refuses the
+  // database rather than store events the lookups cannot find.
+  PostgresMigrationStep(
+    toVersion: 3,
+    minCompatibleVersion: 3,
+    ddl: <String>[
+      _eventsChainLookupColumns,
+      _eventsSealedHashIdx,
+      _eventsPredecessorIdx,
+      _eventsOriginPositionIdx,
+      _eventsHeldAsAuthoredIdx,
+      _eventsSecurityFindingIdx,
+      _eventsCausalColumn,
+      _eventsLatestEligibleIdx,
+    ],
+  ),
+  // A build before this step marks a delivery sent without the delivery it
+  // was acknowledged under, and its guard refuses a resume's retirement of
+  // an attempted item, so the step raises the minimum.
+  PostgresMigrationStep(
+    toVersion: 4,
+    minCompatibleVersion: 4,
+    ddl: <String>[
+      _fifoEntriesDeliveryColumns,
+      _fifoEntriesDeliveryIdx,
+      _fifoEntriesGuardFunction,
+    ],
+  ),
+  // A build before this step has no transform_failed/transform_failures
+  // columns, and its guard does not hold them immutable, so the step
+  // raises the minimum.
+  PostgresMigrationStep(
+    toVersion: 5,
+    minCompatibleVersion: 5,
+    ddl: <String>[
+      _fifoEntriesTransformFailedColumns,
+      _fifoEntriesGuardFunction,
+    ],
+  ),
+  // A build before this step has no view_copies table and stores view rows
+  // keyed by view_name rather than copy_id, so the step raises the
+  // minimum: such a build cannot address a fingerprinted copy's rows.
+  PostgresMigrationStep(
+    toVersion: 6,
+    minCompatibleVersion: 6,
+    ddl: <String>[
+      _viewCopiesTable,
+      _viewCopiesFingerprintIdx,
+      _viewRowsRenameColumn,
+    ],
+  ),
+  // A build before this step upserts a TableProjectionSpec row without
+  // recording its source aggregate, so the outstanding-finding refresh's
+  // per-source-aggregate index cannot find it; the step raises the minimum.
+  PostgresMigrationStep(
+    toVersion: 7,
+    minCompatibleVersion: 7,
+    ddl: <String>[_viewRowsSourceAggregateColumn, _viewRowsSourceAggregateIdx],
+  ),
+  // A build before this step has no resends_delivery_number column, and
+  // its guard does not hold it immutable, so the step raises the minimum.
+  PostgresMigrationStep(
+    toVersion: 8,
+    minCompatibleVersion: 8,
+    ddl: <String>[
+      _fifoEntriesResendsDeliveryNumberColumn,
+      _fifoEntriesGuardFunction,
+    ],
+  ),
 ];
 
 /// The tables the library creates. A schema that holds any of them but
@@ -69,11 +167,12 @@ const List<PostgresMigrationStep> postgresMigrations = <PostgresMigrationStep>[
 const List<String> postgresLibraryTables = <String>[
   'events',
   'view_rows',
-  'view_target_versions',
+  'view_copies',
   'fifo_entries',
   'backend_state',
   'security_context',
   'idempotency',
+  'library_roles',
 ];
 
 /// The migration steps in effect: [postgresMigrations], or the list a test
@@ -129,6 +228,79 @@ CREATE INDEX IF NOT EXISTS events_type_seq_idx
   ON events (event_type, sequence_number)
 ''';
 
+// --- Chain lookups --------------------------------------------------------
+
+// The chain lookup columns: for each stored event its originating database,
+// sealed hash and origin position (read from the stored copy's provenance)
+// beside its `previous_event_hash` column, and the holding database when it
+// holds the copy as authored (the copy's provenance holds exactly one entry,
+// naming the holding database), null for every other copy. The insert that
+// stores the event writes them; the runtime role holds no UPDATE on the
+// table, so nothing changes them afterwards. A column the stored copy does
+// not yield is null. No index is unique: the log holds forks and reused
+// origin positions as received. The library keeps no index table of its
+// own.
+const String _eventsChainLookupColumns = '''
+ALTER TABLE events
+  ADD COLUMN IF NOT EXISTS origin_database_id   TEXT,
+  ADD COLUMN IF NOT EXISTS sealed_hash          TEXT,
+  ADD COLUMN IF NOT EXISTS origin_position      BIGINT,
+  ADD COLUMN IF NOT EXISTS held_as_authored_by  TEXT
+''';
+
+const String _eventsSealedHashIdx = '''
+CREATE INDEX IF NOT EXISTS events_sealed_hash_idx
+  ON events (sealed_hash, sequence_number)
+''';
+
+const String _eventsPredecessorIdx = '''
+CREATE INDEX IF NOT EXISTS events_predecessor_idx
+  ON events (origin_database_id, previous_event_hash, sequence_number)
+''';
+
+const String _eventsOriginPositionIdx = '''
+CREATE INDEX IF NOT EXISTS events_origin_position_idx
+  ON events (origin_database_id, origin_position, sequence_number)
+''';
+
+const String _eventsHeldAsAuthoredIdx = '''
+CREATE INDEX IF NOT EXISTS events_held_as_authored_idx
+  ON events (held_as_authored_by, sequence_number)
+  WHERE held_as_authored_by IS NOT NULL
+''';
+
+// The security findings each database holds as authored, by identity: the
+// partial index serves the once-per-detector lookup, which the library
+// runs inside the transaction that would append a finding. Not unique: a
+// uniqueness violation would fail the detection point's transaction.
+const String _eventsSecurityFindingIdx =
+    '''
+CREATE INDEX IF NOT EXISTS events_security_finding_idx
+  ON events (held_as_authored_by, (data ->> 'finding_id'))
+  WHERE entry_type = '$kSecurityFindingEntryType'
+''';
+
+// --- Causal record and the latest eligible version ----------------------
+
+// The event's `causal` object as the record carries it; null for a record
+// that carries none.
+const String _eventsCausalColumn = '''
+ALTER TABLE events
+  ADD COLUMN IF NOT EXISTS causal JSONB
+''';
+
+// The latest eligible version of each aggregate: a partial index over the
+// events whose recorded `causal` says an eligible version, so the event of
+// an aggregate with the highest local sequence number among them is one
+// index probe. The predicate is the one
+// `PostgresBackend.readLatestEligibleVersionInTxn` queries with.
+const String _eventsLatestEligibleIdx = '''
+CREATE INDEX IF NOT EXISTS events_latest_eligible_idx
+  ON events (aggregate_id, sequence_number DESC)
+  WHERE (causal ->> 'kind') = 'version'
+    AND (causal -> 'eligible') = 'true'::jsonb
+''';
+
 // --- View rows ------------------------------------------------------------
 
 const String _viewRowsTable = '''
@@ -141,17 +313,56 @@ CREATE TABLE IF NOT EXISTS view_rows (
 )
 ''';
 
-// --- View target versions -------------------------------------------------
+// --- View copies ------------------------------------------------------------
+//
+// One row per stored copy of a registered view (EVS-DEV-view-convergence).
+// The partial unique index on fingerprint, scoped to unmarked copies,
+// enforces "at most one copy of a fingerprint that is not marked for
+// deletion" (assertion A) as a database constraint rather than an
+// application-level check.
 
-const String _viewTargetVersionsTable = '''
-CREATE TABLE IF NOT EXISTS view_target_versions (
-  view_name       TEXT     NOT NULL,
-  entry_type      TEXT     NOT NULL,
-  target_major    INTEGER  NOT NULL  CHECK (target_major >= 1),
-  target_minor    INTEGER  NOT NULL  CHECK (target_minor >= 0),
-  behind          BOOLEAN  NOT NULL  DEFAULT false,
-  PRIMARY KEY (view_name, entry_type)
+const String _viewCopiesTable = '''
+CREATE TABLE IF NOT EXISTS view_copies (
+  copy_id              TEXT         PRIMARY KEY,
+  view_name            TEXT         NOT NULL,
+  fingerprint          TEXT         NOT NULL,
+  watermark            BIGINT       NOT NULL,
+  marked_for_deletion  BOOLEAN      NOT NULL  DEFAULT false,
+  created_at           TIMESTAMPTZ  NOT NULL  DEFAULT NOW()
 )
+''';
+
+const String _viewCopiesFingerprintIdx = '''
+CREATE UNIQUE INDEX IF NOT EXISTS view_copies_unmarked_fingerprint_idx
+  ON view_copies (fingerprint)
+  WHERE NOT marked_for_deletion
+''';
+
+// The generic view store keys rows by copy id, not by view name, once a
+// view is stored per fingerprinted copy.
+const String _viewRowsRenameColumn = '''
+ALTER TABLE view_rows RENAME COLUMN view_name TO copy_id
+''';
+
+// The source aggregate id a TableProjectionSpec row's producing insert
+// event named, null for a row no such insert wrote (an AggregateProjectionSpec
+// row, or a TableProjectionSpec row from a build before this column exists).
+// `PostgresBackend.upsertTableViewRowInTxn` is the only write; the generic
+// `upsertViewRowInTxn`'s ON CONFLICT clause never touches it, so the
+// outstanding-finding refresh's rewrite (which goes through the generic
+// upsert to change only `$integrity`) leaves a row's producer intact. The
+// partial index over the non-null column serves
+// `PostgresBackend.findTableRowsBySourceAggregateInTxn`'s lookup
+// (`EVS-PRD-materializer/E`).
+const String _viewRowsSourceAggregateColumn = '''
+ALTER TABLE view_rows
+  ADD COLUMN IF NOT EXISTS source_aggregate_id TEXT
+''';
+
+const String _viewRowsSourceAggregateIdx = '''
+CREATE INDEX IF NOT EXISTS view_rows_source_aggregate_idx
+  ON view_rows (copy_id, source_aggregate_id)
+  WHERE source_aggregate_id IS NOT NULL
 ''';
 
 // --- FIFO entries ---------------------------------------------------------
@@ -179,6 +390,43 @@ CREATE TABLE IF NOT EXISTS fifo_entries (
 )
 ''';
 
+// The delivery a queue item was acknowledged under: the channel's
+// generation, the delivery number and the delivery hash. Null until the
+// change that marks the item sent under a delivery.
+const String _fifoEntriesDeliveryColumns = '''
+ALTER TABLE fifo_entries
+  ADD COLUMN IF NOT EXISTS delivery_generation  BIGINT,
+  ADD COLUMN IF NOT EXISTS delivery_number      BIGINT,
+  ADD COLUMN IF NOT EXISTS delivery_hash        TEXT
+''';
+
+// A transform-failed item's flag and the transform failures the fill
+// recorded on it: set only by the insert, held immutable by the guard like
+// every other column the item is enqueued with.
+const String _fifoEntriesTransformFailedColumns = '''
+ALTER TABLE fifo_entries
+  ADD COLUMN IF NOT EXISTS transform_failed     BOOLEAN NOT NULL DEFAULT false,
+  ADD COLUMN IF NOT EXISTS transform_failures    INTEGER
+''';
+
+// The delivery number a resend item enqueued by a receiver-behind resume
+// resends (EVS-DEV-delivery-resume/M); null for an ordinary item the fill
+// enqueues. Set only by the insert, held immutable by the guard like every
+// other column the item is enqueued with.
+const String _fifoEntriesResendsDeliveryNumberColumn = '''
+ALTER TABLE fifo_entries
+  ADD COLUMN IF NOT EXISTS resends_delivery_number BIGINT
+''';
+
+// The retained-delivery read: the sent item at a number under a
+// generation, the latest first.
+const String _fifoEntriesDeliveryIdx = '''
+CREATE INDEX IF NOT EXISTS fifo_entries_delivery_idx
+  ON fifo_entries (destination_id, delivery_generation, delivery_number,
+                   sequence_in_queue)
+  WHERE final_status = 'sent'
+''';
+
 const String _fifoEntriesHeadIdx = '''
 CREATE INDEX IF NOT EXISTS fifo_entries_head_idx
   ON fifo_entries (destination_id, sequence_in_queue)
@@ -186,18 +434,22 @@ CREATE INDEX IF NOT EXISTS fifo_entries_head_idx
 ''';
 
 // The queue table's guard. The library changes a queue item only in these
-// shapes: it inserts an item pending, with no attempts and no delivery time;
-// it appends one attempt to a pending item; it marks a pending item sent
-// (stamping the delivery time) or wedged, appending at most the attempt
-// that decided it; it tombstones a wedged item; and it deletes pending
-// items. The guard refuses every change outside those shapes, whatever role
-// makes it: no item is inserted terminal, rewrites what it was enqueued
-// with, or loses a terminal item. It checks the shape of a change, not who
-// makes it, so a hand-written change of a legal shape passes (wedging or
-// marking sent a pending item, tombstoning a wedged one, deleting a pending
-// one, inserting a pending one); those rest on the storage precondition.
-// The triggers fire in every session replication role, and the role that
-// owns the table can drop them; the runtime role cannot.
+// shapes: it inserts an item pending, with no attempts, no delivery time and
+// no delivery; it appends one attempt to a pending item; it marks a pending
+// item sent (stamping the delivery time and, on a delivery channel, the
+// delivery it was acknowledged under) or wedged, appending at most the
+// attempt that decided it; it tombstones a wedged item, and a pending item
+// that carries attempts (a resume or a new generation of its channel); and
+// it deletes pending items that carry no attempt. The guard refuses every
+// change outside those shapes, whatever role makes it: no item is inserted
+// terminal or delivered, rewrites what it was enqueued with or the delivery
+// it was acknowledged under, or loses a terminal or attempted item. It
+// checks the shape of a change, not who makes it, so a hand-written change
+// of a legal shape passes (wedging or marking sent a pending item,
+// tombstoning a wedged one, deleting a pending one that carries no attempt,
+// inserting a pending one); those rest on the storage precondition. The
+// triggers fire in every session replication role, and the role that owns
+// the table can drop them; the runtime role cannot.
 //
 // The functions pin their search path, so a role that can create objects on
 // a schema earlier on its path cannot substitute an operator or function
@@ -224,6 +476,12 @@ BEGIN
       RAISE EXCEPTION 'fifo_entries_guard: queue item % is inserted with a delivery time; an item is inserted undelivered',
         NEW.entry_id USING ERRCODE = 'check_violation';
     END IF;
+    IF NEW.delivery_generation IS NOT NULL
+       OR NEW.delivery_number IS NOT NULL
+       OR NEW.delivery_hash IS NOT NULL THEN
+      RAISE EXCEPTION 'fifo_entries_guard: queue item % is inserted with a delivery; an item is inserted with none',
+        NEW.entry_id USING ERRCODE = 'check_violation';
+    END IF;
     RETURN NEW;
   END IF;
 
@@ -231,6 +489,10 @@ BEGIN
     IF OLD.final_status IS NOT NULL THEN
       RAISE EXCEPTION 'fifo_entries_guard: queue item % is %; a terminal item is never deleted',
         OLD.entry_id, OLD.final_status USING ERRCODE = 'check_violation';
+    END IF;
+    IF OLD.attempts IS DISTINCT FROM '[]'::jsonb THEN
+      RAISE EXCEPTION 'fifo_entries_guard: queue item % carries attempts; an item carrying attempts is never deleted',
+        OLD.entry_id USING ERRCODE = 'check_violation';
     END IF;
     RETURN OLD;
   END IF;
@@ -243,10 +505,16 @@ BEGIN
     ('pending', 'pending'),
     ('pending', 'sent'),
     ('pending', 'wedged'),
+    ('pending', 'tombstoned'),
     ('wedged', 'tombstoned')
   ) THEN
-    RAISE EXCEPTION 'fifo_entries_guard: queue item % cannot change status from % to %; the legal changes are pending to sent, pending to wedged and wedged to tombstoned',
+    RAISE EXCEPTION 'fifo_entries_guard: queue item % cannot change status from % to %; the legal changes are pending to sent, pending to wedged, wedged to tombstoned and, for an item carrying attempts, pending to tombstoned',
       OLD.entry_id, old_status, new_status USING ERRCODE = 'check_violation';
+  END IF;
+  IF (old_status, new_status) = ('pending', 'tombstoned')
+     AND OLD.attempts IS NOT DISTINCT FROM '[]'::jsonb THEN
+    RAISE EXCEPTION 'fifo_entries_guard: queue item % carries no attempt; only an item carrying attempts changes from pending to tombstoned',
+      OLD.entry_id USING ERRCODE = 'check_violation';
   END IF;
   IF NEW.destination_id IS DISTINCT FROM OLD.destination_id
      OR NEW.entry_id IS DISTINCT FROM OLD.entry_id
@@ -258,6 +526,9 @@ BEGIN
      OR NEW.transform_version IS DISTINCT FROM OLD.transform_version
      OR NEW.wire_payload IS DISTINCT FROM OLD.wire_payload
      OR NEW.envelope_metadata IS DISTINCT FROM OLD.envelope_metadata
+     OR NEW.transform_failed IS DISTINCT FROM OLD.transform_failed
+     OR NEW.transform_failures IS DISTINCT FROM OLD.transform_failures
+     OR NEW.resends_delivery_number IS DISTINCT FROM OLD.resends_delivery_number
      OR NEW.enqueued_at IS DISTINCT FROM OLD.enqueued_at THEN
     RAISE EXCEPTION 'fifo_entries_guard: queue item % changes a column it was enqueued with',
       OLD.entry_id USING ERRCODE = 'check_violation';
@@ -267,10 +538,18 @@ BEGIN
     RAISE EXCEPTION 'fifo_entries_guard: queue item % changes its delivery time outside the change that marks it sent',
       OLD.entry_id USING ERRCODE = 'check_violation';
   END IF;
+  IF (NEW.delivery_generation IS DISTINCT FROM OLD.delivery_generation
+      OR NEW.delivery_number IS DISTINCT FROM OLD.delivery_number
+      OR NEW.delivery_hash IS DISTINCT FROM OLD.delivery_hash)
+     AND (old_status, new_status) <> ('pending', 'sent') THEN
+    RAISE EXCEPTION 'fifo_entries_guard: queue item % changes its delivery outside the change that marks it sent',
+      OLD.entry_id USING ERRCODE = 'check_violation';
+  END IF;
   -- The array checks come first and on their own, since the length
   -- functions raise on anything else.
   IF NEW.attempts IS DISTINCT FROM OLD.attempts THEN
     IF old_status <> 'pending'
+       OR new_status NOT IN ('pending', 'sent', 'wedged')
        OR jsonb_typeof(NEW.attempts) IS DISTINCT FROM 'array'
        OR jsonb_typeof(OLD.attempts) IS DISTINCT FROM 'array' THEN
       RAISE EXCEPTION 'fifo_entries_guard: queue item % changes its attempts other than by appending one attempt while pending',
@@ -372,5 +651,20 @@ CREATE TABLE IF NOT EXISTS idempotency (
   expires_at                TIMESTAMPTZ  NOT NULL,
   raw_input_canonical_json  TEXT,
   PRIMARY KEY (action_name, principal_id, idempotency_key)
+)
+''';
+
+// --- Declared library roles ----------------------------------------------
+
+// The runtime and lock roles the deployment declared when it provisioned the
+// database, one row per role and kind. The owner creates the table and
+// provisioning, run as the owner, rewrites its rows; the runtime role is
+// granted `SELECT` alone, so no library role changes which roles `open`
+// admits.
+const String _libraryRolesTable = '''
+CREATE TABLE IF NOT EXISTS library_roles (
+  role_name  TEXT  NOT NULL  CHECK (role_name <> ''),
+  kind       TEXT  NOT NULL  CHECK (kind IN ('runtime', 'lock')),
+  PRIMARY KEY (role_name, kind)
 )
 ''';

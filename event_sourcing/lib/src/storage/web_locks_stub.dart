@@ -18,6 +18,17 @@ Future<GenerationRegistration> registerBrowserGeneration({
   required Duration bootLockWait,
 }) async => const UnguardedGenerationRegistration();
 
+/// Outside the browser there is no browser lock to try: a caller combines
+/// this with an isolate-local lock, which is the whole guard on io. [body]
+/// runs directly, with no extra scheduling turn, so a catch-up transaction
+/// on io starts exactly when [body] does.
+@internal
+Future<T?> runHoldingBrowserViewCopyLock<T>({
+  required String path,
+  required String copyKey,
+  required Future<T> Function() body,
+}) => body();
+
 /// The guard's locks the page holds for the database [path]; empty outside
 /// the browser.
 @internal

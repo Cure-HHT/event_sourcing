@@ -9,6 +9,7 @@ import 'package:event_sourcing_demo/demo_destination.dart';
 import 'package:event_sourcing_demo/demo_knobs.dart';
 import 'package:event_sourcing_demo/demo_sync_policy.dart';
 import 'package:event_sourcing_demo/demo_types.dart';
+import 'package:event_sourcing_demo/storage_watch.dart';
 import 'package:event_sourcing_demo/widgets/deleted_fifo_panel.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -35,7 +36,10 @@ Future<_Hub> _mkHub(String name) async {
     filter: const SubscriptionFilter(entryTypes: <String>{'demo_note'}),
   );
   final datastore = await bootstrapEventStore(
-    backend: backend,
+    storage: ApplicationSuppliedStorage(
+      backend,
+      SembastSecurityContextStore(backend: backend),
+    ),
     source: const Source(
       hopId: 'hub-server',
       identifier: '44444444-4444-4444-8444-444444444444',
@@ -121,7 +125,7 @@ void main() {
               height: 400,
               child: DeletedFifoPanel(
                 destinationId: 'Secondary',
-                backend: hub.backend,
+                watch: StorageWatch(hub.datastore.eventStore),
               ),
             ),
           ),

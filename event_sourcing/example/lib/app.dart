@@ -5,6 +5,7 @@ import 'dart:math' as math;
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing_demo/app_state.dart';
 import 'package:event_sourcing_demo/demo_sync_policy.dart';
+import 'package:event_sourcing_demo/storage_watch.dart';
 import 'package:event_sourcing_demo/widgets/audit_panel.dart';
 import 'package:event_sourcing_demo/widgets/deleted_fifo_panel.dart';
 import 'package:event_sourcing_demo/widgets/detail_panel.dart';
@@ -35,14 +36,12 @@ const double _kDefaultFifoColumnWidth = 260;
 class DemoAppRoot extends StatefulWidget {
   const DemoAppRoot({
     required this.datastore,
-    required this.backend,
     required this.appState,
     required this.dbPath,
     super.key,
   });
 
   final EventStoreBundle datastore;
-  final SembastBackend backend;
   final AppState appState;
   final String dbPath;
 
@@ -80,7 +79,6 @@ class _DemoAppRootState extends State<DemoAppRoot> {
             style: const TextStyle(fontWeight: FontWeight.bold),
             child: DemoPane(
               datastore: widget.datastore,
-              backend: widget.backend,
               appState: widget.appState,
               dbPath: widget.dbPath,
               policyNotifier: _policyNotifier,
@@ -100,7 +98,6 @@ class _DemoAppRootState extends State<DemoAppRoot> {
 class DemoPane extends StatefulWidget {
   const DemoPane({
     required this.datastore,
-    required this.backend,
     required this.appState,
     required this.dbPath,
     required this.policyNotifier,
@@ -109,7 +106,6 @@ class DemoPane extends StatefulWidget {
   });
 
   final EventStoreBundle datastore;
-  final SembastBackend backend;
   final AppState appState;
   final String dbPath;
   final ValueNotifier<SyncPolicy> policyNotifier;
@@ -125,6 +121,7 @@ class DemoPane extends StatefulWidget {
 
 class _DemoPaneState extends State<DemoPane> {
   final Map<String, double> _widths = <String, double>{};
+  late final StorageWatch _watch = StorageWatch(widget.datastore.eventStore);
 
   @override
   void initState() {
@@ -161,7 +158,6 @@ class _DemoPaneState extends State<DemoPane> {
         _paneHeader(),
         TopActionBar(
           datastore: widget.datastore,
-          backend: widget.backend,
           appState: widget.appState,
           onResetAll: resetAll,
         ),
@@ -212,7 +208,7 @@ class _DemoPaneState extends State<DemoPane> {
       SizedBox(
         width: _widthOf('materialized', fallback: 200),
         child: MaterializedPanel(
-          backend: widget.backend,
+          reader: _watch.reader,
           appState: widget.appState,
         ),
       ),
@@ -220,7 +216,7 @@ class _DemoPaneState extends State<DemoPane> {
       SizedBox(
         width: _widthOf('events', fallback: 280),
         child: EventStreamPanel(
-          backend: widget.backend,
+          reader: _watch.reader,
           eventStore: widget.datastore.eventStore,
           appState: widget.appState,
         ),
@@ -229,7 +225,7 @@ class _DemoPaneState extends State<DemoPane> {
       SizedBox(
         width: _widthOf('audit', fallback: 320),
         child: AuditPanel(
-          backend: widget.backend,
+          reader: _watch.reader,
           eventStore: widget.datastore.eventStore,
         ),
       ),
@@ -237,7 +233,7 @@ class _DemoPaneState extends State<DemoPane> {
       SizedBox(
         width: _widthOf('wedged', fallback: 300),
         child: WedgesPanel(
-          backend: widget.backend,
+          watch: _watch,
           databaseId: widget.datastore.eventStore.databaseId,
           appState: widget.appState,
         ),
@@ -251,7 +247,7 @@ class _DemoPaneState extends State<DemoPane> {
           ),
           child: FifoPanel(
             destination: dest,
-            backend: widget.backend,
+            watch: _watch,
             appState: widget.appState,
             key: ValueKey<String>(dest.id),
           ),
@@ -263,7 +259,7 @@ class _DemoPaneState extends State<DemoPane> {
           width: _widthOf('deleted_$id', fallback: _kDefaultFifoColumnWidth),
           child: DeletedFifoPanel(
             destinationId: id,
-            backend: widget.backend,
+            watch: _watch,
             key: ValueKey<String>('deleted_$id'),
           ),
         ),
@@ -271,7 +267,7 @@ class _DemoPaneState extends State<DemoPane> {
       ],
       Expanded(
         child: DetailPanel(
-          backend: widget.backend,
+          watch: _watch,
           databaseId: widget.datastore.eventStore.databaseId,
           appState: widget.appState,
           policyNotifier: widget.policyNotifier,
@@ -293,7 +289,7 @@ class _DemoPaneState extends State<DemoPane> {
 
   Future<void> resetAll() async {
     await widget.appState.stopDelivery();
-    await widget.backend.close();
+    await widget.datastore.eventStore.close();
     final file = File(widget.dbPath);
     if (file.existsSync()) {
       await file.delete();

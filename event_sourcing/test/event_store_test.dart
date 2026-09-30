@@ -12,14 +12,12 @@ class _Fixture {
     required this.backend,
     required this.securityContexts,
     required this.entryTypes,
-    required this.syncCalls,
   });
 
   final EventStore eventStore;
   final SembastBackend backend;
   final SembastSecurityContextStore securityContexts;
   final EntryTypeRegistry entryTypes;
-  final List<DateTime> syncCalls;
 }
 
 // Build an AggregateProjectionSpec that matches [entryTypeIds]. Used to
@@ -54,7 +52,6 @@ Future<_Fixture> _setup({
     registry.register(def);
   }
   final securityContexts = SembastSecurityContextStore(backend: backend);
-  final syncCalls = <DateTime>[];
 
   ProjectionRegistry? projections;
   if (registerProjection) {
@@ -77,15 +74,11 @@ Future<_Fixture> _setup({
     projections: projections,
     clock: now == null ? null : () => now,
   );
-  eventStore.deliveryTrigger = () async {
-    syncCalls.add(DateTime.now());
-  };
   return _Fixture(
     eventStore: eventStore,
     backend: backend,
     securityContexts: securityContexts,
     entryTypes: registry,
-    syncCalls: syncCalls,
   );
 }
 

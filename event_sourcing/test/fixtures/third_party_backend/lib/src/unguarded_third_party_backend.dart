@@ -16,11 +16,21 @@ class UnguardedThirdPartyBackend extends ThirdPartyBackend {
     List<StoredEvent> batch, {
     WirePayload? wirePayload,
     BatchEnvelopeMetadata? nativeEnvelope,
+    bool transformFailed = false,
+    int? transformFailures,
+    String? wireFormat,
+    String? transformVersion,
+    int? resendsDeliveryNumber,
   }) => super.enqueueFifoTxn(
     txn,
     destinationId,
     batch,
     wirePayload: wirePayload,
     nativeEnvelope: nativeEnvelope,
+    transformFailed: transformFailed,
+    transformFailures: transformFailures,
+    wireFormat: wireFormat,
+    transformVersion: transformVersion,
+    resendsDeliveryNumber: resendsDeliveryNumber,
   );
 }

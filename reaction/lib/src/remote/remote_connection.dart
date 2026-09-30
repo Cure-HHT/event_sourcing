@@ -1,34 +1,41 @@
 // Implements: EVS-PRD-cross-process-event-transport/A
-// drives codec
-//   round-trip on the wire (Update<T> envelopes decoded via UpdateCodec
-//   and routed to per-subscription StreamControllers).
+// drives codec round-trip on the wire (Update<T> envelopes decoded via
+//   UpdateCodec and routed to per-subscription StreamControllers).
 // Implements: EVS-PRD-cross-process-event-transport/B
 // every routed
 //   envelope carries sequence + subscriptionId end-to-end.
 // Implements: EVS-PRD-cross-process-event-transport/D
-// multiplexes
-//   multiple concurrent subscriptions over one WebSocket connection,
-//   distinguishing them by client-chosen UUID v4 subscriptionId.
+// multiplexes multiple concurrent subscriptions over one WebSocket
+//   connection, distinguishing them by client-chosen UUID v4
+//   subscriptionId.
 // Implements: EVS-PRD-cross-process-event-transport/F
 // injects the
 //   bearer credential into every HTTP POST and into the first WS auth
 //   message; httpPost adds Authorization: Bearer header when a
 //   credential is set.
 // Implements: EVS-PRD-cross-process-event-transport/H
-// auto-reconnect
-//   with exponential backoff on non-auth WS drops; re-authenticates and
-//   re-issues every active subscribe on success.
+// auto-reconnect with exponential backoff on non-auth WS drops;
+//   re-authenticates and re-issues every active subscribe on success.
 // Implements: EVS-PRD-cross-process-event-transport/I
-// observable
-//   ConnectionStatus transitions driven by WS lifecycle events
-//   (initial-open success -> Connected; non-auth close -> Reconnecting;
-//   retry-exhausted -> Disconnected).
+// observable ConnectionStatus transitions driven by WS lifecycle
+//   events (initial-open success -> Connected; non-auth close ->
+//   Reconnecting; retry-exhausted -> Disconnected).
+// Implements: EVS-PRD-cross-process-event-transport/K
+// a view_converging error frame naming a subscriptionId surfaces a
+//   typed, transient ViewConvergingRefusal naming the view on that
+//   subscription's stream.
+// Implements: EVS-PRD-cross-process-event-transport/L
+// a subscription refused with view_converging recovers from its
+//   caller's single openSubscription() call: a capped-backoff retry
+//   with no attempt limit re-issues the same subscribe until the
+//   server serves it or the caller unsubscribes/disposes.
 
 import 'dart:async';
 import 'dart:convert';
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:http/http.dart' as http;
+import 'package:reaction/src/interfaces/view_source.dart';
 import 'package:reaction/src/scope/connection_status.dart';
 import 'package:reaction/src/wire/subscription_messages.dart';
 import 'package:reaction/src/wire/update_codec.dart';
@@ -88,13 +95,31 @@ class ExponentialBackoff {
   }
 }
 
+/// Schedules [callback] to run after [duration]. The seam used for
+/// capped-backoff retries that must stay testable without fake_async
+/// (unavailable in this package) — a test can fire the callback
+/// immediately or capture it without waiting out a real delay. Shared
+/// by [RemoteConnection]'s converging-subscription retry (no attempt
+/// limit), `RemotePermissionSource`'s snapshot retry (no attempt
+/// limit), and `RemoteActionSubmitter`'s opt-in converging retry
+/// (bounded by `maxConvergingRetries`).
+typedef RetryScheduler =
+    Timer Function(Duration duration, void Function() callback);
+
 /// Internal record: a live subscription's controller plus the
 /// SubscribeMsg used to open it, so the auto-reconnect loop can
-/// re-issue an identical subscribe after a WS drop.
+/// re-issue an identical subscribe after a WS drop. Also carries the
+/// per-subscription state for the `view_converging` recovery retry
+/// (`EVS-PRD-cross-process-event-transport/L`): [convergingAttempt]
+/// drives the backoff, and [convergingRetryTimer] is cancelled on
+/// unsubscribe or dispose so a refused subscription's retries stop
+/// exactly when its caller stops listening.
 class _SubscriptionEntry {
   _SubscriptionEntry({required this.controller, required this.subscribeMsg});
   final StreamController<Update<Map<String, Object?>>> controller;
   final SubscribeMsg subscribeMsg;
+  int convergingAttempt = 0;
+  Timer? convergingRetryTimer;
 }
 
 /// Shared wire-state across the four Remote* impls of one RemoteScope.
@@ -114,15 +139,28 @@ class RemoteConnection {
     required this.wsFactory,
     Duration idleGrace = const Duration(seconds: 30),
     ExponentialBackoff reconnectBackoff = const ExponentialBackoff(),
+    RetryScheduler convergingRetryScheduler = Timer.new,
   }) : _httpClient = httpClient,
        _idleGrace = idleGrace,
-       _backoff = reconnectBackoff;
+       _backoff = reconnectBackoff,
+       _convergingRetryScheduler = convergingRetryScheduler;
 
   final Uri baseUrl;
   final http.Client _httpClient;
   final WebSocketChannel Function(Uri) wsFactory;
   final Duration _idleGrace;
   final ExponentialBackoff _backoff;
+  final RetryScheduler _convergingRetryScheduler;
+
+  /// Backoff base and cap for the `view_converging` subscription
+  /// retry (`EVS-PRD-cross-process-event-transport/L`): doubles from
+  /// [_convergingRetryBaseDelay] up to [_convergingRetryMaxDelay].
+  /// Unlike [ExponentialBackoff]'s [ExponentialBackoff.maxAttempts],
+  /// there is no attempt bound here — the assertion requires recovery,
+  /// not give-up, so the retry continues until the server serves the
+  /// subscription or the caller cancels it.
+  static const Duration _convergingRetryBaseDelay = Duration(milliseconds: 200);
+  static const Duration _convergingRetryMaxDelay = Duration(seconds: 5);
 
   /// Invoked when the WS channel closes with an auth-related close
   /// code (4001 auth_rejected, 4003 permissions_changed). Wired by
@@ -373,11 +411,29 @@ class RemoteConnection {
       if (subId != null) {
         final entry = _subs[subId];
         if (entry != null) {
-          entry.controller.addError(
-            'subscription_denied: ${json['reason'] ?? json['message']}',
-          );
-          _subs.remove(subId);
-          entry.controller.close();
+          // Implements: EVS-PRD-cross-process-event-transport/K
+          // a view_converging error frame naming this subscriptionId
+          //   surfaces a typed, transient ViewConvergingRefusal naming
+          //   the view on its stream, distinguishable from a
+          //   subscription_denied permission refusal, rather than a
+          //   generic string the caller cannot branch on.
+          // Implements: EVS-PRD-cross-process-event-transport/L
+          // the subscription stays open and registered: rather than
+          //   closing it, a capped-backoff retry with no attempt limit
+          //   re-issues the same SubscribeMsg until the server serves
+          //   it or the caller cancels, so the caller recovers from
+          //   its single `watch()`/`openSubscription()` call with no
+          //   new request.
+          if (type == 'error' && json['code'] == 'view_converging') {
+            entry.controller.addError(
+              ViewConvergingRefusal(json['message'] as String? ?? ''),
+            );
+            _scheduleConvergingRetry(subId, entry);
+          } else {
+            entry.controller.addError(_terminalRefusal(json, entry));
+            _subs.remove(subId);
+            entry.controller.close();
+          }
         }
       }
       return;
@@ -397,8 +453,79 @@ class RemoteConnection {
     final subId = UpdateCodec.subscriptionIdOf(json);
     final entry = _subs[subId];
     if (entry != null) {
+      // A served envelope after one or more view_converging refusals:
+      // the retry succeeded, so reset its backoff and drop the now-
+      // moot pending timer (belt-and-suspenders; normally none is
+      // pending once a resend has been answered).
+      entry.convergingAttempt = 0;
+      entry.convergingRetryTimer?.cancel();
+      entry.convergingRetryTimer = null;
       entry.controller.add(UpdateCodec.decode(json));
     }
+  }
+
+  /// The error a terminal refusal frame surfaces on its subscription's
+  /// stream: a typed [SubscriptionDenied] naming the subscribed view for a
+  /// `subscription_denied` frame (a [FormatException] when its reason is not
+  /// one this client knows), and a string naming the frame's code and
+  /// message for an `error` frame.
+  static Object _terminalRefusal(
+    Map<String, Object?> json,
+    _SubscriptionEntry entry,
+  ) {
+    // Implements: EVS-PRD-cross-process-event-transport/M
+    if (json['type'] != 'subscription_denied') {
+      return 'error: ${json['code']}: ${json['message']}';
+    }
+    final reason = json['reason'];
+    try {
+      return SubscriptionDenied(
+        viewName: entry.subscribeMsg.viewName,
+        reason: SubscriptionDenyReason.fromWire(reason is String ? reason : ''),
+      );
+    } on FormatException catch (e) {
+      return e;
+    }
+  }
+
+  /// Schedules a capped-backoff retry of `entry.subscribeMsg` after a
+  /// `view_converging` refusal. No attempt bound
+  /// (`EVS-PRD-cross-process-event-transport/L` requires recovery, not
+  /// give-up): the retry keeps going, at [_convergingRetryMaxDelay]-
+  /// capped intervals, until the server serves the subscription or the
+  /// caller unsubscribes/disposes cancels the timer.
+  void _scheduleConvergingRetry(String subId, _SubscriptionEntry entry) {
+    entry.convergingRetryTimer?.cancel();
+    final delay = _convergingBackoffDelay(entry.convergingAttempt);
+    entry.convergingAttempt++;
+    entry.convergingRetryTimer = _convergingRetryScheduler(delay, () {
+      if (_isDisposed) return;
+      // The subscription may have been cancelled while the timer was
+      // pending; `_closeSubscription` removes it from `_subs`.
+      if (!identical(_subs[subId], entry)) return;
+      // Resend only over an already-authed channel; never initiate a
+      // connection here. A drop is `_runReconnectLoop`'s job (it
+      // re-issues every live subscribe, this one included, once
+      // reconnected); after 4001/4003 the carve-out from auto-reconnect
+      // (`EVS-PRD-cross-process-event-transport`-H) means nothing may
+      // reconnect with the same rejected/stale credential, and
+      // `_onWsClosed` has already cancelled this timer for that case —
+      // this check is the second line of defence against a timer that
+      // fires in the same event turn as the close, before `_onWsClosed`
+      // runs.
+      final authed = _channel != null && (_authComplete?.isCompleted ?? true);
+      if (!authed) return;
+      _sendClient(entry.subscribeMsg);
+    });
+  }
+
+  /// Exponential backoff from [_convergingRetryBaseDelay], capped at
+  /// [_convergingRetryMaxDelay].
+  static Duration _convergingBackoffDelay(int attempt) {
+    final scaled = _convergingRetryBaseDelay * (1 << attempt.clamp(0, 20));
+    return scaled > _convergingRetryMaxDelay
+        ? _convergingRetryMaxDelay
+        : scaled;
   }
 
   void _onWsClosed() {
@@ -412,6 +539,19 @@ class RemoteConnection {
     // are wire drops, not auth changes.
     final code = _channel?.closeCode;
     _channel = null;
+    // Cancel every pending converging-subscription retry timer: on the
+    // 4001/4003 carve-out below, letting one fire would reconnect with
+    // the same rejected/stale credential — exactly the blind retry that
+    // carve-out forbids. On a non-auth drop, `_runReconnectLoop` already
+    // re-issues every live subscribe (including a converging one) on
+    // its own backoff once reconnected, so a separately-firing
+    // converging timer is redundant and would race that schedule.
+    // Rescheduled fresh if the server answers with another
+    // view_converging after the reconnect re-issue.
+    for (final entry in _subs.values) {
+      entry.convergingRetryTimer?.cancel();
+      entry.convergingRetryTimer = null;
+    }
     // If the socket dropped before `auth_ok`, fail the in-flight
     // handshake so any awaiting `_ensureConnected` (and the
     // `openSubscription` chained on it) errors out rather than hanging.
@@ -509,6 +649,10 @@ class RemoteConnection {
   }
 
   void _closeSubscription(String subscriptionId) {
+    // Stop any pending converging retry outright, so it never re-sends
+    // a subscribe for a subscriptionId the caller has walked away from
+    // (`EVS-PRD-cross-process-event-transport/L` stops on cancel).
+    _subs[subscriptionId]?.convergingRetryTimer?.cancel();
     _subs.remove(subscriptionId);
     // Only tell the server when the socket is up AND past its auth handshake.
     // During a reconnect the channel is open but NOT yet authenticated; sending
@@ -554,6 +698,12 @@ class RemoteConnection {
     final reconnectDone = _reconnectDone;
     if (reconnectDone != null && !reconnectDone.isCompleted) {
       await reconnectDone.future;
+    }
+    // Cancel every pending converging retry so none fires after
+    // dispose (`EVS-PRD-cross-process-event-transport/L` stops on
+    // dispose).
+    for (final entry in _subs.values) {
+      entry.convergingRetryTimer?.cancel();
     }
     // Snapshot controllers before close: onCancel callbacks mutate
     // _subs via _closeSubscription, so we cannot iterate _subs directly.

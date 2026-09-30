@@ -57,7 +57,8 @@ repo root/
       action/          ActionBuilder (Builder primitive only — no
                        rendered widgets)
       view/            ViewBuilder + ViewState<T> (Loading/Ready/
-                       Stale) + ViewListener
+                       Stale/Converging/Rejected/Errored) +
+                       ViewListener
       permission/      PermissionGate (gates a child or builder on
                        EffectiveAuthorization; no styled UI)
       error/           ReActionErrorListener (auth/transport sink;
@@ -280,6 +281,12 @@ I. The Remote-side transport SHALL surface its observable connection state via t
 
 J. The server-side wire handler SHALL support a configurable WebSocket keepalive interval. When set, it SHALL emit periodic ping frames on each connection and close any connection whose peer fails the ping/pong round-trip; when unset, it SHALL send no keepalive frames. Keepalive SHALL keep otherwise-idle connections from being silently reaped by network intermediaries and SHALL surface a dead peer as an observable close-frame.
 
+K. The Remote-side client SHALL deliver a `view_converging` refusal from the server to the caller of a subscription, a permission-snapshot request or an action submission as a typed transient condition naming the view.
+
+L. The Remote-side client SHALL recover, from its caller's single request, a subscription or a permission snapshot that the server refuses with `view_converging`.
+
+M. The Remote-side client SHALL deliver a `subscription_denied` refusal to the caller of the subscription as a typed terminal condition naming the view and the reason.
+
 ### Rationale
 
 **Why JSON rather than a binary protocol?** The wire serves Flutter web clients (where Dart compiles to JavaScript) and pure-Dart server endpoints. JSON has zero-cost ergonomics in both environments, plays nicely with browser dev-tools, and matches typical web transport formats. Binary protocols (protobuf, MessagePack) would be a premature optimization at the expected interactive-UI scale of a few to tens of concurrent users.
@@ -298,12 +305,21 @@ J. The server-side wire handler SHALL support a configurable WebSocket keepalive
 
 **Why server-side keepalive (J), and how does it relate to status (I) and reconnect (H)?** The Remote client cannot detect a silently dropped connection on web: a browser `WebSocket` neither lets application code send timed pings nor surfaces incoming ping/pong frames, and a half-open socket may never deliver a close event. Without keepalive, an idle connection behind a proxy/load-balancer can be reaped with no close-frame, so the client's lifecycle-driven status (I) stays `Connected` and the backoff reconnect (H) — which is edge-triggered by a close — never fires. A *server-side* keepalive (the host's `pingInterval`, which browsers auto-pong) solves both halves: it keeps the connection non-idle so it is not reaped in the first place, and when a peer is genuinely gone it forces a server-side close that reaches the client as the observable close-frame that I and H already act on. This is distinct from I's prohibition: I forbids the client from *synthesizing pings to derive status*; J is transport-level liveness on the *server*, and it feeds — rather than bypasses — the lifecycle-event path. It is opt-in (interval supplied by the consumer) so the library imposes no traffic by default.
 
+**Why a typed transient condition, and who recovers (K and L)?** A view the server reads is converging while its copy catches up after an open, which lasts seconds, and the server refuses rather than answer from unsettled rows (`EVS-DEV-converging-view-reads`). The refusal says "not yet", not "no", so it reaches the caller as a transient condition naming the view, distinct from an error: a panel shows "loading" rather than an error or nothing. The library owns the recovery of what it opens and keeps: a subscription and the permission snapshot are re-requested by the client, with a backoff, until the server serves them, and the caller asked once. An action submission is started by a caller on a person's behalf, so the caller owns the retry and what the person sees meanwhile; a submission may be retried with its idempotency key unchanged (`EVS-PRD-action-dispatch`), so a retry never applies an action twice. An automatic retry of action submissions that the client offers as an option, off by default, is a convenience for callers that want one and changes neither assertion.
+
 ### Changelog
 
+- 2026-09-30 | 3a77adea | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-09-30 | - | - | Michael Lewis (<michael@anspar.org>) | Add M: a subscription_denied refusal reaches the subscription's caller as a typed terminal condition naming the view and the reason. No code or test cites M yet
+- 2026-09-29 | 6485cb2c | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-09-30 | - | - | Michael Lewis (<michael@anspar.org>) | K: restated as the invariant that a view_converging refusal reaches the caller of a subscription, a permission snapshot or an action submission as a typed transient condition naming the view. Add L: a subscription or permission snapshot refused with view_converging recovers from its caller's single request. The backoff, and the caller's ownership of an action submission's retry, move to the Rationale. No code or test references K or L
+- 2026-09-29 | bd13ba23 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-09-29 | 85156c09 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-09-29 | - | - | Michael Lewis (<michael@anspar.org>) | Add K: the remote client treats a view_converging refusal as transient; it retries a subscription or a permission-snapshot request with a bounded backoff and a bounded number of attempts, surfacing a typed converging state, and surfaces a typed transient refusal to the caller of an action submission without retrying it. No code or test references K
 - 2026-08-10 | 3e0bf707 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-07-02 | 2df8cc19 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
-*End* *Cross-Process Event Transport* | **Hash**: 3e0bf707
+*End* *Cross-Process Event Transport* | **Hash**: 3a77adea
 
 ## EVS-PRD-reaction-scope: Reaction Scope
 
@@ -370,13 +386,21 @@ F. The widget library SHALL be source-organized so that no widget references the
 
 G. The widget library SHALL ship NO rendered or styled widgets. The library SHALL provide ONLY: (i) a scope-threading `InheritedWidget` (`ReActionScope`), (ii) headless Builder primitives that delegate rendering to a caller-supplied builder (`ActionBuilder`, `ViewBuilder`), (iii) imperative side-effect widgets that fire callbacks without rendering content (`ViewListener`, `ReActionErrorListener`), and (iv) a `PermissionGate` that gates display of a caller-supplied child or builder on the active `Principal`'s `EffectiveAuthorization` without rendering any styled UI of its own. Rendered sugar — buttons, lists, theming, modality-aware affordances — SHALL live in downstream consumer applications.
 
-H. The widget library SHALL ship widget-test doubles as a first-class deliverable: a `FakeReaction` (and equivalent `FakeReactionScope` or `ReActionScope.test(...)` constructor) implementing the `ReactionScope` contract for unit/widget tests, plus a pump helper that mounts a widget under test against the fakes. The doubles SHALL allow tests to drive — deterministically and without timing — `AuthStatus` transitions, `ActionSubmitter.submit` results (including each `DispatchResult` variant), view-row updates (`Snapshot` / `Delta` / `Tombstone` / `EndOfReplay`), permission-snapshot changes, and `ConnectionStatus` transitions.
+H. The widget library SHALL ship widget-test doubles as a first-class deliverable: a `FakeReaction` (and equivalent `FakeReactionScope` or `ReActionScope.test(...)` constructor) implementing the `ReactionScope` contract for unit/widget tests, plus a pump helper that mounts a widget under test against the fakes. The doubles SHALL allow tests to drive — deterministically and without timing — `AuthStatus` transitions, `ActionSubmitter.submit` results (including each `DispatchResult` variant), view-row updates (`Snapshot` / `Delta` / `Tombstone` / `EndOfReplay`), permission-snapshot changes, subscription errors, and `ConnectionStatus` transitions.
 
-I. `ViewBuilder<T>` SHALL expose its rendering state via a sealed `ViewState<T>` with exactly three variants: `Loading` (pre-`EndOfReplay`, no rows yet), `Ready(List<T> rows)` (post-`EndOfReplay`, live), and `Stale(List<T> lastRows, Object error)` (transport disconnected, last-known rows retained for UX continuity). The transition to `Stale` SHALL be driven by the composed `ReactionScope`'s `ConnectionStatus` — NOT by inference from subscription-stream liveness.
+I. `ViewBuilder<T>` SHALL expose its rendering state via a sealed `ViewState<T>` whose variants are `Loading` (no rows yet), `Ready(List<T> rows)`, `Stale(List<T> lastRows, ConnectionStatus connectionStatus)`, `Converging(String viewName)`, `Rejected(SubscriptionDenied denial)` and `Errored(Object error, StackTrace stackTrace)`.
 
 J. `ViewBuilder<T>` SHALL support an opt-in `progressive` mode that exposes partial row sets to the builder during snapshot replay, allowing large-view first-paint without blocking on the full snapshot. The default mode SHALL surface `Loading` until `EndOfReplay`, then transition to `Ready` with the full snapshot.
 
 K. The Builder primitives (`ActionBuilder`, `ViewBuilder`) MAY accept an optional automation identifier. When supplied, a primitive SHALL wrap its delegated child in a single non-painting `Semantics` node carrying that `identifier` and the primitive's current lifecycle state as a machine-readable `value` token, and SHALL introduce no layout. A `Semantics` node is not a rendered or styled widget, so this does not violate the headless obligation (assertion G). When the identifier is absent the primitive SHALL introduce no additional semantics node.
+
+L. A `ViewBuilder`'s transitions into and out of `Stale` SHALL follow the composed `ReactionScope`'s `ConnectionStatus`.
+
+M. Every error of a `ViewBuilder`'s subscription SHALL reach its builder as a typed `ViewState`.
+
+N. A `ViewBuilder` in `Rejected` or `Errored` SHALL hold that state for the life of its subscription.
+
+O. Every error of a `ViewListener`'s subscription other than a `ViewConvergingRefusal` SHALL reach the caller's error callback or, when the caller supplies none, the framework's error reporting.
 
 ### Rationale
 
@@ -392,16 +416,20 @@ K. The Builder primitives (`ActionBuilder`, `ViewBuilder`) MAY accept an optiona
 
 **Why `ViewState` with `Stale` retaining last-known rows (I)?** When the transport drops, the right UX answer is "show stale data with a reconnecting banner," not "blank the screen." Retaining `lastRows` on the `Stale` variant lets apps render that affordance trivially. The variant is named `Stale` (rather than echoing the transport-layer term `Disconnected`) for two reasons: it names what the variant IS at the rendering layer (a stale-data surface), and it avoids a structural identifier collision with `ConnectionStatus.Disconnected` from `package:reaction` — any consumer that uses both `ViewBuilder` and a `ConnectionStatus`-aware widget would otherwise need a `hide`-clause workaround. Driving the transition from the `ReactionScope`'s authoritative `ConnectionStatus` — rather than inferring "the stream stopped" — keeps the widget contract aligned with the transport contract and avoids whack-a-mole edge cases (e.g., is a long-idle stream "disconnected" or "just quiet"?). Inferring connection state from subscription-stream liveness would lock the widget contract to whatever the Remote impl happens to do (does the stream close on WS drop, or buffer silently?); the authoritative `ConnectionStatus` surface on `ReactionScope` gives a stable, unambiguous signal instead.
 
+**Why typed error states (I, M to O)?** A subscription can be refused or fail, and a widget that shows neither stays on its loading state forever while the error goes unhandled. The builder maps each error to a state the caller renders: a `ViewConvergingRefusal` (a view the server reads is still catching up after a deploy) becomes `Converging`, which gives way to `Loading` or `Ready` as the recovered subscription's rows arrive; a denial becomes `Rejected`; anything else becomes `Errored`. `Rejected` and `Errored` end the subscription, so later updates or connection changes cannot make a refused view look live. `Stale` follows the scope's `ConnectionStatus` rather than inferring disconnection from the subscription stream's liveness (L), so every widget agrees on whether the transport is up. `ViewListener` has no state to show, so it hands errors to the caller, dropping only the transient converging refusal the subscription recovers from.
+
 **Why progressive rendering as opt-in, default `Loading`-until-`EndOfReplay` (J)?** The default deterministic behavior matches the substrate's snapshot-then-deltas guarantee semantically: until `EndOfReplay`, the snapshot is incomplete. For most views this is the right default — render once with everything. For very large views (where snapshot delivery takes seconds), opt-in `progressive: true` lets the list paint as rows arrive. Making it opt-in keeps small-view callers from accidentally rendering against partial state, and keeps the contract additive-compatible with future cursor-based snapshot delivery (per `EVS-PRD-view-subscriber`-E): a future `SnapshotBatch` variant simply becomes another source of partial rows under `progressive` mode.
 
 **Why agnostic state management?** The widget library's value proposition is the substrate-agnostic widget contract, not a state-management opinion. Baking in a single choice (signals, Provider, Riverpod, BLoC) excludes consumers who use the others. Agnostic primitives (`Stream`, `ValueListenable`, `InheritedWidget`) are the lingua franca, and a `Stream` bridges cleanly to signals (stream-to-signal), Provider, or Riverpod alike. The opt-in adapter that earns its keep is `reaction_widgets_signals`: signals is a reactive idiom a mobile app and a web client both use. Provider/Riverpod adapters would follow the same additive pattern only behind an external consumer that needs them.
 
 ### Changelog
 
+- 2026-09-30 | bb877b44 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-09-30 | - | - | Michael Lewis (<michael@anspar.org>) | I: the ViewState variants include Converging, Rejected and Errored, and Stale carries the ConnectionStatus; the Stale transition moves to L. H: the doubles drive subscription errors. Add L: Stale follows the ConnectionStatus. Add M: every subscription error reaches the builder as a typed state. Add N: Rejected and Errored hold for the subscription's life. Add O: a ViewListener's subscription errors reach the caller or the framework's error reporting. Code and tests cite H and I
 - 2026-08-10 | 57462176 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-07-02 | 72a4ad0a | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
-*End* *Reaction Widget Contract* | **Hash**: 57462176
+*End* *Reaction Widget Contract* | **Hash**: bb877b44
 
 ## Decisions and alternatives rejected
 

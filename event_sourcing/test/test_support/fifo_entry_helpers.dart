@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:event_sourcing/src/destinations/wire_payload.dart';
+import 'package:event_sourcing/src/lifecycle/lib_version.dart';
 import 'package:event_sourcing/src/storage/attempt_result.dart';
 import 'package:event_sourcing/src/storage/fifo_entry.dart';
 import 'package:event_sourcing/src/storage/final_status.dart';
@@ -9,6 +10,8 @@ import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/storage_backend.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
 import 'package:event_sourcing/src/versions.dart';
+
+import 'record_fixtures.dart';
 
 /// Build a minimal `StoredEvent` fixture with the given id and sequence
 /// number. Tests that need a batch input to `StorageBackend.enqueueFifoTxn`
@@ -26,7 +29,7 @@ StoredEvent storedEventFixture({
   aggregateType: 'note',
   entryType: entryType,
   entryTypeVersion: const EntryTypeVersion(1, 0),
-  libFormatVersion: const DataFormatVersion(2, 0),
+  libFormatVersion: LibVersion.dataFormat,
   eventType: eventType,
   sequenceNumber: sequenceNumber,
   data: const <String, dynamic>{},
@@ -34,6 +37,7 @@ StoredEvent storedEventFixture({
   initiator: const UserInitiator('u'),
   clientTimestamp: DateTime.utc(2026, 4, 22),
   eventHash: 'hash-$eventId',
+  causal: kRootVersionCausal,
 );
 
 /// Build a `WirePayload` whose bytes encode [payload] as JSON. The
@@ -61,6 +65,7 @@ Future<FifoEntry> enqueueSingle(
   Map<String, Object?>? wirePayload,
   String wireFormat = 'json-v1',
   String? transformVersion = 'json-v1',
+  int? resendsDeliveryNumber,
 }) => backend.transaction(
   (txn) => backend.enqueueFifoTxn(
     txn,
@@ -71,6 +76,7 @@ Future<FifoEntry> enqueueSingle(
       contentType: wireFormat,
       transformVersion: transformVersion,
     ),
+    resendsDeliveryNumber: resendsDeliveryNumber,
   ),
 );
 
@@ -118,6 +124,26 @@ Future<void> seedSentRowForTest(
   String destinationId,
   String entryId,
 ) => setStatusForTest(backend, destinationId, entryId, FinalStatus.sent);
+
+/// Mark a pending item `sent` under a delivery through the storage
+/// contract, in its own transaction.
+Future<void> markSentForTest(
+  StorageBackend backend,
+  String destinationId,
+  String entryId, {
+  required int generation,
+  required int deliveryNumber,
+  required String deliveryHash,
+}) => backend.transaction(
+  (txn) => backend.markSentTxn(
+    txn,
+    destinationId,
+    entryId,
+    generation: generation,
+    deliveryNumber: deliveryNumber,
+    deliveryHash: deliveryHash,
+  ),
+);
 
 /// Record [attempt] on a pending item through the storage contract.
 Future<void> appendAttemptForTest(

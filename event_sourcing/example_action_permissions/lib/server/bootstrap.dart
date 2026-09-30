@@ -69,10 +69,14 @@ const Permission deliveryOperatePermission = Permission('delivery.operate');
 /// together agree on it.
 final DateTime logDestinationStartDate = DateTime.utc(2026, 1, 1);
 
-/// Bootstrap a fresh demo server over a caller-supplied [backend] and
-/// [idempotencyStore]. The caller decides which concrete persistence
-/// layer to use (Sembast in-memory / on-disk, Postgres, etc.) and owns
-/// the lifecycle of both — bootstrap neither opens nor closes them.
+/// Bootstrap a fresh demo server over the storage [storage] describes: a
+/// Sembast file or in-memory database, or a Postgres schema. The library
+/// opens that storage, and closes it when the event store closes (or when the
+/// open fails).
+///
+/// [idempotencyStore] records dispatch outcomes. On Postgres it defaults to
+/// the event store's own (`EventStore.idempotencyStore`), which persists
+/// them in the same database; on any other backend the caller supplies one.
 ///
 /// [installIdentifier] is the per-installation unique identity stamped onto
 /// `metadata.provenance[0]` of every appended event (see
@@ -87,8 +91,8 @@ final DateTime logDestinationStartDate = DateTime.utc(2026, 1, 1);
 /// [deliveryDestination] replaces the demo destination (a test passes one
 /// whose sends it controls); [deliveryLog] is then unused.
 Future<DemoServerComponents> bootstrapDemoServer({
-  required StorageBackend backend,
-  required IdempotencyStore idempotencyStore,
+  required StorageDescription storage,
+  IdempotencyStore? idempotencyStore,
   required String permissionsYaml,
   required String usersYaml,
   required String installIdentifier,
@@ -128,7 +132,7 @@ Future<DemoServerComponents> bootstrapDemoServer({
   final destination =
       deliveryDestination ?? LogDestination(sink: deliveryLog ?? (_) {});
   final datastore = await bootstrapEventStore(
-    backend: backend,
+    storage: storage,
     source: Source(
       hopId: 'app-server',
       identifier: installIdentifier,
@@ -149,6 +153,10 @@ Future<DemoServerComponents> bootstrapDemoServer({
     onBootProgress: onBootProgress,
   );
   final eventStore = datastore.eventStore;
+  final idempotency =
+      idempotencyStore ??
+      eventStore.idempotencyStore ??
+      (throw ArgumentError.notNull('idempotencyStore'));
 
   // 2c. Activate the demo destination once: the first instance to boot on a
   //     database records the start date, and every later boot finds it.
@@ -262,7 +270,7 @@ Future<DemoServerComponents> bootstrapDemoServer({
   final dispatcher = bootstrapAuditedActions(
     events: eventStore,
     authorization: policyBootstrap.policy,
-    idempotency: idempotencyStore,
+    idempotency: idempotency,
     actions: registry.all,
   );
 
@@ -273,7 +281,7 @@ Future<DemoServerComponents> bootstrapDemoServer({
     deliveryDestination: destination,
     directory: directory,
     policy: policyBootstrap.policy,
-    idempotencyStore: idempotencyStore,
+    idempotencyStore: idempotency,
     policyErrors: policyBootstrap.errors,
   );
 }

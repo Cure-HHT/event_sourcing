@@ -2,12 +2,328 @@
 
 ## 0.5.0
 
-This release changes what the library stores and sends (data format 2.0,
-and the `esd/batch@2` batch envelope). A database written by an earlier
-release does not open: `EventStore.open` refuses it by name with
-`DatabaseResetRequiredError`, and it must be reset. A Postgres schema
+This release changes what the library stores and sends (data format 3.0,
+and the `esd/batch@3` delivery envelope). A database written by an earlier
+release, or by a build of data format 2, does not open: `EventStore.open`
+refuses it by name with `DatabaseResetRequiredError`, and it must be reset. A Postgres schema
 created by an earlier release is dropped and provisioned again with
 `PostgresBackend.provision`.
+
+### Security findings and forward-compatible reserved events
+
+- A reserved entry type `system.security_finding` (aggregate type
+  `security_finding`, event type `security_finding_recorded`, an ineligible
+  annotation) records an integrity anomaly: its data carries exactly
+  `finding_id`, `kind`, `evidence`, `aggregates` and `detector`. The
+  identity is the SHA-256 of the canonical JSON of the detecting database,
+  the detector's role (`FindingRole`), the kind (`FindingKind`) and the
+  evidence, whose keys are fixed per kind; each detector records an anomaly
+  once. On Postgres a partial index over the finding events serves that
+  lookup.
+- Ingest records every anomaly in a received record as a security finding,
+  under the detector role `ingest`, in the ingest transaction, and admits
+  the rest of the delivery: a hash that does not recompute
+  (`hash_mismatch`, event stored as received); an identifier held under
+  another sealed hash (`identity_mismatch`, record kept in the finding); a
+  record the library does not store as an event (`event_malformed`, record
+  kept, with the reason `record_malformed`, `reserved_type_undeclared` or
+  `audit_identity_invalid`), which includes a malformed client timestamp or
+  `received_at`, a missing `causal` object or provenance field, and a
+  top-level data key beginning with `$`; and an event whose originator
+  provenance entry names the receiving database (`own_event_ingested`,
+  stored as received when not held). `IngestChainBroken`,
+  `IngestIdentityMismatch`, `IngestReservedEventRefused` and
+  `ReservedEventRefusal` are removed. `IngestOutcome` gains
+  `ingestedWithFinding` and `keptInFinding`; `PerEventIngestOutcome` gains
+  `findingIds`, and its `eventId` and `resultHash` are nullable. A security
+  finding another database originated is stored as any event.
+- Ingest checks the origin-chain structure of every event it stores,
+  against the held events including those stored earlier in the same
+  transaction, and stores the event as received with a finding: a
+  predecessor hash naming a held event another database originated, or one
+  of the same database at an origin position not below the event's
+  (`predecessor_break`); a held event of the same database at the event's
+  origin position (`position_reused`); and a held event of the same
+  database carrying the same predecessor hash at another origin position
+  (`fork_unrecorded`). A fork whose successors share one position is
+  recorded only as the reuse; a predecessor naming no held event records
+  nothing.
+- `EventStore.verifyChains({from, to})` replaces `verifyEventChain` and
+  `verifyIngestChain`; `ChainVerificationVerdict` and
+  `ChainVerificationFinding` replace `ChainVerdict`, `ChainFailure` and
+  `ChainFailureKind`. It walks the range (the whole log by default; a lower
+  bound of 0 is the first local sequence number, and the upper bound is
+  fixed at the highest stored when it starts) and checks every stored
+  event's hashes, its storage-chain link (the first event of the range
+  against the event before it), the local sequence numbers holding no
+  event (`sequence_missing`), its predecessor (`predecessor_break`), the
+  forks and reused origin positions it takes part in, each reported once,
+  its causal parents (`parent_invalid`) and, for an event the database
+  authored, the parents the stamping rule yields (`parents_not_stamped`).
+  The verdict also counts predecessor hashes naming no held event. Each
+  finding is recorded as a security finding under the role `walk`, in a
+  short transaction of its own after the reads, once per detector.
+  `StorageReader.verifyChains` returns the same verdict and records
+  nothing. A negative bound or an inverted range throws `ArgumentError`
+  before anything is read. The reads hold no transaction an append waits
+  for: on Postgres one `REPEATABLE READ READ ONLY` snapshot on its own pool
+  session, on Sembast reads outside any transaction. A `StorageBackend`
+  implements the new `nonBlockingRead`.
+- Every row of an aggregate or table view carries the reserved key
+  `$integrity`, an object holding `security_findings`: the ascending
+  identities of the held security findings that mark the row's aggregate
+  (for a table row, the aggregate whose event produced it), empty when
+  none does. A finding marks the aggregates it names when the database
+  holds it as authored; a received finding marks only the aggregates its
+  originating database authored events of. A `position_reused` or
+  `fork_unrecorded` finding about a database marks every aggregate holding
+  an event of that database at or above the reused position, or the
+  fork's lowest position, events stored later included. Every view folds
+  every finding, whatever its interest, and `rebuildView` derives the same
+  marks. An append whose data holds a top-level key beginning with `$`
+  throws `ArgumentError`, and `ProjectionRegistry.register` refuses a
+  projection whose key path, column or derived field name begins with `$`.
+  A `StorageBackend` implements `findSecurityFindingsInTxn` and
+  `findEventsFromOriginPositionInTxn`.
+- The default destination-wedges view folds no event whose originating
+  database is the holding database and that the holding database does not
+  hold as authored.
+- A copy of a view whose fold of an always-stored event fails (a promoter,
+  a row key, row data or a derived field of that copy's definition)
+  records a `fold_failed` finding under the new detector role `fold`
+  (evidence `view`, `definition_fingerprint`, `event_id`, `sealed_hash`
+  and `reason`, one of `promoter_failed`, `row_key_failed`,
+  `row_data_failed` or `derived_field_failed`) and passes over the event
+  in that copy, keeping the copy current and serving; a local append whose
+  fold fails still throws to its caller with nothing stored. On Postgres
+  each always-stored event's fold into each copy runs in a savepoint, so
+  the failure rolls back only that fold, not the storing transaction. In
+  catch-up, the failure ends the transaction without writing, the finding
+  is appended in a transaction of its own, and a later catch-up pass
+  passes over the event once the finding is held. No finding is recorded
+  about the failed fold of an event that is itself a `fold_failed`
+  finding. `StorageBackend` gains `runInSavepointInTxn`.
+- The reserved entry-type namespace is every id beginning with `system.`
+  plus six fixed ids (`isReservedEntryType`,
+  `kReservedFixedEntryTypeIds`): the public appends refuse, and an open
+  refuses a registry holding, any entry type of the namespace the library
+  does not declare.
+- `WedgeCause` and `HaltPurpose` are open values rather than enums:
+  `fromWire` carries a value this build does not know verbatim (`isKnown`
+  is false) instead of throwing, so wedge records, halt requests and
+  events a newer build of the same data-format major wrote read without
+  failing. `requestHalt` refuses a purpose this build does not know. A
+  wedge of an unknown halt purpose is recovered with no configuration
+  check.
+
+### Delivery channel: wire shapes and codecs
+
+- `DeliveryChannel` (sending database, destination, registration and
+  generation) and `DeliveryRecord` (delivery number and hash; number 0 and
+  a null hash before the first delivery). `computeDeliveryHash` is the
+  lowercase-hex SHA-256 of the canonical JSON of exactly `channel`,
+  `delivery_number`, `previous_delivery_hash`, `event_hashes` and
+  `attributes`.
+- `DeliveryEnvelope` is the `esd/batch@3` envelope: exactly
+  `batch_format_version` (`"3"`), `batch_id`, `sender_hop`,
+  `sender_identifier`, `sender_software_version`, `sent_at`, `channel`,
+  `delivery_number`, `previous_delivery_hash`, `delivery_hash`, `events`
+  (at least one) and `attributes` (an object, kept and hashed as carried
+  whatever it holds). Its decoder refuses by name
+  (`IngestDecodeFailure.reason`): `batch_format_unsupported`,
+  `attributes_not_object`, `batch_empty` and `batch_malformed`.
+- Receiver answers: `ReceiverAcknowledgement` (`accepted` or
+  `represented`) and `ReceiverRefusal` (`out_of_sequence`,
+  `delivery_hash_mismatch`, or `rejected` with its reason and refused
+  event), each carrying the channel, the receiver's database identity and
+  its record. `decodeReceiverAnswer` maps a body to a `SendResult`: the
+  new `SendAnswered` for an acknowledgement or an `out_of_sequence`
+  refusal, `SendTransient` for `delivery_hash_mismatch`, `SendPermanent`
+  for `rejected`, and `SendOk` (an answer with no record) for a body that
+  is not a receiver answer. The drainer records `SendAnswered` as a
+  transient attempt.
+- Pull: `Destination.channelPull` (null by default), the requests
+  `ChannelListingPull` and `DeliveryRangePull`, the served bodies
+  `ChannelListing` and `DeliveryRange`, the `PullRefusal` body, and
+  `decodePullResponse` mapping a body to `PullServed`, `PullTransient` or
+  `PullPermanent`.
+- `WedgeCause.acknowledgementInvalid` (`acknowledgement_invalid`).
+- Reserved declarations: `ingest.delivery_accepted` on the `ingest-audit`
+  entry type, and the destination audits
+  `system.destination_channel_resumed` (event type
+  `destination_channel_resumed`) and `system.destination_sender_succeeded`
+  (event type `destination_sender_succeeded`), each an ineligible
+  annotation.
+
+### Delivery channel: storage
+
+- `SenderChannelRecord` (generation, receiver record and receiver database
+  identity). Registering a destination that serializes natively writes it
+  as generation 1, number 0, a null hash and no receiver in the
+  registration's transaction; deleting the destination removes it.
+  Registering a destination that serializes natively with no
+  `channelPull` throws `ArgumentError` before anything is written.
+- `FifoEntry` gains `deliveryGeneration`, `deliveryNumber` and
+  `deliveryHash`, written only by the new `StorageBackend.markSentTxn`;
+  `AttemptResult` and `SendFence` gain `deliveryNumber` and `deliveryHash`.
+- A pending queue item that carries attempts may move to tombstoned; the
+  new `StorageBackend.deleteFifoEntryTxn` deletes only a pending item that
+  carries no attempt. `StorageBackend.readRetainedDeliveryTxn` reads the
+  item last marked sent at a delivery number under a generation. The
+  sender channel record members are `readSenderChannelRecordTxn`,
+  `writeSenderChannelRecordTxn` and `clearSenderChannelRecordTxn`.
+- Postgres schema version 4 (minimum 4): the queue table gains
+  `delivery_generation`, `delivery_number` and `delivery_hash` and the
+  index `fifo_entries_delivery_idx`; `fifo_entries_guard` refuses an item
+  inserted with a delivery, a change to the delivery outside the change
+  that marks the item sent, pending to tombstoned for an item carrying no
+  attempt, and the deletion of an item carrying attempts.
+- `FifoEntry` gains `resendsDeliveryNumber`, the delivery number a resend
+  item enqueued by a receiver-behind resume resends, held immutable once
+  set. Postgres schema version 8 (minimum 8) adds the queue table's
+  `resends_delivery_number` column and extends `fifo_entries_guard` to
+  hold it immutable; adoption of a receiver record uses it to retire,
+  unsent, exactly the resend items at or below the adopted number.
+
+### Delivery channel: receiver accept path
+
+- `EventStore.receiverEndpoint` returns the store's `ReceiverEndpoint`.
+  `ReceiverEndpoint.accept(bytes, senderDatabaseIds:)` accepts an
+  `esd/batch@3` delivery and returns the receiver's
+  `ReceiverAcknowledgement` (`accepted` or `represented`) or
+  `ReceiverRefusal` (`out_of_sequence`, `delivery_hash_mismatch` or
+  `rejected`), each carrying the receiver's record of the channel.
+- A delivery whose channel names a sending database outside
+  `senderDatabaseIds` throws the new `DeliveryAuthenticationRefused`
+  before any read of the channel and any write; a batch from which no
+  channel can be read throws `IngestDecodeFailure`.
+- The receiver accepts only the delivery numbered one above its record
+  and linked to its hash, acknowledges a re-presentation of the last one
+  without appending anything, and appends one `ingest.delivery_accepted`
+  audit per accepted delivery, from which the record is derived.
+- Each event stored from a delivery carries the delivery in its receiver
+  provenance entry. A delivery hash that does not recompute records a
+  `delivery_hash_mismatch` finding; an event the channel's sender did not
+  author is stored with a `foreign_event` finding.
+- `IngestDataFormatIncompatible`, `IngestEntryTypeVersionAhead` and
+  `IngestEntryTypeVersionUnpromotable` gain `refusalReason`, the reason a
+  `rejected` refusal names.
+- `StorageBackend.readLatestAuthoredOfAggregateInTxn` (internal) reads the
+  latest event of an aggregate the database holds as authored.
+
+### Delivery channel: receiver pull and channel listing
+
+- `ReceiverEndpoint.pull(request, senderDatabaseIds:)` serves a
+  `ChannelListingPull` as a `ChannelListing` (every channel, of every
+  generation, on which the receiver accepted a delivery from the sender,
+  each with its record) and a `DeliveryRangePull` as a `DeliveryRange`
+  reconstructed from the receiver's `ingest.delivery_accepted` audits: each
+  delivery's number, link, hash and attributes as carried, and the stored
+  record of each event in the audit's order, or the record a security
+  finding's evidence keeps for an event the receiver could not store. The
+  first delivery it cannot serve (above its record, or lacking its audit
+  or an event) is named in `unservableDeliveryNumber`.
+- A pull naming a sending database outside `senderDatabaseIds` throws
+  `DeliveryAuthenticationRefused` before any read.
+- `StorageBackend.findAuthoredDeliveryAuditsInTxn` and
+  `findLatestAuthoredDeliveryAuditsInTxn` (internal) read the authored
+  accepted-delivery audits of a channel's range and the latest of each
+  channel of a set of senders.
+
+### Delivery channel: sender drain
+
+- The fill enqueues each item of a destination that serializes natively as
+  an `esd/batch@3` item: its `envelope_metadata` names the delivery
+  channel (the sending database, the destination, the registration and the
+  sender channel record's generation) and carries empty delivery
+  attributes, with no delivery number. `BatchEnvelopeMetadata` gains
+  `channel`, `attributes` and `wireFormat`; `fillBatch` takes the
+  database identity (`databaseId`).
+- The drainer numbers each delivery one above the sender channel record
+  and links it to the record's hash; its pre-send fence sends only while
+  the record is unchanged and writes the delivery's number and hash in the
+  send fence record, and the attempt carries them.
+- The receiver's record returned with every answer decides the outcome: a
+  record naming the delivery in flight marks the head sent under its
+  generation, number and hash (a lost acknowledgement is recognised when
+  the retry is answered `represented`); a record above the sender's,
+  naming a delivery the sender attempted (sent included) at that number on
+  the current generation, is adopted in one transaction, with no finding
+  and no new generation: the sender's record advances to it, the pending
+  head is marked sent when the record names the delivery the send fence
+  names for it, and every resend item at or below the adopted number is
+  retired unsent; a receiver behind whose missing deliveries are all
+  retained gets them again exactly as first sent, recorded in one
+  `system.destination_channel_resumed` event, each resend item recording
+  the delivery number it resends; a record ahead of the sender's, naming
+  no delivery the sender attempted, at a number where the sender marked no
+  delivery sent on the current generation, records a `sender_regressed`
+  finding, and any other record, or an answer from another receiver
+  database, a `channel_unexplained` finding, each starting a new
+  generation of the registration from delivery 1 with the fill rewound to
+  the start of the log.
+- A `SendOk` from a destination that serializes natively (an acceptance
+  carrying no receiver record) wedges the head with cause
+  `acknowledgement_invalid`. `NativeDemoDestination` in the example answers
+  as an in-memory receiver when no bridge is wired.
+- `StorageBackend.listFifoEntriesTxn` (internal) lists a destination's
+  queue inside a transaction.
+
+### Sender succession: rebuild-from-receiver restore
+
+- `EventStore.restoreFromReceiver` (`registry:`, `destinationId:`,
+  `predecessorDatabaseId:`, `initiator:`) rebuilds a database that has
+  authored no application event as the successor of
+  `predecessorDatabaseId`. It pulls, through the named destination's
+  channel-listing and range pulls, every channel the receiver lists for
+  the predecessor's succession lineage from delivery 1 up to the
+  receiver's record, checks each pulled delivery's link chain and hash and
+  each carried event's hash, originator entry and receiver entry, and
+  stores every event the successor does not hold in one transaction --
+  lineage order first, then ascending origin position, then ascending
+  registration, generation and delivery number of the lowest delivery
+  carrying it -- with the successor's provenance entry and the reserved
+  `system.destination_sender_succeeded` succession event, which names the
+  successor, the predecessor and each restored channel's last delivery. A
+  failed check records a finding under detector role `restore` and the
+  served data is stored as served, never stopping the store: `hash_mismatch`
+  for an event or arrival hash that does not recompute, `restore_unverified`
+  for any other failed check. `SuccessionRestoreRefused` refuses the
+  operation before anything is stored when the successor already authored
+  an application or succession event, when the predecessor names the
+  successor itself, when the receiver lists no channel for the
+  predecessor, or when a pull cannot serve a delivery the restore asked
+  for.
+- `StorageReader.successionLineageOf(databaseId)` reads a sender
+  database's succession lineage -- the predecessors it succeeded,
+  transitively, and its successor, if any -- derived solely from the
+  succession events the log holds.
+- The receiver's accept path refuses, as it refuses a caller it is not
+  authenticated for a channel's sender, a delivery carrying a succession
+  event it does not already hold when the caller may not act for both the
+  successor and the predecessor the event names; a succession event
+  already held is handled as any other held event, with no succession
+  check applied. Storing a succession event the receiver does not already
+  hold records one `succession_ahead` finding for each channel the event
+  names of which the receiver holds an accepted delivery whose named
+  delivery number is above the receiver's own record.
+- The successor's deliveries after the succession event continue the
+  predecessor's authorship on every channel (`EVS-PRD-delivery-channel/T`).
+  A predecessor that keeps delivering after its successor has restored
+  extends its own origin chain on its own channels without forking it;
+  the library records nothing for it, and reconciling two live senders of
+  one identity is the application's choice.
+- Among the distinct-hash occurrences of one served `event_id`, the
+  restore chooses the occurrence it can actually store as the event
+  ahead of one it cannot (a record kept only in an `event_malformed`
+  finding), regardless of their (registration, generation, delivery
+  number) order; the existing tie-break still decides between
+  occurrences it could equally store. Every other distinct-hash
+  occurrence is recorded in an `identity_mismatch` finding after the
+  chosen occurrence is stored (or kept in its own finding); when the
+  chosen occurrence was itself kept only in a finding, an extra
+  occurrence can still be the one stored as the event, out of the
+  ordered store's lineage-and-origin-position order.
 
 ### Delivery: one drainer per database
 
@@ -96,15 +412,37 @@ created by an earlier release is dropped and provisioned again with
 - New reserved entry type `system.destination_wedged` (event type
   `destination_wedged`): the drainer appends it in the transaction that
   wedges a queue head, recording the destination, the item, the cause
-  (`WedgeCause`: permanent refusal, retry budget exhausted, operator halt),
-  the attempt count and budget, the halt request it consumed, the drain
-  epoch, and the declared configuration beside its fingerprint; never the
-  error text. New exports: `kDestinationWedgedEntryType`,
-  `kDestinationWedgedEventType`, `WedgeCause`, `WedgeRecord`.
+  (`WedgeCause`: permanent refusal, retry budget exhausted, operator halt,
+  acknowledgement invalid, transform failed), the attempt count and both
+  halves of the budget in effect (`max_attempts`, `max_retry_ms`), the
+  halt request it consumed, the drain epoch, and the declared
+  configuration beside its fingerprint; never the error text. New
+  exports: `kDestinationWedgedEntryType`, `kDestinationWedgedEventType`,
+  `WedgeCause`, `WedgeRecord`.
 - A wedging attempt whose transaction does not commit is recorded alone;
   each drain pass first wedges a pending head whose recorded attempts call
   for it, without sending it again. Lowering `maxAttempts` below an item's
-  attempt count wedges it at the next pass.
+  attempt count, or `maxRetryTime` below the time its recorded attempts
+  span, wedges it at the next pass, with no further send.
+- `SyncPolicy` gains `maxRetryTime` (default 24 h): the time half of the
+  retry budget, measured as the sum of the gaps between an item's
+  recorded attempts, each gap capped at the retry curve's longest allowed
+  delay after the earlier attempt plus the delivery cycle's cadence. A
+  static policy with a negative `maxRetryTime`, or a `maxAttempts` below
+  one, throws `ArgumentError`; a resolved policy failing either check is
+  logged and skips the pass instead. A destination's transform failure
+  record keeps the time of each transform failure and spends the same
+  budget the same way; once spent, the fill enqueues the events the
+  transform kept failing on as one pending item marked transform-failed,
+  carrying no payload, which the drainer wedges with cause
+  `transform_failed` before any send. New `SendResult` variant
+  `SendNotAttempted`: a destination that did not attempt delivery (a
+  receiver cooldown, a paused transport) records no attempt, leaves the
+  head's recorded attempts unchanged, and ends that destination's pass
+  with no further send.
+- Fill and drain log records at severe level or above reach the
+  process's standard error by default (the console in a browser) unless
+  the application turns that default off.
 - Operator halt: `DestinationRegistry.requestHalt(id, initiator:,
   purpose:)` (returns the request event's id) and `cancelHalt(id,
   initiator:)`; `HaltPurpose` (`pause`, `reconfigure`), `HaltRequest`,
@@ -152,27 +490,24 @@ created by an earlier release is dropped and provisioned again with
   reserved id or the view's name under any other definition, or a sealed
   projection registry without the view, is refused. Remove manual
   `kSystemEntryTypes` registration loops.
-- Ingest refuses reserved events outside their declared shapes, malformed
-  destination audits, and destination audits naming the receiver's own
-  database that it does not hold: `IngestReservedEventRefused` with
-  `ReservedEventRefusal`.
+- Ingest stores no event for a reserved event outside its declared shape
+  or a destination audit whose identifiers are malformed or whose database
+  identity is not its originating database, and keeps the record in an
+  `event_malformed` security finding.
 - `IngestDataFormatIncompatible` replaces `IngestLibFormatVersionAhead`, and
-  `ingestEvent` applies the version checks too. New
-  `IngestEntryTypeVersionUnpromotable`: an event of a lower version that a
-  view's promoter steps do not lead from is refused by name, before any
-  write. A malformed event version is reported as `IngestDecodeFailure`.
+  the event store's private per-record ingest applies the version checks
+  too. New `IngestEntryTypeVersionUnpromotable`: an event of a lower
+  version that a view's promoter steps do not lead from is refused by
+  name, before any write. A record with a malformed event version is kept
+  in an `event_malformed` security finding.
 - Ingest verifies every event's own hash, whatever the length of its
-  provenance, and refuses the event before any write when it differs from
-  its `event_hash` (`ingestBatch` refuses the whole batch). `ingestBatch`
-  hashes each record exactly as the envelope carried it, not the parsed
-  event;
-  `ingestEvent` hashes `incoming.toMap()` of the event its caller parsed.
-  An event with only its origin provenance entry is checked too, so a sender
+  provenance, and stores an event whose hash differs from its `event_hash`
+  as received, with a `hash_mismatch` security finding. A native delivery's
+  accept path hashes each record exactly as the delivery carried it, not
+  the parsed event. An event with only its origin provenance entry is checked too, so a sender
   that builds events by hand seals each record with `canonicalEventHash`
-  (now exported) after its last change; an invented `event_hash` is refused.
-  `IngestChainBroken` carries the failing link's `kind`
-  (`ChainFailureKind`), whose new `eventHashMismatch` names this refusal,
-  and `verifyEventChain` reports the same failure. The hash is an unkeyed
+  (now exported) after its last change; an invented `event_hash` is
+  recorded as a finding. The hash is an unkeyed
   SHA-256 and does not cover `aggregate_type`; an incoming event's
   `previous_event_hash` is not checked against the upstream log.
 - `StoredEvent.fromMap` keeps every field the event hash covers as the
@@ -183,10 +518,15 @@ created by an earlier release is dropped and provisioned again with
   of the record it does not read (not hashed). Both backends store and
   return all of them, so a received record, its stored copy and the copy a
   relay forwards hash alike, and a record from a later release of data
-  format 2 verifies, stores and relays unchanged. `EntryTypeVersion` and
+  format 3 verifies, stores and relays unchanged. `EntryTypeVersion` and
   `DataFormatVersion.fromJson` read a map by its `major` and `minor` and
   ignore other keys, so library-version events, view targets and boot
-  records a later 2.x release writes open too.
+  records a later 3.x release writes open too.
+- `EventStore.logRejectedBatch` is removed: it appended a reserved
+  `ingest.batch_rejected` audit whose content the caller chose. Ingest
+  appends only the reserved events of the deliveries it accepts; a
+  refused batch is reported by the exception `ingestBatch` throws. No
+  reserved shape declares `ingest.batch_rejected`, so ingest refuses one.
 - A record's `client_timestamp` must carry a four-digit year, calendar
   fields within their ranges and an explicit offset (`Z` or
   `+/-HH[:]MM`): a timestamp without an offset, a year outside 0000-9999,
@@ -208,13 +548,49 @@ created by an earlier release is dropped and provisioned again with
   `client_timestamp`, a provenance entry's `received_at`) in UTC, whatever
   zone an injected `clock` returns, and `StoredEvent.toMap` writes the
   `clientTimestamp` of an event built with the constructor in UTC.
+- A view copy's own fold, run inline as ingest or a succession restore
+  commits their transaction, admits every event of an accepted delivery
+  whatever its content: a fold throw is that copy's problem alone. Its
+  writes for the failing event roll back, its watermark does not advance
+  past it, and the rest of the delivery and every other copy's fold
+  commit; the catch-up driver's own fold, not the inline one, is what
+  later records the failure in the copy's progress and keeps it
+  converging. A local `append`'s fold failure still fails to its caller.
+- A succession restore that serves the same delivery twice, or two
+  deliveries under the same `event_id` with different hashes, dedups by
+  `(event_id, event_hash)`: every distinct-hash occurrence runs the same
+  ingest checks inside the restore's transaction, so each is stored or
+  recorded in an `identity_mismatch` finding rather than the second
+  occurrence being dropped unseen.
+
+### The event record (data format 3.0)
+
+- Every provenance entry the library stamps carries `database_id` (the
+  database that stamped it) and `library_version` (the package version
+  that stamped it), and every event carries a `causal` object (`kind`,
+  `eligible`, `parents`). The event hash covers both. A
+  record any of whose provenance entries lacks either field, or carries
+  one that is not a non-empty string, or that carries no `causal` object
+  of exactly that shape, is malformed: `StoredEvent.fromMap` throws a
+  `FormatException` naming the field, `appendEvent` and every read refuse
+  it, and both ingest entry points refuse it with `IngestDecodeFailure`
+  before any write.
+- `CausalRecord` has no `reconciles` member and its constructor takes no
+  `reconciles` argument: a `causal` object carrying a `reconciles` key,
+  whatever its value, is malformed and refused naming the key.
+- Both ingest entry points refuse an event of another data-format major
+  with `IngestDataFormatIncompatible` before any other check of its
+  record, so an event a build of data format 2 sent is refused by its
+  major, not by the fields it lacks. `EventStore.open` refuses a database
+  whose latest event a build of data format 2 appended with
+  `DatabaseResetRequiredError`, before any write.
 
 ### Versions and the boot
 
 - Versions are major.minor: `EntryTypeVersion` for entry types
   (`registeredVersion`, `PromoterSpec` steps, `rebuildView` targets) and
   `DataFormatVersion` for the library's data format
-  (`LibVersion.dataFormat`, `2.0`, stamped on every event). A minor step's
+  (`LibVersion.dataFormat`, `3.0`, stamped on every event). A minor step's
   promoters may only be `DefaultField` (or none); a rename or drop is a
   major step. The event hash covers both versions. A promoted
   `DefaultField` no longer overwrites a field the row already carries.
@@ -227,9 +603,49 @@ created by an earlier release is dropped and provisioned again with
   data format and, on initialization, the database identity
   (`EventStore.databaseId`); a missing or changed stored identity throws
   `DatabaseIdentityMismatchError`. `LibVersion` is exported.
-- Boot-time snapshot promotion re-derives the affected rows from the log,
-  and views registered over events already in the log are caught up at
-  the next open of a build that registers them.
+- A view's copy is identified by the fingerprint of its definition
+  (interest, `ProjectionSpec`, `PromoterSpec`s and entry-type versions,
+  computed by `viewFingerprint`). `EventStore.open` creates an empty copy,
+  with a `folded through position 0` watermark, for every registered view
+  whose fingerprint no stored copy has; an unchanged fingerprint shares its
+  existing copy and keeps folding inline with appends. A new copy catches
+  up after the open in short, bounded catch-up transactions ordered
+  against every append, through the same fold step appends use, never
+  inside the open transaction, so a large or many-view catch-up never
+  holds back an append; each catch-up transaction holds appends for about
+  one second. At most one catch-up transaction runs at a time per copy: a
+  Postgres transaction-scoped advisory try-lock per copy (skipped, not
+  waited on, when already held), and the Sembast single-opener assumption.
+  A copy no build registers is dropped by catch-up. `EventStore.reader`'s
+  row reads report a copy still converging as `ViewConvergenceState
+  .converging` and withhold every row an unfolded event or security
+  finding past its watermark might reach (a table view, which has no
+  settled row while it converges, withholds all of them); a by-key read
+  reports such a key `PendingRow`, distinct from `SettledRow` and
+  `AbsentRow`. The permission-relevant views (role assignment, permission
+  grant, containment) refuse actions with the transient
+  `ViewConvergingRefusal` while converging. The old snapshot-promotion
+  machinery (promotion at open, view-target-version seeding, the
+  catch-up/promotion gap model, leases and scheduling records, the
+  `view_snapshot_promoted` event) is removed. `currentViewRows` is the one
+  adapter from a `StorageReader`'s converging-aware view read to the
+  `FindRowsInTxn` shape `ContainmentResolver` and a host's own
+  containment-backed lookups take, so a converging view refuses through
+  `ViewConvergingRefusal` for every caller built on it.
+- `EventStore.subscribe<T>` gains the `Pending<T>` `Update<T>` variant,
+  delivered for a named aggregate an `AggregateMode` subscription cannot
+  yet confirm settled (in place of a `Snapshot`); `EndOfReplay<T>` gains a
+  `state` field (`ViewConvergenceState.current` or `.converging`). New
+  reads: `EventStore.reader.findViewRows` / `findViewRowsInTxn` /
+  `readViewRowsByKeys` / `readViewRowInTxn` return a `ViewRowsRead` /
+  `ViewRowsByKeyRead` / `ViewRowRead` carrying the copy's convergence
+  state alongside its rows, and `ViewCopyStatus` reports a registered
+  view's state and its copy's watermark, log head and last catch-up
+  failure.
+- `EntryTypeRegistry.register` throws once `EventStore.open` seals the
+  registry: every entry-type registration for a build must be in place
+  before open, matching the sealed `ProjectionRegistry` and
+  `PromoterRegistry`.
 - The incompatible-generation guard: `EventStore.open` registers the
   build's data generation (its data-format major and each entry type's
   major) and throws `IncompatibleGenerationException` while a conflicting
@@ -245,11 +661,52 @@ created by an earlier release is dropped and provisioned again with
   into an event store while the boot runs throws `StateError`.
 - `EventStore.openForTest` is `@visibleForTesting`, runs the same refusals
   and appends no library-version event.
-- `rebuildView` refuses a target version that differs from the registered
-  one, or an unregistered entry type.
+- `rebuildView({store, viewName, deadline})` marks the instance's copy of
+  `viewName` for deletion and creates a new, empty copy of the same
+  fingerprint in one transaction, then returns once the replacement is
+  current or throws `ViewConvergenceTimeout`, naming the copy's progress,
+  once `deadline` passes first; it no longer takes a target entry-type
+  version. It resolves the fingerprint's current unmarked copy from
+  stored state inside that transaction rather than the instance's cached
+  copy id, so a rebuild that follows another instance's already-
+  committed mark or replacement of the copy proceeds against what is
+  actually stored instead of throwing.
+- `ViewCatchUpDriver`'s per-copy backoff no longer leaves a stale entry
+  once the key it was recorded under stops matching a discovered copy: a
+  successful catch-up drops every earlier key that attempt was keyed
+  under (the fingerprint, before a copy existed; a copy id another
+  instance has since replaced) once it resolves the copy actually
+  written, and each discovery pass prunes any backoff entry left keyed
+  under a copy id no longer found or a fingerprint that now has an
+  unmarked copy. A stale entry previously kept its `nextAttemptAt` in
+  the past forever, so the driver's idle wait for that copy never grew
+  past zero once another instance created it.
+- The currency scan (`IntegrityMarks.changesOtherMarks`, mirroring
+  `_Evaluation.forEvent`) covers the received-finding lineage branch: an
+  event of the aggregate a held, non-authored finding names, authored by
+  the finding's originating database or a database in its succession
+  lineage, changes that aggregate's outstanding-finding mark, so a copy
+  with such an event past its watermark reports converging until it
+  folds it -- the same as the fork-unrecorded and position-reused
+  branches already covered. `_HeldFinding.namesByLineage` is the read
+  both the fold and the currency scan share, so the two cannot drift.
 
 ### Storage contract
 
+- `StorageBackend` gains `upsertViewRowsInTxn`, `upsertTableViewRowsInTxn`
+  and `deleteViewRowsInTxn`, the batched row writes a catch-up transaction
+  flushes through; each defaults to the single-row calls, and
+  `PostgresBackend` writes a batch with one statement. A catch-up
+  transaction reads the rows of each page of events it folds in one query,
+  serves the step's own earlier writes from memory, and writes the changed
+  rows with at most three statements per page, through the same fold step
+  appends use; a batch the server rejects for a row's value is folded again
+  event by event, each fold in a savepoint, which names the event for its
+  `fold_failed` finding.
+- `StoredEvent` carries the event's `causal` object (`CausalRecord`).
+  `StoredEvent.synthetic` gives an event built without one an eligible
+  version with no parents, so an in-memory `StorageBackend` double's seeded
+  events carry a well-formed `causal`.
 - Every `StorageBackend` member that writes is `@internal` (queue, view,
   view-target, schema-version, fill-position and schedule writers,
   `appendEvent`, `nextSequenceNumber`, and the records this release adds);
@@ -284,7 +741,82 @@ created by an earlier release is dropped and provisioned again with
     `listSchedules`, `listSchedulesTxn`;
   - views and reads: `markViewTargetBehindInTxn`,
     `clearViewTargetBehindInTxn`, `readViewTargetBehindInTxn`,
-    `readViewTargetsForEntryTypeInTxn`, `readEventsReverseInTxn`.
+    `readViewTargetsForEntryTypeInTxn`, `readEventsReverseInTxn`;
+  - chain lookups, reads over the log that return stored events:
+    `readLatestHeldAsAuthoredInTxn`, `findEventsBySealedHashInTxn`,
+    `findEventsByPredecessorInTxn`, `findEventsByOriginPositionInTxn`,
+    `readLatestEligibleVersionInTxn`, `findEventsForAggregateInTxn`.
+    `PostgresBackend` serves them from columns and non-unique indexes of
+    the events table. `SembastBackend` stores each event under its local
+    sequence number and serves `readLatestHeldAsAuthoredInTxn` and
+    `readLatestEligibleVersionInTxn` by fetching that key from a
+    backend-owned record it writes alongside the event in the same
+    transaction (the latest sequence the database authored; each
+    aggregate's latest eligible version), and `findEventsForAggregateInTxn`
+    by fetching an aggregate's held events' keys from a backend-owned
+    per-aggregate list, also written alongside the event — none of the
+    three scans the store. `findEventsBySealedHashInTxn`,
+    `findEventsByPredecessorInTxn` and `findEventsByOriginPositionInTxn`
+    still scan; none of these indexes is compared with anything else, and
+    none is part of the chain walk.
+  - `holdsSecurityFindingInTxn`, whether the database holds any security
+    finding, which the outstanding-finding marks read before any finding:
+    `PostgresBackend` probes the partial index over the finding events,
+    and `SembastBackend` keeps one record, set when the first finding is
+    stored.
+  - `readAggregateAuthorshipInTxn` (who authored an aggregate's held
+    events, by originating database, each database's highest origin
+    position among them) and `readLowestOriginPositionByPredecessorInTxn`
+    (a fork finding's threshold: the lowest origin position among a
+    database's held events sharing a given predecessor hash) are new
+    abstract members the marks fold reads instead of the aggregate's
+    events themselves, so appending an event that evaluates a held
+    finding or fork does not read every held event it marks. Both
+    reference backends serve them from a backend-owned index written
+    alongside each stored event.
+  - `upsertTableViewRowInTxn` and `findTableRowsBySourceAggregateInTxn`
+    are new abstract members: a `TableProjectionSpec` row upsert stamps
+    the aggregate id of the insert that produced it into a backend-owned
+    index from source aggregate to the row keys it produced, and the
+    outstanding-finding refresh reads a source aggregate's rows from that
+    index rather than scanning the view copy. A key already indexed under
+    a different source aggregate moves to the new one on a later insert;
+    every path that retires a row (`deleteViewRowInTxn`, `clearViewInTxn`,
+    `deleteViewCopyRowsInTxn`, `deleteViewCopyRecordInTxn`) retires its
+    index entry with it.
+  - `runInSavepointInTxn` is a new abstract member: a copy's fold of an
+    always-stored event runs inside it, so a fold failure rolls back only
+    that fold, not the transaction storing the event. `PostgresBackend`
+    implements it with a SQL savepoint; `SembastBackend` and a third-party
+    backend with no native savepoint run the body directly, since a
+    Sembast transaction has no partial-rollback primitive to isolate.
+  - `enqueueFifoTxn` gains an optional `resendsDeliveryNumber` parameter:
+    a receiver-behind resume's resend item records the delivery number it
+    resends, held immutable thereafter, so an adopted receiver record can
+    retire exactly the resend items at or below it.
+- On Postgres, an ordinary append's and an ingest batch's throughput each
+  stay at least half of the data-format-2 build's on the same workload and
+  host; a conformance test gated on `PG_TEST_URL` plus an opt-in variable
+  checks out that build into a temporary worktree and measures both
+  builds against it; the guard locks its own worktree with its process id
+  and a stale-worktree sweep before each run removes only a worktree
+  registration under its own temp-directory prefix whose owning process
+  has died (or that was never locked), so a concurrently running guard's
+  live worktree is never swept, and never lets that cleanup mask the
+  measurement's own failure. On Sembast, an ordinary append's cost stays
+  constant as the store grows,
+  proven in the default suite by a test comparing append cost at two
+  store sizes, a received fork finding and a succession event included.
+  A read's currency scan resolves a copy through
+  `StorageBackend.readUnmarkedViewCopyInTxn`, a keyed lookup by
+  fingerprint on both reference backends, never a scan of every stored
+  copy.
+- `StorageBackend.findSenderSuccessionEventsInTxn` is a new member,
+  served from a backend-owned index over the sender-succession entry
+  type on both reference backends, that the succession-lineage lookup a
+  received chain finding's marks resolve from reads instead of scanning
+  every held event; an app-supplied backend inherits a default body that
+  scans (`findAllEventsInTxn`).
 - Removed: `appendAttempt`, `markFinal`, `writeFillCursor`,
   `deleteFifoStoreTxn`, and the non-transactional `enqueueFifo` and
   `writeSchedule`. `setFinalStatusTxn` takes a non-null status and allows
@@ -308,14 +840,38 @@ created by an earlier release is dropped and provisioned again with
   (`findOlderThanInTxn`, `findUnredactedOlderThanInTxn`) and `queryAudit`'s
   `from` and `to`.
 - `EventStore.appendInTxn` requires the `PublishCollector` its
-  `runTransaction` body received.
+  `runTransaction` body received, and refuses with `StateError`, writing
+  nothing, a transaction handle this store's `runTransaction` did not issue
+  or whose body has returned.
+- `EventStore.reader` is a `StorageReader`: an object of its own, not the
+  storage backend, carrying the backend's reads and a `transaction(body)`
+  for reads only (`READ ONLY` on Postgres). Its `...InTxn` reads accept the
+  handles it or its event store issued, while their body runs, and refuse
+  any other with `StateError`.
+- `TableBackedAuthorizationPolicy({reader, scopeClassRegistry})` reads
+  through a `StorageReader`; its `backend` and `transactionProvider`
+  parameters are gone. `bootstrapActionPermissions`,
+  `bootstrapRoleAssignments` and the permission seed read through
+  `EventStore.reader`.
+- `EventStore.idempotencyStore` is the Postgres idempotency store over the
+  event store's own storage (null on other backends).
 - `debugLogSink` is removed; library log lines go to `dart:developer` and
   to `package:logging` loggers named `event_sourcing.<component>`.
-- Internal: `PostgresBackend.pool` (use
-  `PostgresIdempotencyStore.forBackend`), `SembastBackend.unwrapSembastTxn`,
-  `PublishCollector.add` and `addRowChanges`, `SembastBackendTestSupport`
-  (no longer exported), the security-context store mutators,
-  `EventStoreBundle.setViewTargetVersion`.
+- Internal: `PostgresBackend.pool` (use `EventStore.idempotencyStore`),
+  `SembastBackendTestSupport` (no longer exported), the security-context
+  store mutators.
+- No object the library hands out yields its storage, appends a reserved
+  event outside a public operation, or publishes: these members are private
+  to the library and callable neither statically nor dynamically.
+  `EventStore.backend`, `deliveryTrigger`, `wakeDeliveryCycle` and
+  `appendReservedInTxn`; `DestinationRegistry.backend`, `wedgeHeadInTxn`
+  and `honourHaltInTxn`; `EventStoreBundle`'s `backend` constructor
+  parameter and `setViewTargetVersion`; `PublishCollector.add` and
+  `addRowChanges`; the `backend` field of `SembastSecurityContextStore` and
+  `PostgresSecurityContextStore`; `SembastBackend.unwrapSembastTxn`; and
+  the Postgres transaction handle's type, `PostgresTxn`, with its
+  `session`. A transaction handle is opaque outside its backend. Stage
+  view target versions in tests through the backend a test built.
 
 ### Postgres
 
@@ -348,8 +904,13 @@ created by an earlier release is dropped and provisioned again with
   `queryAudit(initiator:)` matches the fields `Initiator` models. The
   columns are part of schema version 1, so a database provisioned by an
   earlier 0.5.0 build is provisioned again.
-- `PostgresIdempotencyStore.over` is `@visibleForTesting`; `forBackend` is
-  fenced.
+- `PostgresIdempotencyStore.forBackend` is removed: the event store builds
+  its fenced idempotency store as `EventStore.idempotencyStore`;
+  `PostgresIdempotencyStore.over(pool)` takes a pool the application
+  opened.
+- Schema version 6 adds the `view_copies` table (one row per view copy:
+  its fingerprint, watermark, and deletion mark) and moves view rows to a
+  copy-scoped shape; the runtime role's grants extend to it.
 
 ### Trust
 
@@ -381,3 +942,27 @@ created by an earlier release is dropped and provisioned again with
   commit even with every other tab's writes held back; the application
   closes and reopens the database.
 - `package:web` is a direct dependency.
+
+### Fill and replay: own events only, and the cut-over to `esd/batch@3`
+
+- The fill and every replay enqueue only an event whose originator entry
+  names the fill's own database and whose last provenance entry is that
+  originator entry (`EVS-DEV-destination-drain/V`): an event this database
+  ingested, or otherwise holds without being its author, is decided like a
+  filter rejection and never reaches a queue. A security finding or a
+  succession event this database appended reaches every natively
+  serializing destination registration whatever that destination's filter
+  (`EVS-DEV-destination-drain/X`); a destination that does not serialize
+  natively still applies its ordinary filter to these events.
+  `fillBatch`, `buildHistoricalReplayRows` and `buildGapReplayRows` take
+  the fill's database identity.
+- `esd/batch@2` and `BatchEnvelope` are removed: `esd/batch@3`
+  (`DeliveryEnvelope`) is the library's one native batch format.
+  `BatchEnvelopeMetadata.channel` and `.attributes` are required, and
+  `.fromEnvelope`/`.toEnvelope` are gone with them.
+- `EventStore.ingestBatch` and `IngestBatchResult` are removed:
+  `EventStore.receiverEndpoint.accept` is the library's one delivery
+  operation for a native batch, authenticated by the caller's sender
+  identities. `EventStore.ingestEvent` is private to the event store's Dart
+  library; the library exposes no public ingest entry point that admits an
+  event outside a delivery (`EVS-PRD-ingest/G`).

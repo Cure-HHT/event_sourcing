@@ -15,12 +15,12 @@ library;
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:event_sourcing/src/destinations/batch_envelope_metadata.dart';
-import 'package:event_sourcing/src/destinations/destination_registry.dart';
+import 'package:event_sourcing/src/destinations/subscription_filter.dart';
 import 'package:event_sourcing/src/destinations/wire_payload.dart';
-import 'package:event_sourcing/src/ingest/batch_envelope.dart';
+import 'package:event_sourcing/src/event_store.dart';
 import 'package:event_sourcing/src/storage/attempt_result.dart';
 import 'package:event_sourcing/src/storage/final_status.dart';
+import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/sembast_backend.dart';
 import 'package:event_sourcing/src/storage/send_result.dart';
 import 'package:event_sourcing/src/sync/sync_policy.dart';
@@ -31,6 +31,7 @@ import 'package:sembast/sembast_memory.dart';
 
 import '../test_support/fake_destination.dart';
 import '../test_support/fifo_entry_helpers.dart';
+import '../test_support/native_destination.dart';
 import '../test_support/queue_test_support.dart';
 import '../test_support/registry_with_audit.dart';
 
@@ -110,6 +111,68 @@ void main() {
       expect(dest.sent, hasLength(3));
       expect(await backend.readFifoHead('fake'), isNull);
     });
+
+    // Verifies: EVS-DEV-destination-retry-budget/C
+    // Verifies: EVS-DEV-destination-retry-budget/D
+    test('SendNotAttempted records no attempt, leaves the head pending, and '
+        'sends nothing further in the same pass', () async {
+      final e1RowId = await _enqueueRow(
+        backend,
+        'fake',
+        eventId: 'e1',
+        sequenceNumber: 1,
+      );
+      await _enqueueRow(backend, 'fake', eventId: 'e2', sequenceNumber: 2);
+      final dest = FakeDestination(
+        script: [const SendNotAttempted(reason: 'receiver asked to wait')],
+      );
+
+      await drainForTest(dest, registry: registry);
+
+      // e2 (the trail row) was NOT attempted in the same pass.
+      expect(dest.sent, hasLength(1));
+
+      final head = await backend.readFifoHead('fake');
+      expect(head, isNotNull);
+      expect(head!.entryId, e1RowId);
+      expect(head.finalStatus, isNull);
+      expect(head.attempts, isEmpty);
+    });
+
+    // Verifies: EVS-DEV-destination-retry-budget/C
+    // With maxAttempts = 1, a SendNotAttempted does not spend the budget:
+    // the next drain call sends with the item's full budget still intact,
+    // and a single subsequent SendTransient reaches the bound and wedges —
+    // proving the not-attempted outcome recorded no attempt at all.
+    test(
+      'SendNotAttempted does not spend the retry budget (maxAttempts = 1)',
+      () async {
+        await _enqueueRow(backend, 'fake', eventId: 'e1', sequenceNumber: 1);
+        final dest = FakeDestination(
+          script: [
+            const SendNotAttempted(),
+            const SendTransient(error: 'still failing'),
+          ],
+        );
+        const policy = SyncPolicy(
+          initialBackoff: Duration.zero,
+          backoffMultiplier: 1.0,
+          maxBackoff: Duration.zero,
+          jitterFraction: 0.0,
+          maxAttempts: 1,
+        );
+
+        await drainForTest(dest, registry: registry, policy: policy);
+        final afterFirst = await backend.readFifoHead('fake');
+        expect(afterFirst!.attempts, isEmpty);
+        expect(afterFirst.finalStatus, isNull);
+
+        await drainForTest(dest, registry: registry, policy: policy);
+        final afterSecond = await backend.readFifoHead('fake');
+        expect(afterSecond!.attempts, hasLength(1));
+        expect(afterSecond.finalStatus, FinalStatus.wedged);
+      },
+    );
 
     // When the head row's final_status is FinalStatus.wedged, drain
     // SHALL return without calling Destination.send; the row is NOT
@@ -491,124 +554,28 @@ void main() {
       expect(head.attempts.first.outcome, 'transient');
     });
 
-    // A native row reconstructs wire bytes from `envelope_metadata` +
-    // `event_ids`-resolved events through `BatchEnvelope.encode`. The
-    // re-encode is JCS-canonical and therefore byte-identical across
-    // retries: a transient first attempt and a successful second attempt
-    // hand `Destination.send` the exact same bytes, captured here at
-    // `FakeDestination.sent`.
-    test('drain on native row re-encodes deterministically '
-        'across retries', () async {
-      // Write the event into the origin event store so findEventById
-      // resolves it at re-encode time.
-      final event = storedEventFixture(eventId: 'e1', sequenceNumber: 1);
-      await backend.transaction((txn) async {
-        final seq = await backend.nextSequenceNumber(txn);
-        // Re-mint the fixture with the reserved sequence number so the
-        // append-side guard (event.sequenceNumber == reserved) holds.
-        await backend.appendEvent(
-          txn,
-          storedEventFixture(eventId: 'e1', sequenceNumber: seq),
-        );
-      });
-
-      // Enqueue a native esd/batch@2 row directly via the
-      // nativeEnvelope: path. Drain reconstructs the wire bytes from
-      // envelope_metadata + event_ids-resolved events on each attempt.
-      final envelope = BatchEnvelopeMetadata(
-        batchFormatVersion: '2',
-        batchId: 'batch-x',
-        senderHop: 'mobile-1',
-        senderIdentifier: 'device-uuid',
-        senderSoftwareVersion: 'diary@1.2.3',
-        sentAt: DateTime.utc(2026, 4, 25, 12),
-      );
-      await backend.transaction(
-        (txn) => backend.enqueueFifoTxn(txn, 'fake', [
-          event,
-        ], nativeEnvelope: envelope),
-      );
-
-      // First drain: scripted SendTransient leaves the row pending and
-      // captures the bytes the destination saw on attempt #1.
-      const oneAttemptCapPolicy = SyncPolicy(
-        initialBackoff: Duration.zero,
-        backoffMultiplier: 1.0,
-        maxBackoff: Duration.zero,
-        jitterFraction: 0.0,
-        maxAttempts: 5, // well above 2 — keeps the row pending across both
-      );
-      final dest = FakeDestination(
-        script: [
-          const SendTransient(error: 'HTTP 503', httpStatus: 503),
-          const SendOk(),
-        ],
-      );
-      await drainForTest(
-        dest,
-        registry: registry,
-        clock: () => DateTime.utc(2026, 4, 25, 13),
-        policy: oneAttemptCapPolicy,
-      );
-      expect(dest.sent, hasLength(1));
-      final firstBytes = dest.sent.last.bytes;
-      // The reconstructed payload must be tagged with the native wire
-      // format and its bytes must decode back to the original envelope.
-      expect(dest.sent.last.contentType, BatchEnvelope.wireFormat);
-      final firstDecoded =
-          jsonDecode(utf8.decode(firstBytes)) as Map<String, Object?>;
-      expect(firstDecoded['batch_id'], 'batch-x');
-      expect((firstDecoded['events']! as List).length, 1);
-
-      // Second drain: clock past the zero-backoff window; SendOk lands
-      // the row. Capture bytes again and assert byte-for-byte equality.
-      await drainForTest(
-        dest,
-        registry: registry,
-        clock: () => DateTime.utc(2026, 4, 25, 14),
-        policy: oneAttemptCapPolicy,
-      );
-      expect(dest.sent, hasLength(2));
-      final secondBytes = dest.sent.last.bytes;
-      expect(
-        secondBytes,
-        firstBytes,
-        reason:
-            'native re-encode MUST be byte-deterministic across retries '
-            '(RFC 8785 JCS)',
-      );
-    });
-
-    // A native row whose `event_ids` reference a missing event throws
-    // StateError. Models the integrity-violation case where the FIFO row
-    // outlives its underlying event log entry; drain refuses to send a
-    // partial / incorrect re-encode.
+    // A native item's delivery is rebuilt from its envelope metadata and
+    // the events its `event_ids` name; the byte-identical resend of a
+    // delivery is covered by the delivery channel drain scenarios. An item
+    // whose `event_ids` name a missing event throws StateError: the FIFO
+    // row outlives its underlying event log entry, and drain refuses to
+    // send a partial or incorrect delivery.
     test('drain on native row with missing event throws '
         'StateError', () async {
-      // Append the event, enqueue the native row, then surgically delete
-      // the event from the underlying sembast store. After deletion,
-      // findEventById returns null and drain MUST throw.
-      final event = storedEventFixture(eventId: 'e1', sequenceNumber: 1);
-      await backend.transaction((txn) async {
-        final seq = await backend.nextSequenceNumber(txn);
-        await backend.appendEvent(
-          txn,
-          storedEventFixture(eventId: 'e1', sequenceNumber: seq),
-        );
-      });
-      final envelope = BatchEnvelopeMetadata(
-        batchFormatVersion: '2',
-        batchId: 'batch-x',
-        senderHop: 'mobile-1',
-        senderIdentifier: 'device-uuid',
-        senderSoftwareVersion: 'diary@1.2.3',
-        sentAt: DateTime.utc(2026, 4, 25, 12),
+      const init = AutomationInitiator(service: 'drain-test');
+      final dest = NativeDestination(
+        filter: const SubscriptionFilter(includeSystemEvents: true),
       );
-      await backend.transaction(
-        (txn) => backend.enqueueFifoTxn(txn, 'fake', [
-          event,
-        ], nativeEnvelope: envelope),
+      await registry.addDestination(dest, initiator: init);
+      await registry.setStartDate(dest.id, DateTime.utc(2000), initiator: init);
+      await fillForTest(
+        dest,
+        backend: backend,
+        clock: () => DateTime.utc(2100),
       );
+      final queued = await backend.readFifoHead(dest.id);
+      expect(queued, isNotNull, reason: 'the fill enqueued an item');
+      final missing = queued!.eventIds.first;
 
       // Surgically delete the event from the origin event store
       // (bypasses the append-only API; test-only mutation that simulates
@@ -619,13 +586,12 @@ void main() {
       final record = (await eventStore.find(
         db,
         finder: sembast.Finder(
-          filter: sembast.Filter.equals('event_id', 'e1'),
+          filter: sembast.Filter.equals('event_id', missing),
           limit: 1,
         ),
       )).single;
       await eventStore.record(record.key).delete(db);
 
-      final dest = FakeDestination(script: [const SendOk()]);
       await expectLater(
         drainForTest(dest, registry: registry),
         throwsA(isA<StateError>()),
@@ -633,9 +599,9 @@ void main() {
       // The drain refused before sending anything and recorded no attempt:
       // the row is still the pending head with an empty attempt history.
       expect(dest.sent, isEmpty);
-      final head = await backend.readFifoHead('fake');
+      final head = await backend.readFifoHead(dest.id);
       expect(head, isNotNull);
-      expect(head!.eventIds, ['e1']);
+      expect(head!.entryId, queued.entryId);
       expect(head.attempts, isEmpty);
       expect(head.finalStatus, isNull);
     });
@@ -679,6 +645,74 @@ void main() {
       ['e1', 'e2'],
     );
     expect(await after.readFifoHead('fake'), isNull);
+  });
+
+  group('budgetSpent()', () {
+    final t0 = DateTime.utc(2027, 1, 1);
+    AttemptResult at(int seconds, {String outcome = 'transient'}) =>
+        AttemptResult(
+          attemptedAt: t0.add(Duration(seconds: seconds)),
+          outcome: outcome,
+        );
+
+    // Verifies: EVS-DEV-destination-retry-budget/A
+    // the attempt bound alone spends the
+    //   budget, whatever the recorded times.
+    test('the attempt bound spends the budget on its own', () {
+      const policy = SyncPolicy(
+        initialBackoff: Duration.zero,
+        backoffMultiplier: 1.0,
+        maxBackoff: Duration.zero,
+        jitterFraction: 0.0,
+        maxAttempts: 2,
+        maxRetryTime: Duration(days: 1),
+      );
+      expect(budgetSpent([at(0), at(1)], policy, Duration.zero), isTrue);
+      expect(budgetSpent([at(0)], policy, Duration.zero), isFalse);
+    });
+
+    // Verifies: EVS-DEV-destination-retry-budget/A
+    // with no recorded attempt the time
+    //   bound is never reached, whatever its value.
+    test('an empty history never spends the time bound', () {
+      const policy = SyncPolicy(
+        initialBackoff: Duration.zero,
+        backoffMultiplier: 1.0,
+        maxBackoff: Duration.zero,
+        jitterFraction: 0.0,
+        maxAttempts: 1000000,
+        maxRetryTime: Duration.zero,
+      );
+      expect(budgetSpent(const [], policy, Duration.zero), isFalse);
+    });
+
+    // Verifies: EVS-DEV-destination-retry-budget/A
+    // each gap is capped at the retry
+    //   curve's longest allowed delay after the earlier attempt plus the
+    //   cadence, and the sum of the capped gaps decides whether the time
+    //   bound is spent.
+    test('gaps are capped at the curve delay plus the cadence', () {
+      const policy = SyncPolicy(
+        initialBackoff: Duration(seconds: 10),
+        backoffMultiplier: 1.0,
+        maxBackoff: Duration(seconds: 10),
+        jitterFraction: 0.0,
+        maxAttempts: 1000000,
+        maxRetryTime: Duration(seconds: 50),
+      );
+      const cadence = Duration(seconds: 5);
+      // Two gaps of 12 s, each capped at 10 + 5 = 15 s: nothing is
+      // capped down, so the raw sum (24 s) governs and stays under 50 s.
+      expect(budgetSpent([at(0), at(12), at(24)], policy, cadence), isFalse);
+      // A single gap of 40 s, capped down to 15 s: under the 50 s bound.
+      expect(budgetSpent([at(0), at(40)], policy, cadence), isFalse);
+      // Four gaps of 15 s, each capped at exactly 15 s: the sum (60 s)
+      // reaches the 50 s bound.
+      expect(
+        budgetSpent([at(0), at(15), at(30), at(45), at(60)], policy, cadence),
+        isTrue,
+      );
+    });
   });
 }
 

@@ -10,7 +10,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 WirePayload _payload() => WirePayload(
   bytes: Uint8List.fromList(<int>[1, 2, 3]),
-  contentType: BatchEnvelope.wireFormat,
+  contentType: DeliveryEnvelope.wireFormat,
   transformVersion: null,
 );
 
@@ -28,10 +28,45 @@ class _SpyBridge implements DownstreamBridge {
 
 void main() {
   group('NativeDemoDestination.send with optional bridge', () {
-    test('connection=ok, bridge=null → SendOk (regression)', () async {
+    // With no bridge the demo answers as an in-memory receiver: the answer
+    // carries its record of the channel, which names the delivery.
+    test('connection=ok, bridge=null → the receiver record names the '
+        'delivery', () async {
       final d = NativeDemoDestination();
-      final result = await d.send(_payload());
-      expect(result, isA<SendOk>());
+      final delivery = DeliveryEnvelope.seal(
+        batchId: 'b-1',
+        senderHop: 'mobile',
+        senderIdentifier: 'install',
+        senderSoftwareVersion: 'demo@1',
+        sentAt: DateTime.utc(2026, 9, 1),
+        channel: const DeliveryChannel(
+          senderDatabaseId: 'sender',
+          destinationId: 'Native',
+          registrationId: 'r1',
+          generation: 1,
+        ),
+        deliveryNumber: 1,
+        previousDeliveryHash: null,
+        events: <Map<String, Object?>>[
+          <String, Object?>{'event_id': 'e1', 'event_hash': 'h1'},
+        ],
+      );
+      final payload = WirePayload(
+        bytes: delivery.encode(),
+        contentType: DeliveryEnvelope.wireFormat,
+        transformVersion: null,
+      );
+      final result = await d.send(payload);
+      expect(result, isA<SendAnswered>());
+      expect(
+        (result as SendAnswered).response.record,
+        DeliveryRecord(deliveryNumber: 1, deliveryHash: delivery.deliveryHash),
+      );
+      final again = await d.send(payload);
+      expect(
+        ((again as SendAnswered).response as ReceiverAcknowledgement).outcome,
+        AcknowledgementOutcome.represented,
+      );
     });
 
     test('connection=ok, bridge returns SendOk → SendOk', () async {

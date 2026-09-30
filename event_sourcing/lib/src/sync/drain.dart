@@ -17,9 +17,9 @@
 //   application-supplied transport is caught and categorized as SendTransient
 //   rather than propagated to the caller of the pass)
 // Implements: EVS-PRD-destinations/I
-// (a failed attempt below maxAttempts
-//   commits the attempt alone, leaving the row pending at the head of its
-//   queue)
+// (a failed attempt below the retry
+//   budget commits the attempt alone, leaving the row pending at the head
+//   of its queue)
 // Implements: EVS-PRD-destinations/J
 // (every attempt is recorded, in the
 //   transaction that commits the outcome it produced, or not at all when
@@ -52,30 +52,16 @@
 //   and verifies the request; immediately before each send a fence
 //   transaction that writes finds no open request and the head unchanged
 //   since the payload was built, and no send starts otherwise)
-import 'dart:convert';
-import 'dart:typed_data';
+// Implements: EVS-DEV-destination-drain/Z
+// (a pending head marked transform-failed is
+//   wedged with cause transform_failed, without a send, before any halt
+//   honour or backoff check)
 
-import 'package:event_sourcing/src/destinations/destination.dart';
-import 'package:event_sourcing/src/destinations/destination_registry.dart';
-import 'package:event_sourcing/src/destinations/wedge_cause.dart';
-import 'package:event_sourcing/src/destinations/wire_payload.dart';
-import 'package:event_sourcing/src/ingest/batch_envelope.dart';
-import 'package:event_sourcing/src/logging.dart';
-import 'package:event_sourcing/src/storage/attempt_result.dart';
-import 'package:event_sourcing/src/storage/drain_lock.dart';
-import 'package:event_sourcing/src/storage/fifo_entry.dart';
-import 'package:event_sourcing/src/storage/final_status.dart';
-import 'package:event_sourcing/src/storage/queue_records.dart';
-import 'package:event_sourcing/src/storage/send_result.dart';
-import 'package:event_sourcing/src/storage/transaction.dart';
-import 'package:event_sourcing/src/storage/transaction_rerun_limit.dart';
-import 'package:event_sourcing/src/sync/clock.dart';
-import 'package:event_sourcing/src/sync/sync_policy.dart';
-import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
-import 'package:meta/meta.dart' show internal;
+part of '../event_store.dart';
 
 /// The configuration the drainer declares for a destination, and its
 /// fingerprint, recorded in the wedge events the drainer appends for it.
+
 @internal
 final class DrainerConfiguration {
   const DrainerConfiguration({
@@ -112,7 +98,7 @@ Future<void> _lockCheck(
 ///   via `tombstoneAndRefill`);
 /// - the head's backoff has not elapsed;
 /// - the most recent [Destination.send] returned [SendTransient] below the
-///   `maxAttempts` budget (backoff applies on the next pass); or
+///   retry budget in effect (backoff applies on the next pass); or
 /// - a transaction that decides a wedge reported failure (logged; the next
 ///   pass reads the head again and derives its status before any send).
 ///
@@ -122,10 +108,11 @@ Future<void> _lockCheck(
 /// 2. Derive the status the head's recorded attempts call for: a last
 ///    attempt that reported a permanent failure wedges it with cause
 ///    [WedgeCause.permanentRefusal]; an attempt count at or above the
-///    budget in effect wedges it with cause
-///    [WedgeCause.retryBudgetExhausted] (covering a budget lowered since
-///    the attempts were recorded). The wedge commits in its own
-///    transaction, without a send, and ends the pass.
+///    budget in effect, or recorded attempts whose capped gaps have spent
+///    the time bound (`EVS-DEV-destination-retry-budget/A`), wedges it
+///    with cause [WedgeCause.retryBudgetExhausted] (covering a budget
+///    lowered since the attempts were recorded). The wedge commits in its
+///    own transaction, without a send, and ends the pass.
 /// 3. Honour an open halt request: a read outside any transaction decides
 ///    whether to try, and the honouring transaction re-reads the request
 ///    and the head, verifies the request event in the log, and wedges the
@@ -143,11 +130,21 @@ Future<void> _lockCheck(
 ///    honoured at step 3).
 /// 7. Send, then commit the outcome.
 ///
+/// For a destination that serializes natively, step 5 numbers the delivery
+/// one above the sender channel record and links it to that record's hash,
+/// the fence of step 6 proceeds only while the record is unchanged and
+/// writes the delivery's number and hash in the send fence record, and the
+/// receiver's record returned with its answer decides the outcome (see
+/// [_readReceiverAnswer]): the head is marked `sent` only on a record
+/// naming its delivery, and a [SendOk] (an acceptance carrying no record)
+/// wedges it with cause [WedgeCause.acknowledgementInvalid]. A resume or a
+/// new generation of the channel ends the pass.
+///
 /// On [SendOk] the head is marked `sent` and the loop advances. On
 /// [SendPermanent], or a [SendTransient] whose attempt reaches the budget,
 /// one event-store transaction records the attempt, marks the head wedged,
 /// consumes any open halt request, appends the wedge event and writes the
-/// destination's wedge record (`DestinationRegistry.wedgeHeadInTxn`). When that transaction reports
+/// destination's wedge record (`DestinationRegistry._wedgeHeadInTxn`). When that transaction reports
 /// failure, the failure is logged and a second transaction reads the head
 /// again: a pending head (the wedge rolled back) gets the attempt alone,
 /// and step 2 of a later pass wedges it before any further send; a head
@@ -156,9 +153,14 @@ Future<void> _lockCheck(
 /// behind a wedged head are never attempted.
 ///
 /// [policy] is an optional [SyncPolicy] override; when null, the drain
-/// falls back to [SyncPolicy.defaults]. Its `maxAttempts` is the budget in
-/// effect, recorded in every wedge event. A budget below one is refused
-/// with an [ArgumentError] before anything is read or sent.
+/// falls back to [SyncPolicy.defaults]. Its `maxAttempts` and
+/// `maxRetryTime` are the budget in effect, recorded in every wedge event
+/// as `max_attempts` and `max_retry_ms`. A budget whose attempt bound is
+/// below one or whose time bound is negative is refused with an
+/// [ArgumentError] before anything is read or sent. [cadence] is the
+/// delivery cycle's cadence, added to the retry curve's longest allowed
+/// delay to cap each gap the time bound counts
+/// (`EVS-DEV-destination-retry-budget/A`).
 ///
 /// Every transaction that changes the queue (a wedge, a halt honour, the
 /// pre-send fence, each outcome) checks [lock] first and commits nothing
@@ -175,12 +177,13 @@ Future<void> drain(
   Destination destination, {
   required DestinationRegistry registry,
   required DrainLock lock,
+  required Duration cadence,
   Clock? clock,
   SyncPolicy? policy,
   DrainerConfiguration? declared,
   bool Function()? stopRequested,
 }) async {
-  final backend = registry.backend;
+  final backend = registry._backend;
   final now = clock ?? () => DateTime.now().toUtc();
   final effective = policy ?? SyncPolicy.defaults;
   checkRetryBudget(effective);
@@ -196,13 +199,29 @@ Future<void> drain(
     if (head.finalStatus == FinalStatus.wedged) return;
     // head.finalStatus is null from here on: a drain candidate.
 
+    // (1b) A transform-failed head wedges immediately, without a send,
+    // before any halt honour, status derivation from send attempts, or
+    // backoff check: the item was never sent, so no attempt-based status
+    // applies to it.
+    if (head.transformFailed) {
+      await _wedgeTransformFailed(
+        registry,
+        lock,
+        destinationId: destinationId,
+        policy: effective,
+        declared: declared,
+      );
+      return;
+    }
+
     // (2) Status derivation from the recorded attempts.
-    if (_derivedCause(head, effective.maxAttempts) != null) {
+    if (_derivedCause(head, effective, cadence) != null) {
       await _wedgeFromAttempts(
         registry,
         lock,
         destinationId: destinationId,
-        maxAttempts: effective.maxAttempts,
+        policy: effective,
+        cadence: cadence,
         declared: declared,
       );
       return;
@@ -220,7 +239,8 @@ Future<void> drain(
         lock,
         destinationId: destinationId,
         requestEventId: requested.requestEventId,
-        maxAttempts: effective.maxAttempts,
+        policy: effective,
+        cadence: cadence,
         declared: declared,
       );
       if (honour == null || honour == HaltHonour.honoured) return;
@@ -235,32 +255,15 @@ Future<void> drain(
       if (now().isBefore(nextAllowed)) return;
     }
 
-    // (5) Build the payload. Native `esd/batch@2` rows reconstruct bytes
-    // from `envelopeMetadata` + `eventIds`-resolved events through
-    // `BatchEnvelope.encode`, which JCS-canonicalizes the envelope so the
-    // result is byte-identical across retries. Third-party rows (any other
-    // wireFormat) carry the bytes as a stored JSON-Map `wirePayload`,
-    // re-encoded to bytes verbatim for `Destination.send`.
+    // (5) Build the payload. A destination that serializes natively sends
+    // a delivery on its channel, numbered from the sender channel record.
+    // Any other destination's row carries the bytes as a stored JSON-Map
+    // `wirePayload`, re-encoded to bytes verbatim for `Destination.send`.
     final WirePayload payload;
-    final envelope = head.envelopeMetadata;
-    if (envelope != null) {
-      final events = <Map<String, Object?>>[];
-      for (final eventId in head.eventIds) {
-        final ev = await backend.findEventById(eventId);
-        if (ev == null) {
-          throw StateError(
-            'native FIFO row ${head.entryId} references missing event '
-            '$eventId; cannot reconstruct esd/batch@2 wire bytes',
-          );
-        }
-        events.add(Map<String, Object?>.from(ev.toMap()));
-      }
-      final bytes = envelope.toEnvelope(events).encode();
-      payload = WirePayload(
-        bytes: bytes,
-        contentType: BatchEnvelope.wireFormat,
-        transformVersion: head.transformVersion,
-      );
+    _Delivery? delivery;
+    if (destination.serializesNatively) {
+      delivery = await _buildDelivery(backend, destinationId, head);
+      payload = delivery.payload;
     } else {
       payload = WirePayload(
         bytes: Uint8List.fromList(utf8.encode(jsonEncode(head.wirePayload))),
@@ -285,6 +288,20 @@ Future<void> drain(
           current.attempts.length != head.attempts.length) {
         return false;
       }
+      // Implements: EVS-DEV-delivery-channel/H
+      // a delivery is sent only when the sender channel record the fence
+      //   reads equals the one its number, link and hash were built from.
+      // Implements: EVS-DEV-delivery-channel/G
+      // the delivery's number (the record's plus one) and link (the
+      //   record's hash) are those of the record read in the fence.
+      if (delivery != null &&
+          await backend.readSenderChannelRecordTxn(txn, destinationId) !=
+              delivery.builtFrom) {
+        return false;
+      }
+      // Implements: EVS-DEV-delivery-channel/I
+      // the send fence record names the number and hash of the delivery in
+      //   flight.
       await backend.writeSendFenceTxn(
         txn,
         destinationId,
@@ -292,6 +309,8 @@ Future<void> drain(
           entryId: head.entryId,
           attemptCount: head.attempts.length,
           at: fenceAt,
+          deliveryNumber: delivery?.number,
+          deliveryHash: delivery?.hash,
         ),
       );
       return true;
@@ -314,13 +333,62 @@ Future<void> drain(
       destinationId,
     );
 
-    final attempt = _attemptFromResult(result, now());
+    // A send outcome stating that delivery was not attempted records
+    // nothing: the head stays exactly as it was, and this destination's
+    // pass ends. On a delivery channel nothing is written beyond the
+    // fence already committed in step 6, so the next fence recomputes the
+    // same number and link and the channel's numbering has no gap.
+    // Implements: EVS-DEV-destination-retry-budget/C
+    // Implements: EVS-DEV-destination-retry-budget/D
+    if (result is SendNotAttempted) {
+      return;
+    }
+
+    final attempt = _attemptFromResult(result, now(), delivery);
+
+    // A receiver's answer on a delivery channel carries its record of the
+    // channel, which decides the outcome.
+    if (delivery != null && result is SendAnswered) {
+      final advance = await _readReceiverAnswer(
+        registry,
+        lock,
+        destinationId: destinationId,
+        head: head,
+        delivery: delivery,
+        response: result.response,
+        attempt: attempt,
+        policy: effective,
+        cadence: cadence,
+        declared: declared,
+      );
+      if (advance) continue;
+      return;
+    }
+
     // head.attempts.length is the count before this attempt.
+    // A receiver's answer to a destination that is no delivery channel is
+    // recorded as a transient attempt.
     final cause = switch (result) {
-      SendOk() => null,
+      // Implements: EVS-DEV-delivery-channel/Q
+      // on a delivery channel, an accepting outcome that carries no record
+      //   wedges the head with cause acknowledgement_invalid, in the
+      //   transaction that records the attempt.
+      // Implements: EVS-PRD-destinations/Q
+      // the wedge event records an acceptance that carries no receiver
+      //   record as its cause.
+      SendOk() => delivery != null ? WedgeCause.acknowledgementInvalid : null,
       SendPermanent() => WedgeCause.permanentRefusal,
-      SendTransient() =>
-        head.attempts.length + 1 >= effective.maxAttempts
+      // Unreachable: drain() returns above whenever result is
+      // SendNotAttempted, before attempt is built.
+      SendNotAttempted() => throw StateError(
+        'a not-attempted send outcome never reaches the wedge-cause switch',
+      ),
+      SendTransient() || SendAnswered() =>
+        budgetSpent(
+              <AttemptResult>[...head.attempts, attempt],
+              effective,
+              cadence,
+            )
             ? WedgeCause.retryBudgetExhausted
             : null,
     };
@@ -340,13 +408,14 @@ Future<void> drain(
             head.entryId,
             attempt,
           );
-          final wedged = await registry.wedgeHeadInTxn(
+          final wedged = await registry._wedgeHeadInTxn(
             txn,
             collector,
             destinationId: destinationId,
             rowId: head.entryId,
             cause: cause,
             maxAttempts: effective.maxAttempts,
+            maxRetryMs: effective.maxRetryTime.inMilliseconds,
             drainerEpoch: lock.epoch,
             configuration: declared?.configuration,
             configurationFingerprint: declared?.fingerprint,
@@ -438,9 +507,10 @@ Future<void> drain(
 /// cause [WedgeCause.permanentRefusal], a wedge that consumes the request;
 /// otherwise the request is honoured with cause [WedgeCause.operatorHalt].
 /// The wedge event takes the wire format and transform version from the
-/// queue item and records `max_attempts` as null, since no retry budget is
-/// in effect for the destination in this process. Returns without writing
-/// when the queue has no pending head or no request is open.
+/// queue item and records `max_attempts` and `max_retry_ms` as null, since
+/// no retry budget is in effect for the destination in this process.
+/// Returns without writing when the queue has no pending head or no
+/// request is open.
 ///
 /// Its transactions check [lock] first, as the drain's do.
 @internal
@@ -449,7 +519,7 @@ Future<void> honourHaltById(
   required DestinationRegistry registry,
   required DrainLock lock,
 }) async {
-  final backend = registry.backend;
+  final backend = registry._backend;
   final head = await backend.readFifoHead(destinationId);
   if (head == null || head.finalStatus != null) return;
   final requested = await backend.transaction(
@@ -457,12 +527,13 @@ Future<void> honourHaltById(
   );
   await DeliveryTestHooks.current?.afterHaltLoopTopRead?.call(destinationId);
   if (requested == null) return;
-  if (_derivedCause(head, null) != null) {
+  if (_derivedCause(head, null, Duration.zero) != null) {
     await _wedgeFromAttempts(
       registry,
       lock,
       destinationId: destinationId,
-      maxAttempts: null,
+      policy: null,
+      cadence: Duration.zero,
       declared: null,
     );
     return;
@@ -472,7 +543,8 @@ Future<void> honourHaltById(
     lock,
     destinationId: destinationId,
     requestEventId: requested.requestEventId,
-    maxAttempts: null,
+    policy: null,
+    cadence: Duration.zero,
     declared: null,
   );
 }
@@ -486,19 +558,21 @@ Future<HaltHonour?> _honourHalt(
   DrainLock lock, {
   required String destinationId,
   required String requestEventId,
-  required int? maxAttempts,
+  required SyncPolicy? policy,
+  required Duration cadence,
   required DrainerConfiguration? declared,
 }) async {
   final HaltHonour honour;
   try {
     honour = await registry.eventStore.runTransaction((txn, collector) async {
       await _lockCheck(lock, txn, destinationId);
-      return registry.honourHaltInTxn(
+      return registry._honourHaltInTxn(
         txn,
         collector,
         destinationId: destinationId,
         requestEventId: requestEventId,
-        maxAttempts: maxAttempts,
+        maxAttempts: policy?.maxAttempts,
+        maxRetryMs: policy?.maxRetryTime.inMilliseconds,
         drainerEpoch: lock.epoch,
         configuration: declared?.configuration,
         configurationFingerprint: declared?.fingerprint,
@@ -569,21 +643,22 @@ void _observeFenceBodyRun(String destinationId) {
 }
 
 /// Wedges [destinationId]'s pending head for the cause its recorded
-/// attempts call for under [maxAttempts] (null: no budget in effect, so
-/// only a permanent refusal), in its own transaction, without a send. The
-/// transaction reads the head again and decides again before it wedges:
-/// with one drainer the head cannot change between the two reads, so the
-/// second decision is defence in depth. A failure is logged; whether the
-/// transaction committed is not known, and the next pass reads the head
-/// again before any send.
+/// attempts call for under [policy] and [cadence] (a null [policy]: no
+/// budget in effect, so only a permanent refusal), in its own transaction,
+/// without a send. The transaction reads the head again and decides again
+/// before it wedges: with one drainer the head cannot change between the
+/// two reads, so the second decision is defence in depth. A failure is
+/// logged; whether the transaction committed is not known, and the next
+/// pass reads the head again before any send.
 Future<void> _wedgeFromAttempts(
   DestinationRegistry registry,
   DrainLock lock, {
   required String destinationId,
-  required int? maxAttempts,
+  required SyncPolicy? policy,
+  required Duration cadence,
   required DrainerConfiguration? declared,
 }) async {
-  final backend = registry.backend;
+  final backend = registry._backend;
   try {
     final discarded = await registry.eventStore.runTransaction((
       txn,
@@ -592,15 +667,16 @@ Future<void> _wedgeFromAttempts(
       await _lockCheck(lock, txn, destinationId);
       final current = await backend.readFifoHeadTxn(txn, destinationId);
       if (current == null || current.finalStatus != null) return null;
-      final cause = _derivedCause(current, maxAttempts);
+      final cause = _derivedCause(current, policy, cadence);
       if (cause == null) return null;
-      final wedged = await registry.wedgeHeadInTxn(
+      final wedged = await registry._wedgeHeadInTxn(
         txn,
         collector,
         destinationId: destinationId,
         rowId: current.entryId,
         cause: cause,
-        maxAttempts: maxAttempts,
+        maxAttempts: policy?.maxAttempts,
+        maxRetryMs: policy?.maxRetryTime.inMilliseconds,
         drainerEpoch: lock.epoch,
         configuration: declared?.configuration,
         configurationFingerprint: declared?.fingerprint,
@@ -626,31 +702,177 @@ Future<void> _wedgeFromAttempts(
   }
 }
 
+/// Wedges [destinationId]'s pending, transform-failed head with cause
+/// [WedgeCause.transformFailed], in its own transaction, without a send.
+/// The transaction reads the head again and decides again before it
+/// wedges: with one drainer the head cannot change between the two reads,
+/// so the second decision is defence in depth. Consumes an open halt
+/// request like any other wedge (`EVS-DEV-destination-drain/O`): the
+/// request is not honoured with cause `operator_halt` for a transform-
+/// failed head. A failure is logged; whether the transaction committed
+/// is not known, and the next pass reads the head again before any send.
+// Implements: EVS-DEV-destination-drain/Z
+// the wedge runs in its own transaction, without a send, consuming an
+//   open halt request the way any other wedge does.
+Future<void> _wedgeTransformFailed(
+  DestinationRegistry registry,
+  DrainLock lock, {
+  required String destinationId,
+  required SyncPolicy policy,
+  required DrainerConfiguration? declared,
+}) async {
+  final backend = registry._backend;
+  try {
+    final discarded = await registry.eventStore.runTransaction((
+      txn,
+      collector,
+    ) async {
+      await _lockCheck(lock, txn, destinationId);
+      final current = await backend.readFifoHeadTxn(txn, destinationId);
+      if (current == null ||
+          current.finalStatus != null ||
+          !current.transformFailed) {
+        return null;
+      }
+      final wedged = await registry._wedgeHeadInTxn(
+        txn,
+        collector,
+        destinationId: destinationId,
+        rowId: current.entryId,
+        cause: WedgeCause.transformFailed,
+        maxAttempts: policy.maxAttempts,
+        maxRetryMs: policy.maxRetryTime.inMilliseconds,
+        drainerEpoch: lock.epoch,
+        configuration: declared?.configuration,
+        configurationFingerprint: declared?.fingerprint,
+      );
+      return wedged.discardedHaltRequestEventId;
+    });
+    _logDiscardedHaltRequest(destinationId, discarded);
+    _injectAfterWedgeTransaction(destinationId);
+  } on DrainLockLostException {
+    rethrow;
+  } on TransactionRerunLimitException {
+    // The handle cannot commit: the delivery cycle stops.
+    rethrow;
+  } on Object catch (e, st) {
+    libraryLog(
+      'drain',
+      'wedging the transform-failed head of $destinationId reported '
+          'failure; the pass ends',
+      level: LibraryLogLevel.severe,
+      error: e,
+      stackTrace: st,
+    );
+  }
+}
+
 /// The cause for which [head]'s recorded attempts call for a wedge under
-/// [maxAttempts], or null when they leave it pending. With no budget in
-/// effect ([maxAttempts] null) only a permanent refusal is derived.
-WedgeCause? _derivedCause(FifoEntry head, int? maxAttempts) {
+/// [policy] and [cadence], or null when they leave it pending. With no
+/// budget in effect ([policy] null) only a permanent refusal is derived.
+WedgeCause? _derivedCause(
+  FifoEntry head,
+  SyncPolicy? policy,
+  Duration cadence,
+) {
   if (head.attempts.isNotEmpty && head.attempts.last.outcome == 'permanent') {
     return WedgeCause.permanentRefusal;
   }
-  if (maxAttempts != null && head.attempts.length >= maxAttempts) {
+  if (policy != null && budgetSpent(head.attempts, policy, cadence)) {
     return WedgeCause.retryBudgetExhausted;
   }
   return null;
 }
 
-/// Refuses a retry budget below one: under it every pending head would
-/// wedge before its first send, recorded as an exhausted budget with no
-/// attempt behind it.
+/// Whether [attempts]' retry budget counts as spent under [policy] and the
+/// delivery cycle's [cadence]: the attempt bound is reached, or the sum,
+/// over each two consecutive recorded attempts, of the time between them
+/// (each gap capped at the retry curve's longest allowed delay after the
+/// earlier of the two, plus [cadence]), reaches the time bound.
+///
+/// The cap means a gap longer than the drainer would itself have waited —
+/// a declined pause, a sleeping device, or a stopped drainer — spends at
+/// most one capped gap, never the wall-clock time it actually lasted.
+///
+/// With no recorded attempt the time bound is never reached, whatever its
+/// value: a zero time bound is accepted (`checkRetryBudget` refuses only a
+/// negative one), and it wedges only once an attempt has actually held the
+/// item at the head, never before the first send.
+// Implements: EVS-DEV-destination-retry-budget/A
+// Implements: EVS-PRD-destinations/W
+@internal
+bool budgetSpent(
+  List<AttemptResult> attempts,
+  SyncPolicy policy,
+  Duration cadence,
+) => retryBudgetSpentAt(
+  <DateTime>[for (final a in attempts) a.attemptedAt],
+  policy,
+  cadence,
+);
+
+/// Whether the retry budget counts as spent given [times] (the recorded
+/// times of an item's send attempts, or of a transform's failures), oldest
+/// first: the count reaches [SyncPolicy.maxAttempts], or the sum, over each
+/// two consecutive times, of the gap between them (each capped at the
+/// retry curve's longest allowed delay after the earlier one, plus
+/// [cadence]), reaches [SyncPolicy.maxRetryTime]. [budgetSpent] applies
+/// this to a queue item's recorded attempts; the fill applies it to a
+/// transform failure record's recorded failure times.
+// Implements: EVS-DEV-destination-retry-budget/A
+// Implements: EVS-DEV-destination-retry-budget/B
+@internal
+bool retryBudgetSpentAt(
+  List<DateTime> times,
+  SyncPolicy policy,
+  Duration cadence,
+) {
+  if (times.length >= policy.maxAttempts) return true;
+  if (times.isEmpty) return false;
+  var spent = Duration.zero;
+  for (var i = 1; i < times.length; i++) {
+    final gap = times[i].difference(times[i - 1]);
+    final cap = policy.longestDelayAfter(i) + cadence;
+    spent += gap < cap ? gap : cap;
+  }
+  return spent >= policy.maxRetryTime;
+}
+
+/// The reason [policy]'s retry budget is unusable — its attempt bound is
+/// below one, or its time bound is negative — or `null` when the budget is
+/// usable. Under either fault, sending anything under the budget would be
+/// meaningless (every pending head would wedge before its first send,
+/// recorded as an exhausted budget with no attempt behind it, or against a
+/// time bound that can never be reached). A caller that only needs to
+/// decide whether to proceed (a resolved policy, checked once per pass)
+/// reads this without paying for stack-trace-carrying control flow; one
+/// that treats an unusable budget as a programming error calls
+/// [checkRetryBudget] instead.
+///
+// Implements: EVS-DEV-destination-drain/J
+@internal
+String? retryBudgetRefusalReason(SyncPolicy policy) {
+  if (policy.maxAttempts < 1) {
+    return 'the retry budget must be at least one attempt';
+  }
+  if (policy.maxRetryTime.isNegative) {
+    return "the retry budget's time bound must not be negative";
+  }
+  return null;
+}
+
+/// Throws [ArgumentError] for the reason [retryBudgetRefusalReason]
+/// reports, or returns normally when [policy]'s budget is usable.
+///
+// Implements: EVS-DEV-destination-drain/J
 @internal
 void checkRetryBudget(SyncPolicy policy) {
+  final reason = retryBudgetRefusalReason(policy);
+  if (reason == null) return;
   if (policy.maxAttempts < 1) {
-    throw ArgumentError.value(
-      policy.maxAttempts,
-      'maxAttempts',
-      'the retry budget must be at least one attempt',
-    );
+    throw ArgumentError.value(policy.maxAttempts, 'maxAttempts', reason);
   }
+  throw ArgumentError.value(policy.maxRetryTime, 'maxRetryTime', reason);
 }
 
 /// Consults the `afterWedgeTransaction` test seam after the wedge
@@ -674,22 +896,746 @@ void _injectOutcomeFailure(String destinationId, String outcome) {
   }
 }
 
-AttemptResult _attemptFromResult(SendResult result, DateTime attemptedAt) {
+AttemptResult _attemptFromResult(
+  SendResult result,
+  DateTime attemptedAt,
+  _Delivery? delivery,
+) {
+  // Implements: EVS-DEV-delivery-channel/I
+  // the attempt a send of a delivery produces records its number and hash.
+  final number = delivery?.number;
+  final hash = delivery?.hash;
   switch (result) {
     case SendOk():
-      return AttemptResult(attemptedAt: attemptedAt, outcome: 'ok');
+      return AttemptResult(
+        attemptedAt: attemptedAt,
+        outcome: 'ok',
+        deliveryNumber: number,
+        deliveryHash: hash,
+      );
     case SendTransient(:final error, :final httpStatus):
       return AttemptResult(
         attemptedAt: attemptedAt,
         outcome: 'transient',
         errorMessage: error,
         httpStatus: httpStatus,
+        deliveryNumber: number,
+        deliveryHash: hash,
       );
     case SendPermanent(:final error):
       return AttemptResult(
         attemptedAt: attemptedAt,
         outcome: 'permanent',
         errorMessage: error,
+        deliveryNumber: number,
+        deliveryHash: hash,
+      );
+    case SendAnswered(:final response):
+      return AttemptResult(
+        attemptedAt: attemptedAt,
+        outcome: 'transient',
+        errorMessage: 'receiver answered: $response',
+        deliveryNumber: number,
+        deliveryHash: hash,
+      );
+    case SendNotAttempted():
+      // drain() returns before this call whenever result is
+      // SendNotAttempted (EVS-DEV-destination-retry-budget/C): no
+      // attempt is ever built for it.
+      throw StateError(
+        'a not-attempted send outcome records no attempt and is never '
+        'turned into one',
       );
   }
+}
+
+// ---------------------------------------------------------------------------
+// Delivery channels
+// ---------------------------------------------------------------------------
+
+/// A delivery the drainer built for the head of a delivery channel: its
+/// number, link and hash, from the sender channel record [builtFrom].
+final class _Delivery {
+  const _Delivery({
+    required this.builtFrom,
+    required this.channel,
+    required this.number,
+    required this.hash,
+    required this.payload,
+  });
+
+  /// The sender channel record the delivery was numbered from.
+  final SenderChannelRecord builtFrom;
+
+  /// The channel the delivery is sent on.
+  final DeliveryChannel channel;
+
+  /// The delivery number: [builtFrom]'s number plus one.
+  final int number;
+
+  /// The delivery hash.
+  final String hash;
+
+  /// The `esd/batch@3` bytes handed to the destination.
+  final WirePayload payload;
+}
+
+/// Builds the delivery that carries [head] on its channel: numbered one
+/// above the sender channel record read now, linked to that record's hash,
+/// with the item's envelope fields, channel and attributes and the events
+/// the item names, as stored. Every read of the item's events happens here.
+Future<_Delivery> _buildDelivery(
+  StorageBackend backend,
+  String destinationId,
+  FifoEntry head,
+) async {
+  final metadata = head.envelopeMetadata;
+  final channel = metadata?.channel;
+  final attributes = metadata?.attributes;
+  if (metadata == null || channel == null || attributes == null) {
+    throw StateError(
+      'queue item ${head.entryId} of $destinationId, a destination that '
+      'serializes natively, carries no delivery channel',
+    );
+  }
+  final record = await backend.transaction(
+    (txn) => backend.readSenderChannelRecordTxn(txn, destinationId),
+  );
+  if (record == null) {
+    throw StateError(
+      '$destinationId serializes natively and has no sender channel record',
+    );
+  }
+  if (record.generation != channel.generation) {
+    throw StateError(
+      'queue item ${head.entryId} of $destinationId is on generation '
+      '${channel.generation}; the sender channel record is on generation '
+      '${record.generation}',
+    );
+  }
+  final events = <Map<String, Object?>>[];
+  for (final eventId in head.eventIds) {
+    final ev = await backend.findEventById(eventId);
+    if (ev == null) {
+      throw StateError(
+        'queue item ${head.entryId} of $destinationId references missing '
+        'event $eventId; cannot build its delivery',
+      );
+    }
+    events.add(Map<String, Object?>.from(ev.toMap()));
+  }
+  final sealed = DeliveryEnvelope.seal(
+    batchId: metadata.batchId,
+    senderHop: metadata.senderHop,
+    senderIdentifier: metadata.senderIdentifier,
+    senderSoftwareVersion: metadata.senderSoftwareVersion,
+    sentAt: metadata.sentAt,
+    channel: channel,
+    deliveryNumber: record.receiverRecord.deliveryNumber + 1,
+    previousDeliveryHash: record.receiverRecord.deliveryHash,
+    events: events,
+    attributes: attributes,
+  );
+  return _Delivery(
+    builtFrom: record,
+    channel: channel,
+    number: sealed.deliveryNumber,
+    hash: sealed.deliveryHash,
+    payload: WirePayload(
+      bytes: sealed.encode(),
+      contentType: DeliveryEnvelope.wireFormat,
+      transformVersion: head.transformVersion,
+    ),
+  );
+}
+
+/// How the drainer reads a receiver record returned for a delivery.
+enum _Reading {
+  /// The record names the delivery in flight: the head is marked sent
+  /// under it.
+  acknowledged,
+
+  /// The record is above the sender's and names a delivery the sender
+  /// attempted or sent, on the current generation, at another number: the
+  /// sender adopts it and marks nothing sent.
+  adopted,
+
+  /// The record equals the sender channel record.
+  inStep,
+
+  /// The receiver is behind and every delivery it lacks is retained.
+  receiverBehind,
+
+  /// The record is ahead and names no delivery the sender attempted.
+  senderRegressed,
+
+  /// No automatic path explains the record, or another receiver answered.
+  unexplained,
+
+  /// The answer names another channel than the delivery's; it says nothing
+  /// of this channel and is a transient failure.
+  otherChannel,
+}
+
+/// Reads [response], the receiver's answer to [delivery], the delivery of
+/// [head], and commits what it calls for with [attempt] in one transaction
+/// that checks [lock] first. Returns true when the head was marked sent
+/// (the drain goes on to the next item), false when the pass ends.
+///
+/// In this order:
+///
+/// - An answer naming another channel is a transient failure.
+/// - A response from another receiver database than the one the sender
+///   channel record holds, when it holds one, starts a new generation with
+///   a `channel_unexplained` finding.
+/// - A record above the sender channel record that names a delivery the
+///   sender attempted or sent on the current generation (the one the send
+///   fence record names, one an attempt on a pending, wedged or
+///   tombstoned item carries, or one a sent item's own delivery fields
+///   carry) is adopted: it becomes the sender channel record, with the
+///   responding receiver, retiring unsent every other pending item whose
+///   resend number is at or below it, and marks the head sent only when
+///   the record names the delivery in flight.
+/// - A record equal to the sender channel record changes nothing.
+/// - A record below the sender channel record, every delivery above it
+///   retained and the first linking to its hash, resumes the channel.
+/// - A record above the sender channel record naming no delivery
+///   attempted, at a number where no item was ever marked sent on the
+///   current generation, starts a new generation with a
+///   `sender_regressed` finding.
+/// - Every other record starts a new generation with a
+///   `channel_unexplained` finding.
+///
+/// The attempt is recorded on the head first; an attempt that leaves the
+/// head pending and spends the retry budget wedges it in the same
+/// transaction.
+// Implements: EVS-DEV-delivery-channel/N
+// an accepting outcome carrying another record, and an out_of_sequence
+//   refusal, are read here as the receiver's record, never as a permanent
+//   failure.
+Future<bool> _readReceiverAnswer(
+  DestinationRegistry registry,
+  DrainLock lock, {
+  required String destinationId,
+  required FifoEntry head,
+  required _Delivery delivery,
+  required ReceiverResponse response,
+  required AttemptResult attempt,
+  required SyncPolicy policy,
+  required Duration cadence,
+  required DrainerConfiguration? declared,
+}) async {
+  final backend = registry._backend;
+  final discarded = await registry.eventStore.runTransaction((
+    txn,
+    collector,
+  ) async {
+    await _lockCheck(lock, txn, destinationId);
+    final sender = await backend.readSenderChannelRecordTxn(txn, destinationId);
+    if (sender == null) {
+      throw StateError(
+        '$destinationId serializes natively and has no sender channel record',
+      );
+    }
+    final fence = await backend.readSendFenceTxn(txn, destinationId);
+    final items = await backend.listFifoEntriesTxn(txn, destinationId);
+    final record = response.record;
+    final responding = response.receiverDatabaseId;
+    final reading = response.channel != delivery.channel
+        ? _Reading.otherChannel
+        : await _readRecord(
+            backend,
+            txn,
+            destinationId: destinationId,
+            headEntryId: head.entryId,
+            sender: sender,
+            record: record,
+            responding: responding,
+            fence: fence,
+            items: items,
+          );
+    final acknowledged = reading == _Reading.acknowledged;
+    final recorded = AttemptResult(
+      attemptedAt: attempt.attemptedAt,
+      outcome: acknowledged ? 'ok' : 'transient',
+      errorMessage: acknowledged
+          ? null
+          : 'receiver ${response.receiverDatabaseId} answered with record '
+                '${record.deliveryNumber}: ${reading.name}',
+      deliveryNumber: attempt.deliveryNumber,
+      deliveryHash: attempt.deliveryHash,
+    );
+    await backend.appendAttemptTxn(txn, destinationId, head.entryId, recorded);
+    switch (reading) {
+      case _Reading.acknowledged:
+      case _Reading.adopted:
+        // Implements: EVS-DEV-delivery-resume/H
+        // a record above the sender channel record's naming a delivery the
+        //   sender attempted or sent at that number on the current
+        //   generation is adopted, in one transaction and recording no
+        //   finding: it becomes the sender channel record, with the
+        //   responding receiver; the pending head is marked sent only when
+        //   the record names the delivery the send fence record names; and
+        //   every other pending queue item a receiver-behind resume
+        //   enqueued for a delivery number at or below the record's is
+        //   retired unsent.
+        // Implements: EVS-DEV-delivery-channel/M
+        // the head is marked sent only on a record whose number and hash are
+        //   those of the delivery it sent.
+        // Implements: EVS-PRD-delivery-channel/F
+        // a queued item is marked delivered only on a receiver record naming
+        //   the delivery the sender made of it.
+        if (acknowledged) {
+          await backend.markSentTxn(
+            txn,
+            destinationId,
+            head.entryId,
+            generation: sender.generation,
+            deliveryNumber: record.deliveryNumber,
+            deliveryHash: record.deliveryHash!,
+          );
+        }
+        await _retirePendingInTxn(
+          backend,
+          txn,
+          destinationId,
+          await backend.listFifoEntriesTxn(txn, destinationId),
+          maxResendsDeliveryNumber: record.deliveryNumber,
+        );
+        await backend.writeSenderChannelRecordTxn(
+          txn,
+          destinationId,
+          SenderChannelRecord(
+            generation: sender.generation,
+            receiverRecord: record,
+            receiverDatabaseId: responding,
+          ),
+        );
+      case _Reading.inStep:
+      case _Reading.otherChannel:
+        break;
+      case _Reading.receiverBehind:
+        await _resumeInTxn(
+          registry,
+          txn,
+          collector,
+          lock: lock,
+          destinationId: destinationId,
+          sender: sender,
+          record: record,
+          responding: responding,
+          items: await backend.listFifoEntriesTxn(txn, destinationId),
+        );
+        return null;
+      case _Reading.senderRegressed:
+      case _Reading.unexplained:
+        await _newGenerationInTxn(
+          registry,
+          txn,
+          collector,
+          destinationId: destinationId,
+          channel: delivery.channel,
+          sender: sender,
+          record: record,
+          responding: responding,
+          kind: reading == _Reading.senderRegressed
+              ? FindingKind.senderRegressed
+              : FindingKind.channelUnexplained,
+          items: await backend.listFifoEntriesTxn(txn, destinationId),
+        );
+        return null;
+    }
+    if (acknowledged ||
+        !budgetSpent(
+          <AttemptResult>[...head.attempts, recorded],
+          policy,
+          cadence,
+        )) {
+      return null;
+    }
+    // The attempt leaves the head pending and spends the budget.
+    final wedged = await registry._wedgeHeadInTxn(
+      txn,
+      collector,
+      destinationId: destinationId,
+      rowId: head.entryId,
+      cause: WedgeCause.retryBudgetExhausted,
+      maxAttempts: policy.maxAttempts,
+      maxRetryMs: policy.maxRetryTime.inMilliseconds,
+      drainerEpoch: lock.epoch,
+      configuration: declared?.configuration,
+      configurationFingerprint: declared?.fingerprint,
+    );
+    return wedged.discardedHaltRequestEventId;
+  });
+  _logDiscardedHaltRequest(destinationId, discarded);
+  final after = await backend.readFifoRow(destinationId, head.entryId);
+  return after?.finalStatus == FinalStatus.sent;
+}
+
+/// Reads [record], returned by [responding] on the channel of [sender],
+/// against the sender's own records: the sender channel record, the send
+/// fence record [fence] and the attempts and sent deliveries the
+/// registration's queue [items] carry.
+// Implements: EVS-DEV-delivery-resume/Y
+// a response from another receiver database than the one the sender channel
+//   record holds, and a record that is not the sender's, calls for no
+//   resume, is not above it, or is above it naming a delivery the sender
+//   marked sent there under another hash, is unexplained.
+// Implements: EVS-DEV-delivery-resume/K
+// a record above the sender channel record naming no delivery the sender
+//   attempted or sent, at a number where the sender marked no delivery
+//   sent, is a sender regression, both on the current generation.
+// Implements: EVS-PRD-delivery-channel/I
+// a record from the channel's receiver database ahead of the sender's that
+//   names no delivery the sender attempted, at a number where the sender
+//   marked no delivery sent, is recorded as a sender regression.
+Future<_Reading> _readRecord(
+  StorageBackend backend,
+  Transaction txn, {
+  required String destinationId,
+  required String headEntryId,
+  required SenderChannelRecord sender,
+  required DeliveryRecord record,
+  required String responding,
+  required SendFence? fence,
+  required List<FifoEntry> items,
+}) async {
+  final held = sender.receiverDatabaseId;
+  if (held != null && held != responding) return _Reading.unexplained;
+  final own = sender.receiverRecord;
+  final attempted = _namesAttempted(record, fence, items, sender.generation);
+  if (record.deliveryNumber > own.deliveryNumber && attempted) {
+    return fence != null &&
+            fence.entryId == headEntryId &&
+            fence.deliveryNumber == record.deliveryNumber &&
+            fence.deliveryHash == record.deliveryHash
+        ? _Reading.acknowledged
+        : _Reading.adopted;
+  }
+  if (record == own) return _Reading.inStep;
+  if (record.deliveryNumber < own.deliveryNumber &&
+      await _resendable(
+        backend,
+        txn,
+        destinationId: destinationId,
+        sender: sender,
+        record: record,
+      )) {
+    return _Reading.receiverBehind;
+  }
+  if (record.deliveryNumber > own.deliveryNumber &&
+      !_markedSentAt(items, sender.generation, record.deliveryNumber)) {
+    return _Reading.senderRegressed;
+  }
+  return _Reading.unexplained;
+}
+
+/// Whether the sender marked a delivery sent at [number] on [generation]:
+/// "never reached" for [_Reading.senderRegressed] means no item was ever
+/// marked sent there, whatever hash it carries.
+// Implements: EVS-DEV-delivery-resume/K
+// a number where an item was marked sent, under any hash, was reached: a
+//   record naming a different hash there is unexplained, not a regression.
+bool _markedSentAt(List<FifoEntry> items, int generation, int number) {
+  for (final item in items) {
+    if (item.finalStatus == FinalStatus.sent &&
+        item.deliveryGeneration == generation &&
+        item.deliveryNumber == number) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/// Whether [record] names a delivery the sender attempted or sent on
+/// [generation], the channel's current generation: the one the send fence
+/// record names, one an attempt recorded on a pending, wedged or
+/// tombstoned item of the queue carries, or one a sent item's own
+/// delivery fields carry. The delivery hash covers the channel, so a
+/// match names a delivery of the same registration and generation.
+bool _namesAttempted(
+  DeliveryRecord record,
+  SendFence? fence,
+  List<FifoEntry> items,
+  int generation,
+) {
+  final number = record.deliveryNumber;
+  final hash = record.deliveryHash;
+  if (number == 0 || hash == null) return false;
+  if (fence != null &&
+      fence.deliveryNumber == number &&
+      fence.deliveryHash == hash) {
+    return true;
+  }
+  for (final item in items) {
+    if (item.finalStatus == FinalStatus.sent) {
+      if (item.deliveryGeneration == generation &&
+          item.deliveryNumber == number &&
+          item.deliveryHash == hash) {
+        return true;
+      }
+      continue;
+    }
+    for (final a in item.attempts) {
+      if (a.deliveryNumber == number && a.deliveryHash == hash) return true;
+    }
+  }
+  return false;
+}
+
+/// Whether the sender retains a delivery at every number above [record] up
+/// to [sender]'s, and the one numbered one above [record] links to its hash:
+/// its hash recomputes from its channel, number, events and attributes with
+/// [record]'s hash as its link.
+// Implements: EVS-DEV-delivery-resume/I
+// the channel resumes as a receiver behind when every number above the
+//   record up to the sender's is retained and the first links to the
+//   record's hash.
+// Implements: EVS-DEV-delivery-resume/W
+// the retained delivery at a number is the one the queue last marked sent
+//   there under the current generation; a number without one is not
+//   retained.
+Future<bool> _resendable(
+  StorageBackend backend,
+  Transaction txn, {
+  required String destinationId,
+  required SenderChannelRecord sender,
+  required DeliveryRecord record,
+}) async {
+  for (
+    var n = record.deliveryNumber + 1;
+    n <= sender.receiverRecord.deliveryNumber;
+    n++
+  ) {
+    final retained = await backend.readRetainedDeliveryTxn(
+      txn,
+      destinationId,
+      generation: sender.generation,
+      deliveryNumber: n,
+    );
+    if (retained == null) return false;
+    if (n != record.deliveryNumber + 1) continue;
+    final metadata = retained.envelopeMetadata;
+    final channel = metadata?.channel;
+    final attributes = metadata?.attributes;
+    if (channel == null || attributes == null) return false;
+    final hashes = <Object?>[];
+    for (final id in retained.eventIds) {
+      final event = await backend.findEventByIdInTxn(txn, id);
+      if (event == null) return false;
+      hashes.add(event.toMap()['event_hash']);
+    }
+    final relinked = computeDeliveryHash(
+      channel: channel,
+      deliveryNumber: n,
+      previousDeliveryHash: record.deliveryHash,
+      eventHashes: hashes,
+      attributes: attributes,
+    );
+    if (relinked != retained.deliveryHash) return false;
+  }
+  return true;
+}
+
+/// Retires [items]' pending ones inside [txn]: deletes each that carries no
+/// attempt and tombstones each that carries attempts. Returns the lowest
+/// event sequence number they carry, or null when none was pending. When
+/// [maxResendsDeliveryNumber] is given, only a pending item that resends a
+/// delivery number at or below it is retired; a pending item that is not a
+/// resend (its `resendsDeliveryNumber` is null) is left alone.
+Future<int?> _retirePendingInTxn(
+  StorageBackend backend,
+  Transaction txn,
+  String destinationId,
+  List<FifoEntry> items, {
+  int? maxResendsDeliveryNumber,
+}) async {
+  int? lowest;
+  for (final item in items) {
+    if (item.finalStatus != null) continue;
+    if (maxResendsDeliveryNumber != null &&
+        (item.resendsDeliveryNumber == null ||
+            item.resendsDeliveryNumber! > maxResendsDeliveryNumber)) {
+      continue;
+    }
+    if (item.attempts.isEmpty) {
+      await backend.deleteFifoEntryTxn(txn, destinationId, item.entryId);
+    } else {
+      await backend.setFinalStatusTxn(
+        txn,
+        destinationId,
+        item.entryId,
+        FinalStatus.tombstoned,
+      );
+    }
+    final first = item.sequenceRange.firstSeq;
+    if (lowest == null || first < lowest) lowest = first;
+  }
+  return lowest;
+}
+
+/// The resume of a receiver behind, inside [txn]: retires the pending
+/// items, rewinds the fill position below the lowest event they carry,
+/// enqueues one resend item per delivery number above [record] up to
+/// [sender]'s, carrying the retained delivery's events, envelope fields
+/// and attributes, sets the sender channel record to [record] and appends
+/// the resume event.
+// Implements: EVS-DEV-delivery-resume/N
+// the resume commits in one transaction that verifies the drain lock,
+//   retires the pending items (deleting those without attempts,
+//   tombstoning those with), rewinds the fill position below their lowest
+//   event, enqueues the resend items, sets the sender channel record to the
+//   receiver record and appends the resume event.
+// Implements: EVS-DEV-delivery-resume/M
+// one resend item per delivery number above the receiver record up to the
+//   sender's, in ascending order, each carrying the retained delivery's
+//   events and attributes in its order.
+// Implements: EVS-PRD-delivery-channel/H
+// every retained delivery after the receiver's record is sent again with
+//   the events, number, link and hash it was first sent with, and the
+//   resume is recorded as one event.
+// Implements: EVS-PRD-delivery-channel/L
+// a receiver that moved back is realigned by resending the retained
+//   deliveries it lacks that link to its record.
+// Implements: EVS-DEV-destination-drain/E
+// the receiver-behind resume enqueues the resend items; it is the drainer.
+Future<void> _resumeInTxn(
+  DestinationRegistry registry,
+  Transaction txn,
+  PublishCollector collector, {
+  required DrainLock lock,
+  required String destinationId,
+  required SenderChannelRecord sender,
+  required DeliveryRecord record,
+  required String responding,
+  required List<FifoEntry> items,
+}) async {
+  final backend = registry._backend;
+  final lowest = await _retirePendingInTxn(backend, txn, destinationId, items);
+  if (lowest != null) {
+    final cursor = await backend.readFillCursorTxn(txn, destinationId);
+    if (lowest - 1 < cursor) {
+      await backend.writeFillCursorTxn(txn, destinationId, lowest - 1);
+    }
+  }
+  // Implements: EVS-DEV-delivery-resume/N
+  // the resume removes the registration's transform failure record with
+  //   the rewind.
+  await backend.clearTransformFailureRecordTxn(txn, destinationId);
+  for (
+    var n = record.deliveryNumber + 1;
+    n <= sender.receiverRecord.deliveryNumber;
+    n++
+  ) {
+    final retained = (await backend.readRetainedDeliveryTxn(
+      txn,
+      destinationId,
+      generation: sender.generation,
+      deliveryNumber: n,
+    ))!;
+    final events = <StoredEvent>[];
+    for (final id in retained.eventIds) {
+      events.add((await backend.findEventByIdInTxn(txn, id))!);
+    }
+    await backend.enqueueFifoTxn(
+      txn,
+      destinationId,
+      events,
+      nativeEnvelope: retained.envelopeMetadata,
+      resendsDeliveryNumber: n,
+    );
+  }
+  await backend.writeSenderChannelRecordTxn(
+    txn,
+    destinationId,
+    SenderChannelRecord(
+      generation: sender.generation,
+      receiverRecord: record,
+      receiverDatabaseId: responding,
+    ),
+  );
+  final schedule = await backend.readScheduleTxn(txn, destinationId);
+  // Implements: EVS-DEV-resume-event/A
+  // the resume event carries exactly id, database_id, registration_id,
+  //   generation, resume_after, previous_record and drainer_epoch.
+  await registry._emitDestinationAuditInTxn(
+    txn,
+    collector,
+    entryType: kDestinationChannelResumedEntryType,
+    eventType: kDestinationChannelResumedEventType,
+    data: <String, Object?>{
+      'id': destinationId,
+      // `database_id` is added by the audit emitter.
+      'registration_id': schedule?.registrationId,
+      'generation': sender.generation,
+      'resume_after': record.toJson(),
+      'previous_record': sender.receiverRecord.toJson(),
+      'drainer_epoch': lock.epoch,
+    },
+    initiator: _drainInitiator,
+    // Implements: EVS-DEV-view-convergence/E
+    // the resume event is a record the drainer appends in the drain's own
+    //   transaction, an always-stored event.
+    mode: ApplyEventMode.alwaysStored,
+  );
+}
+
+/// A new generation of [destinationId]'s registration, inside [txn]:
+/// records the finding [kind] under the role `sender`, retires the pending
+/// items, rewinds the fill position to the start of the log and sets the
+/// sender channel record to the next generation, number 0, a null hash and
+/// the responding receiver.
+// Implements: EVS-DEV-delivery-resume/Z
+// the new generation commits in one transaction that verifies the drain
+//   lock, appends the finding under the detector role sender naming the
+//   channel, both records and both receiver identities, retires the pending
+//   items, rewinds the fill position to the start and sets the record to
+//   the next generation at number 0 with the responding receiver.
+// Implements: EVS-PRD-delivery-channel/X
+// a record no automatic path explains continues the registration on a new
+//   generation, numbered from delivery 1 and filled again from the start of
+//   the log.
+Future<void> _newGenerationInTxn(
+  DestinationRegistry registry,
+  Transaction txn,
+  PublishCollector collector, {
+  required String destinationId,
+  required DeliveryChannel channel,
+  required SenderChannelRecord sender,
+  required DeliveryRecord record,
+  required String responding,
+  required FindingKind kind,
+  required List<FifoEntry> items,
+}) async {
+  final backend = registry._backend;
+  await registry.eventStore._recordFindingInTxn(
+    txn,
+    collector,
+    role: FindingRole.sender,
+    kind: kind,
+    evidence: <String, Object?>{
+      'channel': channel.toJson(),
+      'sender_record': sender.receiverRecord.toJson(),
+      'receiver_record': record.toJson(),
+      'recorded_receiver_database_id': sender.receiverDatabaseId,
+      'responding_receiver_database_id': responding,
+    },
+    aggregates: const <String>[],
+  );
+  await _retirePendingInTxn(backend, txn, destinationId, items);
+  await backend.writeFillCursorTxn(txn, destinationId, -1);
+  // Implements: EVS-DEV-delivery-resume/Z
+  // the new generation removes the registration's transform failure
+  //   record with the rewind.
+  await backend.clearTransformFailureRecordTxn(txn, destinationId);
+  await backend.writeSenderChannelRecordTxn(
+    txn,
+    destinationId,
+    SenderChannelRecord(
+      generation: sender.generation + 1,
+      receiverRecord: DeliveryRecord.none,
+      receiverDatabaseId: responding,
+    ),
+  );
 }

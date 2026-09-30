@@ -18,8 +18,20 @@ class ThirdPartyBackend extends StorageBackend {
 
   @internal
   @override
+  Future<T> nonBlockingRead<T>(Future<T> Function(Transaction reads) body) =>
+      throw UnimplementedError();
+
+  @internal
+  @override
   Future<AppendResult> appendEvent(Transaction txn, StoredEvent event) =>
       throw UnimplementedError();
+
+  @internal
+  @override
+  Future<T> runInSavepointInTxn<T>(
+    Transaction txn,
+    Future<T> Function() body,
+  ) => body();
 
   @override
   Future<List<StoredEvent>> findEventsForAggregate(String aggregateId) =>
@@ -101,6 +113,13 @@ class ThirdPartyBackend extends StorageBackend {
   ) => throw UnimplementedError();
 
   @override
+  Future<Map<String, Map<String, dynamic>>> readViewRowsByKeysInTxn(
+    Transaction txn,
+    String viewName,
+    Set<String> keys,
+  ) => throw UnimplementedError();
+
+  @override
   Future<List<Map<String, dynamic>>> findViewRowsInTxn(
     Transaction txn,
     String viewName, {
@@ -114,31 +133,67 @@ class ThirdPartyBackend extends StorageBackend {
   Future<void> clearViewInTxn(Transaction txn, String viewName) =>
       throw UnimplementedError();
 
+  @internal
   @override
-  Future<EntryTypeVersion?> readViewTargetVersionInTxn(
+  Future<void> upsertTableViewRowInTxn(
     Transaction txn,
-    String viewName,
-    String entryType,
+    String copyId,
+    String key,
+    Map<String, dynamic> row, {
+    required String sourceAggregateId,
+  }) => throw UnimplementedError();
+
+  @internal
+  @override
+  Future<List<Map<String, dynamic>>> findTableRowsBySourceAggregateInTxn(
+    Transaction txn,
+    String copyId,
+    String sourceAggregateId,
   ) => throw UnimplementedError();
 
   @internal
   @override
-  Future<void> writeViewTargetVersionInTxn(
+  Future<String> createViewCopyInTxn(
     Transaction txn,
     String viewName,
-    String entryType,
-    EntryTypeVersion targetVersion,
+    String fingerprint,
+    int watermark,
   ) => throw UnimplementedError();
 
   @override
-  Future<Map<String, EntryTypeVersion>> readAllViewTargetVersionsInTxn(
+  Future<List<ViewCopy>> readViewCopiesInTxn(Transaction txn) =>
+      throw UnimplementedError();
+
+  @override
+  Future<ViewCopy?> readUnmarkedViewCopyInTxn(
     Transaction txn,
-    String viewName,
+    String fingerprint,
   ) => throw UnimplementedError();
 
   @internal
   @override
-  Future<void> clearViewTargetVersionsInTxn(Transaction txn, String viewName) =>
+  Future<void> setViewCopyWatermarkInTxn(
+    Transaction txn,
+    String copyId,
+    int watermark,
+  ) => throw UnimplementedError();
+
+  @internal
+  @override
+  Future<void> markViewCopyForDeletionInTxn(Transaction txn, String copyId) =>
+      throw UnimplementedError();
+
+  @internal
+  @override
+  Future<int> deleteViewCopyRowsInTxn(
+    Transaction txn,
+    String copyId, {
+    required int limit,
+  }) => throw UnimplementedError();
+
+  @internal
+  @override
+  Future<void> deleteViewCopyRecordInTxn(Transaction txn, String copyId) =>
       throw UnimplementedError();
 
   @internal
@@ -149,6 +204,11 @@ class ThirdPartyBackend extends StorageBackend {
     List<StoredEvent> batch, {
     WirePayload? wirePayload,
     BatchEnvelopeMetadata? nativeEnvelope,
+    bool transformFailed = false,
+    int? transformFailures,
+    String? wireFormat,
+    String? transformVersion,
+    int? resendsDeliveryNumber,
   }) => throw UnimplementedError();
 
   @override
@@ -246,6 +306,28 @@ class ThirdPartyBackend extends StorageBackend {
 
   @internal
   @override
+  Future<TransformFailureRecord?> readTransformFailureRecordTxn(
+    Transaction txn,
+    String destinationId,
+  ) => throw UnimplementedError();
+
+  @internal
+  @override
+  Future<void> writeTransformFailureRecordTxn(
+    Transaction txn,
+    String destinationId,
+    TransformFailureRecord record,
+  ) => throw UnimplementedError();
+
+  @internal
+  @override
+  Future<void> clearTransformFailureRecordTxn(
+    Transaction txn,
+    String destinationId,
+  ) => throw UnimplementedError();
+
+  @internal
+  @override
   Future<HaltRequest?> readHaltRequestTxn(
     Transaction txn,
     String destinationId,
@@ -316,6 +398,13 @@ class ThirdPartyBackend extends StorageBackend {
   @override
   Future<T> bootTransaction<T>(Future<T> Function(Transaction txn) body) =>
       transaction(body);
+
+  @internal
+  @override
+  Future<T?> catchUpTransaction<T>(
+    String copyKey,
+    Future<T> Function(Transaction txn) body,
+  ) => transaction(body);
 
   @internal
   @override
@@ -406,34 +495,109 @@ class ThirdPartyBackend extends StorageBackend {
     Set<String>? eventTypes,
   }) => throw UnimplementedError();
 
+  @internal
   @override
-  Future<Map<String, EntryTypeVersion>> readViewTargetsForEntryTypeInTxn(
+  Future<StoredEvent?> readLatestHeldAsAuthoredInTxn(
     Transaction txn,
-    String entryType,
+    String databaseId,
   ) => throw UnimplementedError();
 
   @internal
   @override
-  Future<void> markViewTargetBehindInTxn(
-    Transaction txn,
-    String viewName,
-    String entryType,
-  ) => throw UnimplementedError();
+  Future<StoredEvent?> readLatestAuthoredOfAggregateInTxn(
+    Transaction txn, {
+    required String databaseId,
+    required String aggregateId,
+  }) => throw UnimplementedError();
 
+  @internal
   @override
-  Future<bool> readViewTargetBehindInTxn(
+  Future<List<StoredEvent>> findAuthoredDeliveryAuditsInTxn(
+    Transaction txn, {
+    required String databaseId,
+    required String aggregateId,
+    required int fromDeliveryNumber,
+    required int toDeliveryNumber,
+  }) => throw UnimplementedError();
+
+  @internal
+  @override
+  Future<List<StoredEvent>> findLatestAuthoredDeliveryAuditsInTxn(
+    Transaction txn, {
+    required String databaseId,
+    required Set<String> senderDatabaseIds,
+  }) => throw UnimplementedError();
+
+  @internal
+  @override
+  Future<StoredEvent?> readLatestEligibleVersionInTxn(
     Transaction txn,
-    String viewName,
-    String entryType,
+    String aggregateId,
   ) => throw UnimplementedError();
 
   @internal
   @override
-  Future<void> clearViewTargetBehindInTxn(
+  Future<Map<String, int?>> readAggregateAuthorshipInTxn(
     Transaction txn,
-    String viewName,
-    String entryType,
+    String aggregateId,
   ) => throw UnimplementedError();
+
+  @internal
+  @override
+  Future<int?> readLowestOriginPositionByPredecessorInTxn(
+    Transaction txn, {
+    required String originatingDatabaseId,
+    required String? previousEventHash,
+  }) => throw UnimplementedError();
+
+  @internal
+  @override
+  Future<bool> holdsAuthoredSecurityFindingInTxn(
+    Transaction txn, {
+    required String databaseId,
+    required String findingId,
+  }) => throw UnimplementedError();
+
+  @internal
+  @override
+  Future<List<StoredEvent>> findEventsBySealedHashInTxn(
+    Transaction txn,
+    String sealedHash,
+  ) => throw UnimplementedError();
+
+  @internal
+  @override
+  Future<List<StoredEvent>> findEventsByPredecessorInTxn(
+    Transaction txn, {
+    required String originatingDatabaseId,
+    required String? previousEventHash,
+  }) => throw UnimplementedError();
+
+  @internal
+  @override
+  Future<List<StoredEvent>> findEventsByOriginPositionInTxn(
+    Transaction txn, {
+    required String originatingDatabaseId,
+    required int originPosition,
+  }) => throw UnimplementedError();
+
+  @internal
+  @override
+  Future<List<StoredEvent>> findEventsFromOriginPositionInTxn(
+    Transaction txn, {
+    required String originatingDatabaseId,
+    required int fromPosition,
+  }) => throw UnimplementedError();
+
+  @internal
+  @override
+  Future<List<StoredEvent>> findSecurityFindingsInTxn(Transaction txn) =>
+      throw UnimplementedError();
+
+  @internal
+  @override
+  Future<bool> holdsSecurityFindingInTxn(Transaction txn) =>
+      throw UnimplementedError();
 
   @override
   Future<bool> hasFifoWedged() => throw UnimplementedError();
@@ -497,6 +661,63 @@ class ThirdPartyBackend extends StorageBackend {
     String destinationId,
     String entryId,
     FinalStatus status,
+  ) => throw UnimplementedError();
+
+  @internal
+  @override
+  Future<List<FifoEntry>> listFifoEntriesTxn(
+    Transaction txn,
+    String destinationId,
+  ) => throw UnimplementedError();
+
+  @internal
+  @override
+  Future<void> markSentTxn(
+    Transaction txn,
+    String destinationId,
+    String entryId, {
+    required int generation,
+    required int deliveryNumber,
+    required String deliveryHash,
+  }) => throw UnimplementedError();
+
+  @internal
+  @override
+  Future<void> deleteFifoEntryTxn(
+    Transaction txn,
+    String destinationId,
+    String entryId,
+  ) => throw UnimplementedError();
+
+  @internal
+  @override
+  Future<FifoEntry?> readRetainedDeliveryTxn(
+    Transaction txn,
+    String destinationId, {
+    required int generation,
+    required int deliveryNumber,
+  }) => throw UnimplementedError();
+
+  @internal
+  @override
+  Future<SenderChannelRecord?> readSenderChannelRecordTxn(
+    Transaction txn,
+    String destinationId,
+  ) => throw UnimplementedError();
+
+  @internal
+  @override
+  Future<void> writeSenderChannelRecordTxn(
+    Transaction txn,
+    String destinationId,
+    SenderChannelRecord record,
+  ) => throw UnimplementedError();
+
+  @internal
+  @override
+  Future<void> clearSenderChannelRecordTxn(
+    Transaction txn,
+    String destinationId,
   ) => throw UnimplementedError();
 
   @internal

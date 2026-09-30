@@ -3,7 +3,8 @@
 // `/health` answers 503 with the boot's phase while the boot waits on a
 // lock another session holds; it reports ready once the boot is done and
 // logs its delivery cycle's state; a second server stands by, and takes
-// over when the first stops on SIGTERM, which exits 0. Gated on
+// over when the first stops on SIGTERM, which exits 0. The servers connect as
+// the declared runtime role of the demo's deployment step. Gated on
 // PG_TEST_URL. The entry point runs in a subprocess, so this is an
 // application-side test and cites no library requirement.
 @TestOn('vm')
@@ -13,21 +14,9 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:event_sourcing/event_sourcing.dart';
-import 'package:postgres/postgres.dart';
 import 'package:test/test.dart';
 
-Future<Connection> _connect(String url) => Connection.open(
-  PostgresBackend.endpointFromUrl(url),
-  settings: const ConnectionSettings(sslMode: SslMode.disable),
-);
-
-Future<void> _resetSchema(String url) async {
-  final c = await _connect(url);
-  await c.execute('DROP SCHEMA public CASCADE');
-  await c.execute('CREATE SCHEMA public');
-  await c.close();
-}
+import 'support/demo_postgres.dart';
 
 String _dart() {
   final root = Platform.environment['FLUTTER_ROOT'];
@@ -130,30 +119,32 @@ class _Server {
 }
 
 void main() {
-  final url = Platform.environment['PG_TEST_URL'];
+  final db = DemoPostgres.fromEnvironment();
 
   setUp(() async {
-    if (url == null || url.isEmpty) return;
-    await _resetSchema(url);
+    if (db == null) return;
+    await db.reset(provision: false);
   });
 
   test(
     'the server listens and reports its boot while the boot waits, then '
     'serves; a second server stands by and takes over when the first stops',
     () async {
-      if (url == null || url.isEmpty) {
+      if (db == null) {
         markTestSkipped('PG_TEST_URL unset');
         return;
       }
-      final provisioned = await Process.run(
-        _dart(),
-        _args(url, 0, const <String>['--provision']),
-      );
+      final url = db.runtimeUrl;
+      final provisioned = await Process.run(_dart(), <String>[
+        'run',
+        'bin/server.dart',
+        ...db.provisionArgs,
+      ]);
       expect(provisioned.exitCode, 0, reason: '${provisioned.stderr}');
 
       // Another session holds a lock that the boot's first statement waits
       // for, so the boot cannot finish until it is released.
-      final holder = await _connect(url);
+      final holder = await db.connectAdmin();
       addTearDown(holder.close);
       final release = Completer<void>();
       final held = Completer<void>();

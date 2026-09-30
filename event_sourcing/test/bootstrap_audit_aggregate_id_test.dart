@@ -35,7 +35,10 @@ void main() {
         );
         final backend = SembastBackend(database: db);
         await bootstrapEventStore(
-          backend: backend,
+          storage: ApplicationSuppliedStorage(
+            backend,
+            SembastSecurityContextStore(backend: backend),
+          ),
           source: _source,
           entryTypes: <EntryTypeDefinition>[_typeA()],
           destinations: const <Destination>[],
@@ -77,7 +80,10 @@ void main() {
         final dbA = await factory.openDatabase('install-A.db');
         final backendA = SembastBackend(database: dbA);
         await bootstrapEventStore(
-          backend: backendA,
+          storage: ApplicationSuppliedStorage(
+            backendA,
+            SembastSecurityContextStore(backend: backendA),
+          ),
           source: sourceA,
           entryTypes: <EntryTypeDefinition>[_typeA()],
           destinations: const <Destination>[],
@@ -85,7 +91,10 @@ void main() {
         final dbB = await factory.openDatabase('install-B.db');
         final backendB = SembastBackend(database: dbB);
         await bootstrapEventStore(
-          backend: backendB,
+          storage: ApplicationSuppliedStorage(
+            backendB,
+            SembastSecurityContextStore(backend: backendB),
+          ),
           source: sourceB,
           entryTypes: <EntryTypeDefinition>[_typeA()],
           destinations: const <Destination>[],

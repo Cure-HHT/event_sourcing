@@ -8,8 +8,21 @@
 // idempotent application
 //   ensures the event log alone is sufficient to reconstruct role-assignment
 //   state; re-running against an already-populated store emits nothing.
+// Implements: EVS-DEV-converging-view-reads/I
+// waits until user_role_scopes is current for the instance before reading
+//   it, and throws ViewConvergenceTimeout, naming it and its copy's
+//   progress, once the caller's deadline passes first; a read taken
+//   converging (the view converged again after the wait returned) is
+//   discarded and this re-enters that wait rather than treating the
+//   read's rows as the view's settled contents.
+// Implements: EVS-DEV-converging-view-reads/H
+// never decides from a converging read: satisfies H's intent for this
+//   operation through I's deadline-bounded wait rather than a typed
+//   refusal, since I requires waiting the view current before reading it
+//   in the first place.
 
 import 'package:event_sourcing/event_sourcing.dart';
+import 'package:event_sourcing/src/permissions/wait_for_current_views.dart';
 import 'package:meta/meta.dart';
 
 @immutable
@@ -43,12 +56,18 @@ class RoleAssignmentSeedResult {
 /// produced by [computeRoleAssignmentAggregateId]; the same convention is used by
 /// the `userRoleScopesSpec` projection's `AggregateIdKey` rowKey so the
 /// emitted events land on the rows this function reconstructs.
+///
+/// [timeout] bounds how long this waits for the `user_role_scopes` view to
+/// become current for the instance before reading it
+/// (EVS-DEV-converging-view-reads/I): a deadline already passed throws
+/// [ViewConvergenceTimeout] after one check, without waiting.
 Future<RoleAssignmentSeedResult> bootstrapRoleAssignments({
   required EventStore eventStore,
   required RoleAssignmentSeed seed,
   Initiator seedInitiator = const AutomationInitiator(
     service: 'event_sourcing_role_assignments_seed',
   ),
+  Duration timeout = const Duration(seconds: 30),
 }) async {
   // 1. Compute the aggregate-id -> entry map implied by the seed.
   final inSeed = <String, RoleAssignmentSeedEntry>{
@@ -60,11 +79,23 @@ Future<RoleAssignmentSeedResult> bootstrapRoleAssignments({
       ): e,
   };
 
-  // 2. Reconstruct the aggregate-id set currently materialized in the
-  //    user_role_scopes view. The row payload carries user_id / role /
-  //    scope; the storage key is not surfaced by findViewRows, so we
-  //    rebuild the aggregate id from the row body.
-  final rows = await eventStore.backend.findViewRows('user_role_scopes');
+  // 2. Wait for user_role_scopes to be current, then reconstruct the
+  //    aggregate-id set currently materialized in it. The row payload
+  //    carries user_id / role / scope; the storage key is not surfaced by
+  //    findViewRows, so we rebuild the aggregate id from the row body. The
+  //    view can converge again between the wait and the read; a read
+  //    taken converging is discarded and this waits again rather than
+  //    deciding from it (EVS-DEV-converging-view-reads/H), so a deadline
+  //    already passed throws ViewConvergenceTimeout from the next wait.
+  final deadline = DateTime.now().add(timeout);
+  List<Map<String, dynamic>> rows;
+  while (true) {
+    await waitForViewsCurrent(eventStore, {'user_role_scopes'}, deadline);
+    final read = await eventStore.reader.findViewRows('user_role_scopes');
+    if (read.state == ViewConvergenceState.converging) continue;
+    rows = read.rows;
+    break;
+  }
   final inView = <String>{};
   for (final r in rows) {
     final scope = ScopeValue.fromJson(

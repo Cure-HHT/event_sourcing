@@ -14,19 +14,21 @@
 // Traceability lives on the individual tests.
 import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:event_sourcing/event_sourcing.dart';
+import 'package:event_sourcing/src/event_store.dart' show wedgeHeadInTxnForTest;
 import 'package:event_sourcing/src/logging.dart';
 import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'deliveries.dart';
 import 'destination_wedges_view_conformance.dart' show forgedEvent;
 import 'drain_wedge_conformance.dart'
     show budget, declaredWedgeEventKeys, expectWedgeRecordMatchesLog;
 import 'fake_destination.dart';
 import 'queue_registry_conformance.dart' show QueueTestDatabase;
 import 'queue_test_support.dart';
+import 'test_backends.dart';
 import 'wedges_view_invariant.dart';
 
 const Initiator _init = AutomationInitiator(service: 'halt-scenarios');
@@ -45,7 +47,7 @@ DateTime _fillNow() => DateTime.utc(2027, 1, 1);
 /// that no cancellation, wedge or deletion naming it followed.
 Future<Map<String, StoredEvent>> _openRequestsInLog(EventStore store) async {
   final open = <String, StoredEvent>{};
-  for (final e in await store.backend.findAllEvents()) {
+  for (final e in await store.reader.findAllEvents()) {
     if (e.aggregateType != kDestinationAuditAggregateType) continue;
     if (e.data['database_id'] != store.databaseId) continue;
     final id = e.data['id']! as String;
@@ -77,7 +79,7 @@ Future<void> expectHaltRequestMatchesLog(
   EventStore store,
   Iterable<String> destinationIds,
 ) async {
-  final backend = store.backend;
+  final backend = testBackendOf(store);
   final open = await _openRequestsInLog(store);
   for (final id in destinationIds) {
     final stored = await backend.transaction(
@@ -108,7 +110,7 @@ Future<void> expectHaltRequestMatchesLog(
 Future<void> expectHaltLogInvariant(EventStore store) async {
   final open = <String, String>{};
   final closed = <String>{};
-  for (final e in await store.backend.findAllEvents()) {
+  for (final e in await store.reader.findAllEvents()) {
     if (e.aggregateType != kDestinationAuditAggregateType) continue;
     if (e.data['database_id'] != store.databaseId) continue;
     final id = e.data['id']! as String;
@@ -147,7 +149,9 @@ Future<void> expectHaltLogInvariant(EventStore store) async {
 }
 
 class _Process {
-  _Process(this.backend, this.store, this.registry);
+  _Process(this.backend, this.store, this.registry) {
+    trackTestBackend(store, backend);
+  }
   final StorageBackend backend;
   final EventStore store;
   final DestinationRegistry registry;
@@ -274,8 +278,17 @@ class _World {
   }
 }
 
+/// The `backend_state` records a stored event, or a stored security
+/// finding, advances, left out of a snapshot compared beside the findings.
+const Set<String> _advancedByEveryEvent = <String>{
+  'sequence_counter',
+  'latest_authored_sequence',
+  'held_finding_sequences',
+};
+
 /// Run every operator-halt scenario against a database [databaseFactory]
 /// builds fresh for each test (a null database skips the test).
+
 void runOperatorHaltScenarios(
   Future<QueueTestDatabase?> Function() databaseFactory, {
   required String label,
@@ -365,7 +378,7 @@ void runOperatorHaltScenarios(
         );
         expect(wedge.data['halt_requested_by'], _operator.toJson());
         expect(await w.halt('x'), isNull, reason: 'the request is consumed');
-        final rows = await wedgesViewRows(w.backend);
+        final rows = await wedgesViewRows(w.store);
         expect(
           rows['${w.store.databaseId}|x']?['halt_requested_by'],
           _operator.toJson(),
@@ -409,6 +422,7 @@ void runOperatorHaltScenarios(
           'cause': 'operator_halt',
           'attempt_count': null,
           'max_attempts': 7,
+          'max_retry_ms': const Duration(hours: 24).inMilliseconds,
           'last_outcome': null,
           'http_status': null,
           'wire_format': head.wireFormat,
@@ -878,13 +892,15 @@ void runOperatorHaltScenarios(
         for (final budgetInEffect in <int?>[3, null]) {
           await expectLater(
             w.store.runTransaction(
-              (txn, collector) => w.registry.wedgeHeadInTxn(
+              (txn, collector) => wedgeHeadInTxnForTest(
+                w.registry,
                 txn,
                 collector,
                 destinationId: 'x',
                 rowId: head.entryId,
                 cause: WedgeCause.operatorHalt,
                 maxAttempts: budgetInEffect,
+                maxRetryMs: null,
                 drainerEpoch: 1,
                 configuration: null,
                 configurationFingerprint: null,
@@ -1157,7 +1173,7 @@ void runOperatorHaltScenarios(
               'purpose': HaltPurpose.pause.wire,
             },
           );
-          await w.store.ingestEvent(peer);
+          await ingestEventForTest(w.store, peer);
           final held = await w.backend.findEventById(peer.eventId);
           expect(held?.data['database_id'], 'peer-db');
           return peer.eventId;
@@ -1217,16 +1233,15 @@ void runOperatorHaltScenarios(
           source: _source,
           securityContexts: w.db.securityFor(backend),
         );
-        store.deliveryTrigger = () async {
-          wakes += 1;
-        };
+        trackTestBackend(store, backend);
         final registry = DestinationRegistry(eventStore: store);
+        final counting = DeliveryTestHooks(onDeliveryWake: (_) => wakes += 1);
         Future<void> wakesOnce(
           String op,
           Future<Object?> Function() run,
         ) async {
           final before = wakes;
-          await run();
+          await runWithDeliveryTestHooks(counting, run);
           expect(wakes - before, 1, reason: op);
         }
 
@@ -1257,10 +1272,13 @@ void runOperatorHaltScenarios(
         );
         final refusedAt = wakes;
         await expectLater(
-          registry.requestHalt(
-            'x',
-            initiator: _operator,
-            purpose: HaltPurpose.pause,
+          runWithDeliveryTestHooks(
+            counting,
+            () => registry.requestHalt(
+              'x',
+              initiator: _operator,
+              purpose: HaltPurpose.pause,
+            ),
           ),
           throwsStateError,
         );
@@ -1713,6 +1731,7 @@ void runOperatorHaltScenarios(
         expect(wedge.data['cause'], 'operator_halt');
         expect(wedge.data['halt_request_event_id'], request);
         expect(wedge.data['max_attempts'], isNull);
+        expect(wedge.data['max_retry_ms'], isNull);
         expect(wedge.data['configuration_fingerprint'], isNull);
         expect(wedge.data['wire_format'], head.wireFormat);
         expect(wedge.data['transform_version'], head.transformVersion);
@@ -1733,7 +1752,8 @@ void runOperatorHaltScenarios(
       //   the draining process does not register as on one it does.
       // Verifies: EVS-DEV-destination-drain/I
       // a wedge on a destination the draining process does not register
-      //   records max_attempts as null and the attempt fields of the item.
+      //   records max_attempts and max_retry_ms as null and the attempt
+      //   fields of the item.
       test('a recorded refusal on an unregistered destination', () async {
         if (!available) return;
         final other = DestinationRegistry(eventStore: w.store);
@@ -1763,6 +1783,7 @@ void runOperatorHaltScenarios(
         expect(wedge.data['attempt_count'], 1);
         expect(wedge.data['last_outcome'], 'permanent');
         expect(wedge.data['max_attempts'], isNull);
+        expect(wedge.data['max_retry_ms'], isNull);
         expect(wedge.data['halt_request_event_id'], request);
         expect(await w.halt('remote'), isNull);
         await w.agree(<String>['remote']);
@@ -1824,6 +1845,7 @@ void runOperatorHaltScenarios(
           source: _source,
           securityContexts: w.db.securityFor(backend),
         );
+        trackTestBackend(store, backend);
         final registry = DestinationRegistry(eventStore: store);
         var passes = 0;
         final log = <LibraryLogRecord>[];
@@ -2085,72 +2107,88 @@ void runOperatorHaltScenarios(
         },
       };
 
-      Uint8List batchOf(List<StoredEvent> events) => BatchEnvelope(
-        batchFormatVersion: BatchEnvelope.currentBatchFormatVersion,
-        batchId: 'halt-batch-${events.first.eventId}',
-        senderHop: 'mobile-device',
-        senderIdentifier: 'peer-install',
-        senderSoftwareVersion: 'test@1.0.0',
-        sentAt: DateTime.utc(2026, 9, 1, 12),
-        events: <Map<String, Object?>>[
-          for (final e in events) Map<String, Object?>.from(e.toMap()),
-        ],
-      ).encode();
-
       final paths =
           <String, Future<void> Function(EventStore, List<StoredEvent>)>{
-            'ingestBatch': (store, events) async {
-              await store.ingestBatch(
-                batchOf(events),
-                wireFormat: BatchEnvelope.wireFormat,
-              );
+            'delivery': (store, events) async {
+              await deliverEventsTo(store, events);
             },
             'ingestEvent': (store, events) async {
               for (final e in events) {
-                await store.ingestEvent(e);
+                await ingestEventForTest(store, e);
               }
             },
           };
 
-      Matcher refusedWith(ReservedEventRefusal reason) =>
-          isA<IngestReservedEventRefused>().having(
-            (e) => e.reason,
-            'reason',
-            reason,
-          );
+      /// The snapshot of [destId] with the security findings and the
+      /// accepted-delivery audits left out of the log, and without the records every stored event advances (the
+      /// sequence counter and the latest authored sequence) or a stored
+      /// finding sets (whether a security finding is held).
+      Future<Map<String, Object?>> besideFindings(String destId) async {
+        final findings = <String>{
+          for (final e in await w.events(kSecurityFindingEntryType)) e.eventId,
+          for (final e in await w.events('ingest-audit'))
+            if (e.eventType == 'ingest.delivery_accepted') e.eventId,
+        };
+        final snapshot = await w.snapshot(destId);
+        return <String, Object?>{
+          ...snapshot,
+          'events': <Object?>[
+            for (final id in snapshot['events']! as List)
+              if (!findings.contains(id)) id,
+          ],
+          'state_keys': <Object?>[
+            for (final k in snapshot['state_keys']! as List)
+              if (!_advancedByEveryEvent.contains(k)) k,
+          ],
+        };
+      }
+
+      /// The reasons of the `event_malformed` findings recorded about the
+      /// record of [event].
+      Future<List<Object?>> malformedReasons(
+        StoredEvent event,
+      ) async => <Object?>[
+        for (final f in await w.events(kSecurityFindingEntryType))
+          if (f.data['kind'] == 'event_malformed' &&
+              ((f.data['evidence']! as Map)['record']! as Map)['event_id'] ==
+                  event.eventId)
+            (f.data['evidence']! as Map)['reason'],
+      ];
 
       for (final type in types.entries) {
         for (final path in paths.entries) {
           for (final c in malformed.entries) {
             // Verifies: EVS-DEV-destination-drain/L
             // a halt event whose destination identifier or database identity
-            //   is missing, empty or not a string is refused as malformed,
-            //   with nothing written.
-            test('${path.key} refuses ${type.value} with ${c.key}', () async {
+            //   is missing, empty or not a string is stored as no event and
+            //   kept in a finding naming audit_identity_invalid.
+            test('${path.key} keeps ${type.value} with ${c.key} in a '
+                'finding', () async {
               if (!available) return;
-              final before = await w.snapshot('x');
+              final before = await besideFindings('x');
               final bad = forgedEvent(
                 entryType: type.key,
                 aggregateType: kDestinationAuditAggregateType,
                 eventType: type.value,
                 data: c.value,
               );
-              await expectLater(
-                path.value(w.store, <StoredEvent>[bad]),
-                throwsA(refusedWith(ReservedEventRefusal.malformed)),
-              );
-              expect(await w.snapshot('x'), before);
+              await path.value(w.store, <StoredEvent>[bad]);
+              expect(await malformedReasons(bad), <String>[
+                'audit_identity_invalid',
+              ]);
+              expect(await besideFindings('x'), before);
             });
           }
 
           // Verifies: EVS-DEV-destination-drain/L
-          // a halt event naming the receiver's own database that the
-          //   receiver does not hold is refused, with nothing written.
-          test('${path.key} refuses ${type.value} naming the receiver '
-              'database', () async {
+          // a halt event a peer originated that names the receiver's own
+          //   database is stored as no event and kept in a finding naming
+          //   audit_identity_invalid; the receiver's halt state is unchanged.
+          test('${path.key} keeps a peer ${type.value} naming the receiver '
+              'database in a finding', () async {
             if (!available) return;
             await w.activate(FakeDestination(id: 'x'));
-            final before = await w.snapshot('x');
+            final before = await besideFindings('x');
             final forged = forgedEvent(
               entryType: type.key,
               aggregateType: kDestinationAuditAggregateType,
@@ -2162,11 +2200,11 @@ void runOperatorHaltScenarios(
                 'halt_request_event_id': 'r',
               },
             );
-            await expectLater(
-              path.value(w.store, <StoredEvent>[forged]),
-              throwsA(refusedWith(ReservedEventRefusal.namesReceiverDatabase)),
-            );
-            expect(await w.snapshot('x'), before);
+            await path.value(w.store, <StoredEvent>[forged]);
+            expect(await malformedReasons(forged), <String>[
+              'audit_identity_invalid',
+            ]);
+            expect(await besideFindings('x'), before);
             await w.agree(<String>['x']);
           });
 

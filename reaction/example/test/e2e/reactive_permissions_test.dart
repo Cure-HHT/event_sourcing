@@ -135,7 +135,7 @@ void main() {
 
       // Read path: subscribing to notes_today is refused with a
       // subscription_denied(view_permission_denied) envelope, surfaced as
-      // a stream error.
+      // a typed SubscriptionDenied on the stream.
       final stream = zoe.viewSource.watch<Map<String, Object?>>(
         viewName: 'notes_today',
         mapper: (m) => m,
@@ -146,8 +146,14 @@ void main() {
       } on Object catch (e) {
         readError = e;
       }
-      expect(readError, isNotNull, reason: 'expected a subscription error');
-      expect(readError.toString(), contains('subscription_denied'));
+      expect(
+        readError,
+        isA<SubscriptionDenied>().having(
+          (e) => e.reason,
+          'reason',
+          SubscriptionDenyReason.viewPermissionDenied,
+        ),
+      );
 
       // Write path: submitting an action is denied. Depending on how the
       // anonymous principal surfaces, this is either a server-side

@@ -9,7 +9,7 @@ import 'package:reaction_widgets/src/scope/reaction_scope_widget.dart';
 import 'package:reaction_widgets/src/view/view_state.dart';
 
 /// Builder function for [ViewBuilder]. Receives the current
-/// [ViewState] (Loading / Ready / Stale).
+/// [ViewState] (Loading / Ready / Stale / Converging / Rejected / Errored).
 typedef ViewBuilderFn<T> =
     Widget Function(BuildContext context, ViewState<T> state);
 
@@ -36,6 +36,19 @@ typedef ViewBuilderFn<T> =
 ///   substrate's auto-reconnect re-issues every active subscribe with
 ///   a fresh `Snapshot × N → EndOfReplay → live` per
 ///   `EVS-PRD-cross-process-event-transport`-H.
+/// - Every error the subscription reports becomes a state; none is left
+///   uncaught:
+///   - a [ViewConvergingRefusal] surfaces [Converging] naming the view and
+///     drops the held rows. The view source re-issues the subscription
+///     itself (`EVS-PRD-cross-process-event-transport`-L), so the first
+///     update of the recovered replay moves to [Loading] (or, in
+///     progressive mode, [Ready]) and its `EndOfReplay` to [Ready].
+///   - a [SubscriptionDenied] surfaces [Rejected] carrying it.
+///   - any other error surfaces [Errored] carrying it and its stack trace.
+///
+///   [Rejected] and [Errored] are terminal: the builder cancels the
+///   subscription, and neither a later update nor a [ConnectionStatus]
+///   change moves the state on.
 ///
 /// Renders nothing of its own (headless, per
 /// `EVS-PRD-reaction-widget-contract`-G); delegates rendering entirely
@@ -104,7 +117,8 @@ class ViewBuilder<T> extends StatefulWidget {
   /// Optional automation identifier. When non-null, the builder wraps its
   /// delegated child in a non-painting [Semantics] node carrying this
   /// `identifier` and the current [ViewState] as a machine-readable
-  /// `value` token (`loading | ready | stale`).
+  /// `value` token
+  /// (`loading | ready | stale | converging | rejected | errored`).
   ///
   /// Layout-neutral and charter-compliant (a [Semantics] node is not a
   /// rendered or styled widget). Default `null` => no extra node, no
@@ -138,11 +152,17 @@ class _ViewBuilderState<T> extends State<ViewBuilder<T>> {
           filter: widget.filter,
           aggregates: widget.aggregates,
         )
-        .listen(_onUpdate);
+        .listen(_onUpdate, onError: _onError);
     _statusSub = scope.connectionStatusStream.listen(_onStatus);
   }
 
+  bool get _isTerminal => _state is Rejected<T> || _state is Errored<T>;
+
   void _onUpdate(Update<T> u) {
+    if (_isTerminal) return;
+    // The first update after a converging refusal starts the recovered
+    // subscription's replay.
+    if (_state is Converging<T>) _setState(Loading<T>());
     switch (u) {
       case Snapshot<T>(:final value):
         // Substrate emits Snapshot(value: null) for an explicitly-listed
@@ -160,7 +180,37 @@ class _ViewBuilderState<T> extends State<ViewBuilder<T>> {
       case EndOfReplay<T>():
         _replayDone = true;
         _emitReady();
+      case Pending<T>():
+        // The named aggregate's row is not yet confirmed settled: not
+        // ready, so no row is added and no state transition follows.
+        break;
     }
+  }
+
+  // Implements: EVS-PRD-reaction-widget-contract/I
+  // every error of the subscription reaches
+  //   the builder as a typed ViewState variant, none left uncaught.
+  // Implements: EVS-PRD-reaction-widget-contract/M
+  // Implements: EVS-PRD-reaction-widget-contract/N
+  void _onError(Object error, StackTrace stackTrace) {
+    if (_isTerminal) return;
+    switch (error) {
+      case ViewConvergingRefusal(:final viewName):
+        // The recovered subscription replays the view from the start.
+        _rows.clear();
+        _replayDone = false;
+        _setState(Converging<T>(viewName));
+      case SubscriptionDenied():
+        _endSubscription(Rejected<T>(error));
+      default:
+        _endSubscription(Errored<T>(error, stackTrace));
+    }
+  }
+
+  void _endSubscription(ViewState<T> terminal) {
+    _viewSub?.cancel();
+    _statusSub?.cancel();
+    _setState(terminal);
   }
 
   void _emitReady() {
@@ -168,6 +218,7 @@ class _ViewBuilderState<T> extends State<ViewBuilder<T>> {
   }
 
   void _onStatus(ConnectionStatus s) {
+    if (_isTerminal) return;
     switch (s) {
       case Connected():
         // On reconnect after Stale, a fresh snapshot+tail will replay
@@ -185,6 +236,7 @@ class _ViewBuilderState<T> extends State<ViewBuilder<T>> {
         // blanking. Per EVS-PRD-reaction-widget-contract-I, this
         // transition is driven by ConnectionStatus, not by inference
         // from stream liveness.
+        // Implements: EVS-PRD-reaction-widget-contract/L
         _setState(Stale<T>(List<T>.unmodifiable(_rows.values), s));
     }
   }
@@ -229,5 +281,8 @@ class _ViewBuilderState<T> extends State<ViewBuilder<T>> {
     Loading() => 'loading',
     Ready() => 'ready',
     Stale() => 'stale',
+    Converging() => 'converging',
+    Rejected() => 'rejected',
+    Errored() => 'errored',
   };
 }

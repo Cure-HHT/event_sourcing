@@ -9,19 +9,11 @@
 // Implements: EVS-DEV-postgres-backend/J
 // the drain lock lives on the lock session, and its heartbeat is the
 //   session's probe, run through the session's one-operation queue.
-import 'dart:async';
 
-import 'package:event_sourcing/src/storage/drain_lock.dart';
-import 'package:event_sourcing/src/storage/generation.dart';
-import 'package:event_sourcing/src/storage/postgres/postgres_generation_guard.dart';
-import 'package:event_sourcing/src/storage/postgres/postgres_lock_session.dart';
-import 'package:event_sourcing/src/storage/postgres/postgres_txn.dart';
-import 'package:event_sourcing/src/storage/transaction.dart';
-import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
-import 'package:meta/meta.dart' show internal;
-import 'package:postgres/postgres.dart';
+part of 'postgres_backend.dart';
 
 /// Prefix of the drain-lock key.
+
 const String _drainPrefix = 'event_sourcing.drainer';
 
 /// `backend_state` key of the drain epoch.
@@ -121,65 +113,60 @@ Future<PostgresDrainLock> acquirePostgresDrainLock({
       obtained = true;
     });
     await hooks?.afterLockAcquireBeforeEpochBump?.call();
-    final epoch = await session.run(
-      (c) => c.runTx<int>(
-        (tx) async {
-          final held = await tx.execute(
-            Sql.named(_keyHeldHereSql),
-            parameters: <String, Object?>{'k': key},
-          );
-          if ((held.first[0]! as int) != 1) {
-            throw const DrainLockConfigurationException(
-              'the lock session does not hold the drain key it took',
-            );
-          }
-          final stored = await tx.execute(
-            Sql.named('SELECT value FROM backend_state WHERE key = @k'),
-            parameters: <String, Object?>{'k': 'database_id'},
-          );
-          final storedId = stored.isEmpty ? null : stored.first[0];
-          if (storedId != databaseId) {
-            throw DrainLockConfigurationException(
-              'the database the lock session reaches has identity $storedId, '
-              'not $databaseId',
-            );
-          }
-          final bumped = await tx.execute(
-            Sql.named('''
+    final epoch = await session.run<int>((tx) async {
+      final held = await tx.execute(
+        Sql.named(_keyHeldHereSql),
+        parameters: <String, Object?>{'k': key},
+      );
+      if ((held.first[0]! as int) != 1) {
+        throw const DrainLockConfigurationException(
+          'the lock session does not hold the drain key it took',
+        );
+      }
+      final stored = await tx.execute(
+        Sql.named('SELECT value FROM backend_state WHERE key = @k'),
+        parameters: <String, Object?>{'k': 'database_id'},
+      );
+      final storedId = stored.isEmpty ? null : stored.first[0];
+      if (storedId != databaseId) {
+        throw DrainLockConfigurationException(
+          'the database the lock session reaches has identity $storedId, '
+          'not $databaseId',
+        );
+      }
+      final bumped = await tx.execute(
+        Sql.named('''
               INSERT INTO backend_state (key, value)
               VALUES (@k, to_jsonb(1))
               ON CONFLICT (key) DO UPDATE
                 SET value = to_jsonb((backend_state.value #>> '{}')::bigint + 1)
               RETURNING (value #>> '{}')::bigint
             '''),
-            parameters: <String, Object?>{'k': drainEpochKey},
-          );
-          if (hooks?.failEpochBumpWithSerializationFailure?.call() ?? false) {
-            await tx.execute(
-              r"DO $$ BEGIN RAISE EXCEPTION 'injected serialization failure' "
-              r"USING ERRCODE = '40001'; END $$",
-            );
-          }
-          if (hooks?.stallEpochBumpPastQueryTimeout?.call() ?? false) {
-            final seconds =
-                (guard.lockQueryTimeout + const Duration(seconds: 1))
-                    .inMilliseconds /
-                1000;
-            await tx.execute('SELECT pg_sleep($seconds)');
-          }
-          await hooks?.insideEpochBumpBeforeCommit?.call();
-          return bumped.first[0]! as int;
-        },
-        settings: TransactionSettings(
-          isolationLevel: IsolationLevel.serializable,
-        ),
-      ),
-    );
+        parameters: <String, Object?>{'k': drainEpochKey},
+      );
+      if (hooks?.failEpochBumpWithSerializationFailure?.call() ?? false) {
+        await tx.execute(
+          r"DO $$ BEGIN RAISE EXCEPTION 'injected serialization failure' "
+          r"USING ERRCODE = '40001'; END $$",
+        );
+      }
+      if (hooks?.stallEpochBumpPastQueryTimeout?.call() ?? false) {
+        final seconds =
+            (guard.lockQueryTimeout + const Duration(seconds: 1))
+                .inMilliseconds /
+            1000;
+        await tx.execute('SELECT pg_sleep($seconds)');
+      }
+      await hooks?.insideEpochBumpBeforeCommit?.call();
+      return bumped.first[0]! as int;
+    }, serializable: true);
     final bool verified;
     if (hooks?.failDrainLockVerification?.call() ?? false) {
       verified = false;
     } else {
-      final seen = await pool.run(
+      final seen = await runLibraryTransaction(
+        pool,
+        guard.schema,
         (s) => s.execute(
           Sql.named(_keyHeldByPidSql),
           parameters: <String, Object?>{'k': key, 'pid': pid},
@@ -289,7 +276,7 @@ final class PostgresDrainLock implements DrainLock {
     // new holder's raise waits for it, and a raise committed after this
     // transaction's snapshot makes the lock fail with a serialization
     // failure, whose re-run reads the new epoch.
-    final rows = await (txn as PostgresTxn).session.execute(
+    final rows = await (txn as _PostgresTxn)._session.execute(
       Sql.named(
         "SELECT (value #>> '{}')::bigint FROM backend_state "
         'WHERE key = @k FOR SHARE',

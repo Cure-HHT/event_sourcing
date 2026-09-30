@@ -22,9 +22,11 @@ typedef SequenceRange = ({int firstSeq, int lastSeq});
 /// nullable; `null` means "not-yet-terminal" (drain may attempt the
 /// row). Once delivered they are marked `FinalStatus.sent`; on
 /// permanent failure they are marked `FinalStatus.wedged`; a wedged head
-/// that an operator recovery or a deletion retires is marked
-/// `FinalStatus.tombstoned`. Rows with a non-null status are retained for
-/// the database's lifetime as the delivery record.
+/// that an operator recovery or a deletion retires, and a pending row
+/// carrying attempts that a resume or a new generation of its delivery
+/// channel retires, is marked `FinalStatus.tombstoned`. Rows with a
+/// non-null status are retained for the database's lifetime as the delivery
+/// record.
 ///
 /// `eventIds` is a non-empty `List<String>`, `sequenceRange` is an
 /// `(firstSeq, lastSeq)` record, and `wirePayload` is one payload for
@@ -37,7 +39,7 @@ typedef SequenceRange = ({int firstSeq, int lastSeq});
 //   StorageBackend abstraction layer (FIFO persistence).
 // final_status is nullable (null means not-yet-terminal; non-null
 // values are one of {sent, wedged, tombstoned}).
-// wireFormat == "esd/batch@2" (native), in which case envelopeMetadata
+// wireFormat == "esd/batch@3" (native), in which case envelopeMetadata
 // is non-null and drain reconstructs the wire bytes from
 // envelopeMetadata + event_ids-resolved events. For 3rd-party rows
 // (any other wireFormat) wirePayload is non-null and envelopeMetadata
@@ -56,6 +58,12 @@ class FifoEntry {
     required this.sentAt,
     this.wirePayload,
     this.envelopeMetadata,
+    this.deliveryGeneration,
+    this.deliveryNumber,
+    this.deliveryHash,
+    this.transformFailed = false,
+    this.transformFailures,
+    this.resendsDeliveryNumber,
   }) {
     // Explicit ArgumentError rather than assert so the invariant is
     // enforced in release builds too, not just debug.
@@ -80,7 +88,7 @@ class FifoEntry {
   /// Decode from snake_case JSON. `wirePayload`, `attempts`, and
   /// `eventIds` are wrapped unmodifiable so downstream callers cannot
   /// mutate the record in place. `wire_payload` MAY be null (native
-  /// `esd/batch@2` rows store envelope_metadata instead).
+  /// `esd/batch@3` rows store envelope_metadata instead).
   /// `envelope_metadata` MAY be null (3rd-party rows). Throws
   /// [FormatException] on missing or wrong-typed fields, or when
   /// `event_ids` is empty.
@@ -131,7 +139,7 @@ class FifoEntry {
         'FifoEntry: missing or non-int "sequence_in_queue"',
       );
     }
-    // null for native `esd/batch@2` rows; non-null and a Map on 3rd-party rows. Reject
+    // null for native `esd/batch@3` rows; non-null and a Map on 3rd-party rows. Reject
     // any other shape.
     final wirePayloadRaw = json['wire_payload'];
     if (wirePayloadRaw != null && wirePayloadRaw is! Map) {
@@ -176,11 +184,48 @@ class FifoEntry {
         'FifoEntry: "sent_at" must be a String when present',
       );
     }
-    // Non-null iff wireFormat == "esd/batch@2".
+    // Non-null iff wireFormat == "esd/batch@3".
     final envelopeMetadataRaw = json['envelope_metadata'];
     if (envelopeMetadataRaw != null && envelopeMetadataRaw is! Map) {
       throw const FormatException(
         'FifoEntry: "envelope_metadata" must be a Map or null',
+      );
+    }
+
+    final deliveryGeneration = json['delivery_generation'];
+    if (deliveryGeneration != null && deliveryGeneration is! int) {
+      throw const FormatException(
+        'FifoEntry: "delivery_generation" must be an int when present',
+      );
+    }
+    final deliveryNumber = json['delivery_number'];
+    if (deliveryNumber != null && deliveryNumber is! int) {
+      throw const FormatException(
+        'FifoEntry: "delivery_number" must be an int when present',
+      );
+    }
+    final deliveryHash = json['delivery_hash'];
+    if (deliveryHash != null && deliveryHash is! String) {
+      throw const FormatException(
+        'FifoEntry: "delivery_hash" must be a String when present',
+      );
+    }
+    final transformFailedRaw = json['transform_failed'];
+    if (transformFailedRaw != null && transformFailedRaw is! bool) {
+      throw const FormatException(
+        'FifoEntry: "transform_failed" must be a bool when present',
+      );
+    }
+    final transformFailures = json['transform_failures'];
+    if (transformFailures != null && transformFailures is! int) {
+      throw const FormatException(
+        'FifoEntry: "transform_failures" must be an int when present',
+      );
+    }
+    final resendsDeliveryNumber = json['resends_delivery_number'];
+    if (resendsDeliveryNumber != null && resendsDeliveryNumber is! int) {
+      throw const FormatException(
+        'FifoEntry: "resends_delivery_number" must be an int when present',
       );
     }
 
@@ -210,6 +255,12 @@ class FifoEntry {
           : BatchEnvelopeMetadata.fromMap(
               Map<String, Object?>.from(envelopeMetadataRaw as Map),
             ),
+      deliveryGeneration: deliveryGeneration as int?,
+      deliveryNumber: deliveryNumber as int?,
+      deliveryHash: deliveryHash as String?,
+      transformFailed: (transformFailedRaw as bool?) ?? false,
+      transformFailures: transformFailures as int?,
+      resendsDeliveryNumber: resendsDeliveryNumber as int?,
     );
   }
 
@@ -239,7 +290,7 @@ class FifoEntry {
 
   /// Transformed wire payload ready to hand to `destination.send()`. One
   /// payload covers every event in the batch; per-event
-  /// wire payloads are NOT stored. Null when `wireFormat == "esd/batch@2"`
+  /// wire payloads are NOT stored. Null when `wireFormat == "esd/batch@3"`
   /// (native rows reconstruct bytes at drain time from
   /// [envelopeMetadata] + event_ids-resolved events);
   /// non-null otherwise.
@@ -270,14 +321,54 @@ class FifoEntry {
   /// or tombstoned.
   final DateTime? sentAt;
 
-  /// Envelope identity for native (`esd/batch@2`) FIFO rows. Carries the
-  /// `batchFormatVersion`, `batchId`, sender identity (`senderHop`,
-  /// `senderIdentifier`, `senderSoftwareVersion`), and `sentAt` of the
-  /// `BatchEnvelope` parsed at enqueue time. Drain combines this with
-  /// `eventIds`-resolved events to re-encode the wire bytes
+  /// The envelope identity the library builds for a delivery-channel item
+  /// at enqueue time: the batch format version, the batch id, the sender
+  /// identity (`senderHop`, `senderIdentifier`, `senderSoftwareVersion`),
+  /// `sentAt`, the delivery channel and its attributes. Drain combines this
+  /// with `eventIds`-resolved events to re-encode the wire bytes
   /// deterministically (RFC 8785 JCS) on each send attempt. Non-null
-  /// iff `wireFormat == "esd/batch@2"`; null for 3rd-party rows.
+  /// iff `wireFormat == "esd/batch@3"`; null for 3rd-party rows.
   final BatchEnvelopeMetadata? envelopeMetadata;
+
+  /// The generation of the delivery channel the item was acknowledged
+  /// under; null unless the item was marked sent under a delivery.
+  // Implements: EVS-DEV-delivery-channel/J
+  // a sent item records the generation, delivery number and delivery hash
+  //   it was acknowledged under.
+  final int? deliveryGeneration;
+
+  /// The delivery number the item was acknowledged under; null unless the
+  /// item was marked sent under a delivery.
+  final int? deliveryNumber;
+
+  /// The delivery hash the item was acknowledged under; null unless the
+  /// item was marked sent under a delivery.
+  final String? deliveryHash;
+
+  /// Whether the fill enqueued this item after its transform failed on its
+  /// events until the destination's retry budget was spent: no payload and
+  /// no envelope, [wirePayload] and [envelopeMetadata] both null.
+  // Implements: EVS-DEV-destination-drain/Z
+  // a transform-failed item carries no payload and no envelope; the
+  //   drainer wedges it with cause transform_failed, without a send.
+  final bool transformFailed;
+
+  /// The transform failures the fill recorded for this item before it
+  /// enqueued it, when [transformFailed] is true; null otherwise.
+  // Implements: EVS-DEV-destination-drain/I
+  // the wedge event's attempt_count, for a wedge of cause transform_failed,
+  //   is the transform failures the fill recorded on the item.
+  final int? transformFailures;
+
+  /// The delivery number this item resends, for a resend item a
+  /// receiver-behind resume enqueues (`EVS-DEV-delivery-resume/M`); null
+  /// for an ordinary item the fill enqueues. Set only at enqueue time and
+  /// held immutable thereafter, so adoption can retire exactly the resend
+  /// items at or below an adopted record's number.
+  // Implements: EVS-DEV-delivery-resume/M
+  // a resend item also records the delivery number it resends, so
+  //   adoption can retire exactly those items.
+  final int? resendsDeliveryNumber;
 
   /// Encode to snake_case JSON. Optional fields emit explicit null.
   Map<String, Object?> toJson() => <String, Object?>{
@@ -296,6 +387,12 @@ class FifoEntry {
     'final_status': finalStatus?.toJson(),
     'sent_at': sentAt?.toIso8601String(),
     'envelope_metadata': envelopeMetadata?.toMap(),
+    'delivery_generation': deliveryGeneration,
+    'delivery_number': deliveryNumber,
+    'delivery_hash': deliveryHash,
+    'transform_failed': transformFailed,
+    'transform_failures': transformFailures,
+    'resends_delivery_number': resendsDeliveryNumber,
   };
 
   @override
@@ -316,7 +413,13 @@ class FifoEntry {
           ) &&
           finalStatus == other.finalStatus &&
           sentAt == other.sentAt &&
-          envelopeMetadata == other.envelopeMetadata;
+          envelopeMetadata == other.envelopeMetadata &&
+          deliveryGeneration == other.deliveryGeneration &&
+          deliveryNumber == other.deliveryNumber &&
+          deliveryHash == other.deliveryHash &&
+          transformFailed == other.transformFailed &&
+          transformFailures == other.transformFailures &&
+          resendsDeliveryNumber == other.resendsDeliveryNumber;
 
   @override
   int get hashCode => Object.hash(
@@ -332,6 +435,12 @@ class FifoEntry {
     finalStatus,
     sentAt,
     envelopeMetadata,
+    deliveryGeneration,
+    deliveryNumber,
+    deliveryHash,
+    transformFailed,
+    transformFailures,
+    resendsDeliveryNumber,
   );
 
   /// Renders every field `==` compares. A conformance failure on whole-value
@@ -347,7 +456,12 @@ class FifoEntry {
       'wireFormat: $wireFormat, transformVersion: $transformVersion, '
       'enqueuedAt: $enqueuedAt, attempts: $attempts, '
       'finalStatus: $finalStatus, sentAt: $sentAt, '
-      'envelopeMetadata: $envelopeMetadata)';
+      'envelopeMetadata: $envelopeMetadata, '
+      'deliveryGeneration: $deliveryGeneration, '
+      'deliveryNumber: $deliveryNumber, deliveryHash: $deliveryHash, '
+      'transformFailed: $transformFailed, '
+      'transformFailures: $transformFailures, '
+      'resendsDeliveryNumber: $resendsDeliveryNumber)';
 }
 
 const DeepCollectionEquality _deepEquals = DeepCollectionEquality();

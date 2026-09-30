@@ -8,6 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
 import '../test_support/boot_conformance.dart';
+import '../test_support/record_fixtures.dart';
 import '../test_support/rerunning_sembast_backend.dart';
 
 class _SembastBootDatabase implements BootTestDatabase {
@@ -59,6 +60,25 @@ class _SembastBootDatabase implements BootTestDatabase {
   }
 
   @override
+  Future<void> rewriteEventsAsDataFormat2({bool keepFields = false}) async {
+    final events = intMapStoreFactory.store('events');
+    for (final snapshot in await events.find(_db)) {
+      await events
+          .record(snapshot.key)
+          .put(
+            _db,
+            keepFields
+                ? (Map<String, Object?>.from(snapshot.value)
+                    ..['lib_format_version'] = const DataFormatVersion(
+                      2,
+                      0,
+                    ).toJson())
+                : dataFormat2Record(snapshot.value),
+          );
+    }
+  }
+
+  @override
   Future<void> stop(EventStore store) async {}
 
   @override
@@ -76,44 +96,11 @@ void main() {
     return _SembastBootDatabase(db);
   }, backendLabel: 'sembast (memory)');
 
-  group('an earlier data format on sembast', () {
-    // Verifies: EVS-DEV-event-store-open/F
-    test('an integer view target with no events is refused with the reset '
-        'error before any write', () async {
-      final db = await newDatabaseFactoryMemory().openDatabase(
-        'boot-integer-target.db',
-      );
-      addTearDown(db.close);
-      await stringMapStoreFactory
-          .store('view_target_versions')
-          .record('boot_notes::boot_note')
-          .put(db, <String, Object?>{
-            'view_name': 'boot_notes',
-            'entry_type': 'boot_note',
-            'target_version': 1,
-          });
-      final backend = SembastBackend(database: db);
-      await expectLater(
-        openBootStoreForTest(_SembastBootDatabase(db), backend),
-        throwsA(isA<DatabaseResetRequiredError>()),
-      );
-      final (id, check) = await backend.transaction(
-        (txn) async => (
-          await backend.readDatabaseIdTxn(txn),
-          await backend.readBootCheckTxn(txn),
-        ),
-      );
-      expect(id, isNull);
-      expect(check, isNull);
-      expect(await backend.findAllEvents(), isEmpty);
-    });
-  });
-
   group('a later release of this data-format major on sembast', () {
     // Verifies: EVS-DEV-event-record/B
     test('version maps with a key this build does not read, in the '
-        'library-version events, the view targets and the boot check, open '
-        'and read back unchanged', () async {
+        'library-version events and the boot check, open and read back '
+        'unchanged', () async {
       final factory = newDatabaseFactoryMemory();
       const name = 'boot-later-minor.db';
       final firstDb = await factory.openDatabase(name);
@@ -152,15 +139,6 @@ void main() {
         rewritten.add(value['event_id']! as String);
       }
       expect(rewritten, isNotEmpty);
-      final targets = stringMapStoreFactory.store('view_target_versions');
-      final targetRecords = await targets.find(db);
-      expect(targetRecords, isNotEmpty);
-      for (final record in targetRecords) {
-        await targets.record(record.key).put(db, <String, Object?>{
-          ...record.value,
-          'target_version': later(record.value['target_version']),
-        });
-      }
       final bootCheck = StoreRef<String, Object?>(
         'backend_state',
       ).record('boot_check');
@@ -198,14 +176,16 @@ void main() {
       final store = await runWithDeliveryTestHooks(
         DeliveryTestHooks(onBootBodyRun: () => bodyRuns++),
         () => EventStore.open(
-          storage: backend,
+          storage: ApplicationSuppliedStorage(
+            backend,
+            SembastSecurityContextStore(backend: backend),
+          ),
           entryTypes: EntryTypeRegistry(),
           source: const Source(
             hopId: 'rerun',
             identifier: 'rerun',
             softwareVersion: 'rerun',
           ),
-          securityContexts: SembastSecurityContextStore(backend: backend),
         ),
       );
       expect(bodyRuns, 2, reason: 'the boot body ran twice');

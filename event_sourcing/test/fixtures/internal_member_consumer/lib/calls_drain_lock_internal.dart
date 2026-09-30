@@ -20,11 +20,6 @@ Future<void> guardDirectly(StorageBackend backend) => backend.transaction(
   ),
 );
 
-/// Takes over the event store's delivery-cycle trigger slot.
-void takeSlot(EventStore store) {
-  store.deliveryTrigger = () async {};
-}
-
 /// Waits for a Postgres backend's lock session to be registered again.
 Future<void> awaitRegistered(PostgresBackend backend) =>
     backend.whenRegistered();

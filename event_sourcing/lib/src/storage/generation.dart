@@ -27,7 +27,9 @@ final class GenerationDescriptor {
     required this.packageVersion,
     required this.dataFormat,
     required Map<String, EntryTypeVersion> entryTypes,
-  }) : entryTypes = Map<String, EntryTypeVersion>.unmodifiable(entryTypes);
+    Set<String> viewFingerprints = const {},
+  }) : entryTypes = Map<String, EntryTypeVersion>.unmodifiable(entryTypes),
+       viewFingerprints = Set<String>.unmodifiable(viewFingerprints);
 
   /// The package version of the build. Recorded for diagnostics; it
   /// decides nothing.
@@ -40,11 +42,21 @@ final class GenerationDescriptor {
   /// entry-type id.
   final Map<String, EntryTypeVersion> entryTypes;
 
-  /// The generation's components, one per data-format major and per
-  /// registered entry type: `data_format:<major>` and
-  /// `entry_type:<id>:<major>`, sorted.
+  /// The fingerprint of every view this build registers
+  /// (EVS-DEV-view-convergence Terms). Registered alongside the
+  /// data-format and entry-type components so a live instance's copies are
+  /// visible to another build's boot (EVS-DEV-view-convergence/C+D), but
+  /// never compared for conflict: two builds can register different views,
+  /// or different definitions of the same view, side by side.
+  final Set<String> viewFingerprints;
+
+  /// The generation's components, one per data-format major, per
+  /// registered entry type and per registered view fingerprint:
+  /// `data_format:<major>`, `entry_type:<id>:<major>` and
+  /// `view_fingerprint:<fingerprint>`, sorted within each kind.
   List<String> get components {
     final ids = entryTypes.keys.toList()..sort();
+    final fingerprints = viewFingerprints.toList()..sort();
     return <String>[
       generationComponent(kind: 'data_format', id: '', value: dataFormat.major),
       for (final id in ids)
@@ -53,6 +65,7 @@ final class GenerationDescriptor {
           id: id,
           value: entryTypes[id]!.major,
         ),
+      for (final fingerprint in fingerprints) 'view_fingerprint:$fingerprint',
     ];
   }
 
@@ -275,6 +288,14 @@ abstract class GenerationRegistration {
   /// True when the backend lost what this registration held (a lock session
   /// that ended) and has not taken it again.
   bool get isLost;
+
+  /// The view fingerprints a live registration named at the moment this
+  /// registration began -- read once, before the boot transaction, from
+  /// the guard's live components -- so the boot can spare a stored copy no
+  /// build reopening now registers but another live instance still does
+  /// (EVS-DEV-view-convergence/D). Empty on a backend with no
+  /// other-instance visibility (Sembast outside the browser).
+  Set<String> get liveViewFingerprints => const {};
 
   /// Called inside the boot transaction: persists whatever the backend
   /// needs to inspect this registration later (on Postgres, the records

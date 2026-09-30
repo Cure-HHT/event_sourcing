@@ -1,8 +1,8 @@
 // The demo server listens before its event store opens: `/livez` answers
 // 200 from the moment it listens, `/health` answers 503 with the boot's
-// phase, percentage and estimate while the event store boots, and 200 once
-// the bootstrap has returned and the routes are served (not when the boot
-// reports its completion); every other route answers 503 until then.
+// phase while the event store boots, and 200 once the bootstrap has
+// returned and the routes are served (not when the boot reports its
+// completion); every other route answers 503 until then.
 // App-side behaviour: carries no requirement citation.
 @TestOn('vm')
 library;
@@ -46,34 +46,8 @@ void main() {
       expect(health.body(), <String, Object?>{
         'status': 'booting',
         'phase': 'checks',
-        'percent': null,
-        'eta_s': null,
         'elapsed_s': 42.0,
       });
-    });
-
-    test('reports a phase percentage and an estimate from the phase\'s own '
-        'elapsed time', () {
-      final health = BootHealth(now: () => DateTime.utc(2026))
-        ..record(_p(BootPhase.checks, 0, 0, 0))
-        ..record(_p(BootPhase.promotion, 0, 1000, 2000))
-        ..record(_p(BootPhase.promotion, 250, 1000, 7000));
-      final body = health.body();
-      expect(body['phase'], 'promotion');
-      expect(body['percent'], 25);
-      // 250 units took 5 s, so the 750 left take about 15 s.
-      expect(body['eta_s'], 15.0);
-    });
-
-    test('a boot run started again restarts the phase estimate', () {
-      final health = BootHealth(now: () => DateTime.utc(2026))
-        ..record(_p(BootPhase.promotion, 0, 100, 0))
-        ..record(_p(BootPhase.promotion, 50, 100, 1000))
-        ..record(_p(BootPhase.checks, 0, 0, 1500))
-        ..record(_p(BootPhase.promotion, 0, 100, 1600))
-        ..record(_p(BootPhase.promotion, 10, 100, 1700));
-      expect(health.body()['percent'], 10);
-      expect(health.body()['eta_s'], 0.9);
     });
 
     test('the completion report alone is not ready', () {
@@ -110,8 +84,10 @@ void main() {
     // The observer records every report; the probe body is read at each.
     final seen = <Map<String, Object?>>[];
     final components = await bootstrapDemoServer(
-      backend: SembastBackend(
-        database: await newDatabaseFactoryMemory().openDatabase('boot.db'),
+      storage: demoStorageOver(
+        SembastBackend(
+          database: await newDatabaseFactoryMemory().openDatabase('boot.db'),
+        ),
       ),
       idempotencyStore: DemoIdempotencyStore(),
       permissionsYaml: validPermissionsYaml,
@@ -150,10 +126,11 @@ void main() {
     final client = HttpClient();
     addTearDown(client.close);
     final port = host.http.port;
+    final backend = SembastBackend(
+      database: await newDatabaseFactoryMemory().openDatabase('fatal.db'),
+    );
     final components = await bootstrapDemoServer(
-      backend: SembastBackend(
-        database: await newDatabaseFactoryMemory().openDatabase('fatal.db'),
-      ),
+      storage: demoStorageOver(backend),
       idempotencyStore: DemoIdempotencyStore(),
       permissionsYaml: validPermissionsYaml,
       usersYaml: validUsersYaml,
@@ -184,6 +161,7 @@ void main() {
     // The cycle's storage backend goes away under it (a fenced Postgres
     // backend takes the same path): the cycle stops for good.
     await components.eventStore.close();
+    await backend.close();
     await cycle.stopped.timeout(const Duration(seconds: 10));
     expect(cycle.stopCause, isNotNull);
     await Future<void>.delayed(Duration.zero);
@@ -201,8 +179,10 @@ void main() {
     final host = await DemoServerHost.listen(port: 0);
     addTearDown(host.close);
     final components = await bootstrapDemoServer(
-      backend: SembastBackend(
-        database: await newDatabaseFactoryMemory().openDatabase('closed.db'),
+      storage: demoStorageOver(
+        SembastBackend(
+          database: await newDatabaseFactoryMemory().openDatabase('closed.db'),
+        ),
       ),
       idempotencyStore: DemoIdempotencyStore(),
       permissionsYaml: validPermissionsYaml,

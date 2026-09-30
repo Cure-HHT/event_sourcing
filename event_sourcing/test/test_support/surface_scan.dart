@@ -675,12 +675,18 @@ List<String> zoneReadRule(
   return violations;
 }
 
-/// No library in [units] other than the internal logger calls `print` or
-/// `dart:developer` `log` directly.
+/// No library in [units] other than the internal logger — `src/logging.dart`
+/// and its platform sinks `src/logging_sink_io.dart` and
+/// `src/logging_sink_web.dart`, which write the severe fill and drain
+/// default it decides on — calls `print` or `dart:developer` `log` directly.
 List<String> directLoggingRule(Map<String, List<CompilationUnit>> units) {
   final violations = <String>[];
   units.forEach((path, trees) {
-    if (path.endsWith('src/logging.dart')) return;
+    if (path.endsWith('src/logging.dart') ||
+        path.endsWith('src/logging_sink_io.dart') ||
+        path.endsWith('src/logging_sink_web.dart')) {
+      return;
+    }
     for (final tree in trees) {
       final visitor = _ZoneAndLogVisitor();
       tree.accept(visitor);
@@ -820,6 +826,78 @@ List<String> unexportedSurfaceRule({
         violations.add(
           'the unexported-operations list names $key, which no unexported '
           'library declares',
+        );
+      }
+    }
+  }
+  return violations;
+}
+
+/// Whether [type], one of its type arguments, one of its record fields, or
+/// a parameter or return type of a function type in it, is the library's
+/// storage backend contract or a subtype of it, or a raw handle to the
+/// database ([isRawHandleType]).
+bool isBackendOrPoolType(DartType type) {
+  if (isRawHandleType(type)) return true;
+  final t = type;
+  if (t is RecordType) {
+    return <DartType>[
+      ...t.positionalFields.map((f) => f.type),
+      ...t.namedFields.map((f) => f.type),
+    ].any(isBackendOrPoolType);
+  }
+  if (t is FunctionType) {
+    return isBackendOrPoolType(t.returnType) ||
+        t.formalParameters.any((p) => isBackendOrPoolType(p.type));
+  }
+  if (t is! InterfaceType) return false;
+  if (t.typeArguments.any(isBackendOrPoolType)) return true;
+  return <InterfaceElement>[
+    t.element,
+    ...t.element.allSupertypes.map((s) => s.element),
+  ].any(
+    (c) =>
+        c.name == 'StorageBackend' &&
+        c.library.uri.toString().startsWith('package:event_sourcing/'),
+  );
+}
+
+/// The ways each class in [classes] reaches a storage backend or a pool:
+/// a constructor parameter, a field (private ones included) or a getter
+/// whose type is, or mentions, one ([isBackendOrPoolType]). A store or
+/// policy the library builds over its storage holds a read or dispatch
+/// interface, never the backend or pool under it.
+List<String> holdsNoBackendRule(Iterable<InterfaceElement> classes) {
+  final violations = <String>[];
+  for (final cls in classes) {
+    for (final ctor in cls.constructors) {
+      for (final param in ctor.formalParameters) {
+        if (isBackendOrPoolType(param.type)) {
+          final ctorName = ctor.name == null || ctor.name == 'new'
+              ? 'new'
+              : ctor.name!;
+          violations.add(
+            '${cls.name}.$ctorName(${param.name}) takes a storage backend '
+            'or a pool',
+          );
+        }
+      }
+    }
+    for (final field in cls.fields) {
+      if (field.isOriginGetterSetter) continue;
+      if (isBackendOrPoolType(field.type)) {
+        violations.add(
+          '${cls.name}.${field.name} holds a storage backend or '
+          'a pool',
+        );
+      }
+    }
+    for (final getter in cls.getters) {
+      if (getter.isOriginVariable) continue;
+      if (isBackendOrPoolType(getter.returnType)) {
+        violations.add(
+          '${cls.name}.${getter.name} yields a storage backend '
+          'or a pool',
         );
       }
     }

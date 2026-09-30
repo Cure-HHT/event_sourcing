@@ -5,6 +5,10 @@
 // Verifies: EVS-PRD-cross-process-event-transport/A
 // wire codec
 //   round-trip through the route handler.
+// Verifies: EVS-DEV-converging-view-reads/H
+// a ViewConvergingRefusal
+//   from the dispatcher answers 503 + view_converging body +
+//   Retry-After, not an untyped 500.
 
 import 'dart:convert';
 
@@ -114,4 +118,55 @@ void main() {
     final res = await handler(req);
     expect(res.statusCode, 500);
   });
+
+  test('returns 503 + view_converging body + Retry-After when the dispatcher '
+      'throws ViewConvergingRefusal', () async {
+    // Verifies: EVS-DEV-converging-view-reads/H
+    // R15: a converging-view refusal from action dispatch reaches
+    // the remote caller as a typed, transient 503 naming the view,
+    // not an untyped 500.
+    final handler = actionHandler(
+      dispatcher: _ThrowingDispatcher(
+        const ViewConvergingRefusal('user_role_scopes'),
+      ),
+    );
+    final req = Request(
+      'POST',
+      Uri.parse('http://x/actions'),
+      body: jsonEncode(
+        ActionSubmissionCodec.encode(
+          const ActionSubmission(actionName: 'x', rawInput: {}),
+        ),
+      ),
+      context: {
+        'reaction.principal': UserPrincipal(
+          userId: 'u-1',
+          roles: const {'install'},
+          activeRole: 'install',
+        ),
+      },
+    );
+    final res = await handler(req);
+    expect(res.statusCode, 503);
+    expect(res.headers['retry-after'], isNotNull);
+    final body = jsonDecode(await res.readAsString()) as Map<String, Object?>;
+    expect(body['error'], 'view_converging');
+    expect(body['view'], 'user_role_scopes');
+  });
+}
+
+/// Stub `ActionDispatcher` whose `dispatch` throws a fixed exception,
+/// mirroring an `AuthorizationPolicy` read of a converging view.
+class _ThrowingDispatcher implements ActionDispatcher {
+  _ThrowingDispatcher(this.error);
+  final Exception error;
+
+  @override
+  Future<DispatchResult<Object?>> dispatch(
+    ActionSubmission submission,
+    ActionContext ctx,
+  ) async => throw error;
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }

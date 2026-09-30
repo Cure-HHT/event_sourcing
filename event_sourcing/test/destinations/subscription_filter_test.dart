@@ -3,10 +3,13 @@
 // allow-list matching by entry_type and event_type (null vs empty distinction),
 // predicate escape-hatch, AND composition, and default match-all behavior.
 import 'package:event_sourcing/src/destinations/subscription_filter.dart';
+import 'package:event_sourcing/src/lifecycle/lib_version.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
 import 'package:event_sourcing/src/versions.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import '../test_support/record_fixtures.dart';
 
 StoredEvent _mkEvent({
   String entryType = 'epistaxis_event',
@@ -19,7 +22,7 @@ StoredEvent _mkEvent({
   aggregateType: 'note',
   entryType: entryType,
   entryTypeVersion: const EntryTypeVersion(1, 0),
-  libFormatVersion: const DataFormatVersion(2, 0),
+  libFormatVersion: LibVersion.dataFormat,
   eventType: eventType,
   sequenceNumber: 1,
   data: const <String, dynamic>{},
@@ -27,6 +30,7 @@ StoredEvent _mkEvent({
   initiator: const UserInitiator('u1'),
   clientTimestamp: DateTime.utc(2026, 4, 22),
   eventHash: 'hash',
+  causal: kRootVersionCausal,
 );
 
 void main() {

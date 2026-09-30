@@ -20,7 +20,9 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'fake_destination.dart';
 import 'fifo_entry_helpers.dart';
+import 'native_destination.dart';
 import 'queue_test_support.dart';
+import 'test_backends.dart';
 import 'wedges_view_invariant.dart';
 
 /// One test database for the scenarios.
@@ -81,7 +83,9 @@ class _TaggedDestination extends FakeDestination {
 /// One process in a scenario: a backend, an event store over it and a
 /// registry.
 class _Process {
-  _Process(this.backend, this.store, this.registry);
+  _Process(this.backend, this.store, this.registry) {
+    trackTestBackend(store, backend);
+  }
   final StorageBackend backend;
   final EventStore store;
   final DestinationRegistry registry;
@@ -208,6 +212,14 @@ class _World {
   Future<WedgeRecord?> wedgeRecord(String destId) =>
       backend.transaction((txn) => backend.readWedgeRecordTxn(txn, destId));
 
+  Future<TransformFailureRecord?> transformFailureRecord(String destId) =>
+      backend.transaction(
+        (txn) => backend.readTransformFailureRecordTxn(txn, destId),
+      );
+
+  Future<SenderChannelRecord?> channelRecord(String destId) => backend
+      .transaction((txn) => backend.readSenderChannelRecordTxn(txn, destId));
+
   /// Everything a registry operation could change about [destId], and the
   /// log, except the registry check record.
   Future<Map<String, Object?>> snapshot(String destId) async => {
@@ -218,6 +230,10 @@ class _World {
     'cursor': await backend.readFillCursor(destId),
     'request': (await request(destId))?.toJson(),
     'wedge_record': (await wedgeRecord(destId))?.toJson(),
+    'transform_failure_record': (await transformFailureRecord(
+      destId,
+    ))?.toJson(),
+    'sender_channel': (await channelRecord(destId))?.toJson(),
     'halt': (await backend.transaction(
       (txn) => backend.readHaltRequestTxn(txn, destId),
     ))?.toJson(),
@@ -547,7 +563,7 @@ void runQueueRegistryScenarios(
       //   the trail swept, the position rewound and one event appended.
       // Verifies: EVS-DEV-destination-drain/F
       // the recovery transaction is atomic
-      //   and removes the wedge record.
+      //   and removes the wedge record and transform failure record.
       test('recovery rolls back on an injected failure; succeeds '
           'otherwise', () async {
         if (!available) return;
@@ -559,6 +575,18 @@ void runQueueRegistryScenarios(
         await w.fillAll(d);
         final headId = await wedgeHeadForTest(w.registry, 'r');
         expect((await w.wedgeRecord('r'))?.rowId, headId);
+        // A transform failure record left from before the wedge is written
+        // directly here; a recovery removes it along with the wedge record.
+        await w.backend.transaction(
+          (txn) => w.backend.writeTransformFailureRecordTxn(
+            txn,
+            'r',
+            TransformFailureRecord(
+              failureTimes: [DateTime.utc(2026, 5, 1)],
+              sequenceRange: (firstSeq: 1, lastSeq: 1),
+            ),
+          ),
+        );
         final before = await w.snapshot('r');
         await expectLater(
           runWithDeliveryTestHooks(
@@ -580,6 +608,7 @@ void runQueueRegistryScenarios(
         await expectWedgesViewMatchesQueue(w.store);
         expect(result.deletedTrailCount, 2);
         expect(await w.wedgeRecord('r'), isNull);
+        expect(await w.transformFailureRecord('r'), isNull);
         final rows = await w.backend.listFifoEntries('r');
         expect(rows.map((r) => r.finalStatus), [FinalStatus.tombstoned]);
         final n1 = (await w.backend.findAllEvents()).firstWhere(
@@ -671,8 +700,9 @@ void runQueueRegistryScenarios(
       // Verifies: EVS-DEV-destination-drain/A
       // the wedged head is tombstoned, the
       //   pending items deleted, the cursor, schedule, replay request, wedge
-      //   record, halt request, send fence and refill guard removed, and the
-      //   only per-destination record left is the sequence_in_queue counter.
+      //   record, transform failure record, halt request, send fence and
+      //   refill guard removed, and the only per-destination record left is
+      //   the sequence_in_queue counter.
       test('retains sent items, tombstones the wedged head, removes pending '
           'items and every per-destination record but the counter', () async {
         if (!available) return;
@@ -724,6 +754,19 @@ void runQueueRegistryScenarios(
             ),
           ),
         );
+        // A transform failure record exists only while a fill is retrying a
+        // failing transform, which leaves no wedged head; it is written
+        // directly here for the same reason.
+        await w.backend.transaction(
+          (txn) => w.backend.writeTransformFailureRecordTxn(
+            txn,
+            'x',
+            TransformFailureRecord(
+              failureTimes: [DateTime.utc(2026, 5, 1)],
+              sequenceRange: (firstSeq: 1, lastSeq: 1),
+            ),
+          ),
+        );
         final keysBefore = await w.db.backendStateKeys();
         expect(
           keysBefore.where((k) => k.endsWith('_x')).toSet(),
@@ -735,6 +778,7 @@ void runQueueRegistryScenarios(
             'halt_request_x',
             'send_fence_x',
             'refill_guard_x',
+            'transform_failure_x',
             'fifo_seq_counter_x',
           ]),
         );
@@ -752,6 +796,7 @@ void runQueueRegistryScenarios(
         expect(await w.backend.readFillCursor('x'), -1);
         expect(await w.request('x'), isNull);
         expect(await w.wedgeRecord('x'), isNull);
+        expect(await w.transformFailureRecord('x'), isNull);
         final keys = await w.db.backendStateKeys();
         expect(keys.where((k) => k.endsWith('_x')).toList(), [
           'fifo_seq_counter_x',
@@ -1025,6 +1070,102 @@ void runQueueRegistryScenarios(
     // ------------------------------------------------------------------
 
     group('persisted state', () {
+      // Verifies: EVS-DEV-delivery-channel/D
+      // registering a destination that serializes natively writes its sender
+      //   channel record, generation 1, number 0, no hash and no receiver,
+      //   in the registration's transaction; one that does not writes none;
+      //   another process registering the same registration keeps the
+      //   record it finds.
+      // Verifies: EVS-DEV-destination-drain/A
+      // deleting the destination removes the sender channel record with
+      //   the other per-destination records.
+      test('a native registration writes the sender channel record; a '
+          'deletion removes it', () async {
+        if (!available) return;
+        await w.registry.addDestination(
+          NativeDestination(id: 'x', allowHardDelete: true),
+          initiator: _init,
+        );
+        expect(await w.channelRecord('x'), SenderChannelRecord.initial);
+        expect(await w.db.backendStateKeys(), contains('sender_channel_x'));
+
+        await w.registry.addDestination(
+          FakeDestination(id: 'y', allowHardDelete: true),
+          initiator: _init,
+        );
+        expect(await w.channelRecord('y'), isNull);
+
+        // A record the drainer advanced survives another process's
+        // registration of the same registration.
+        const advanced = SenderChannelRecord(
+          generation: 1,
+          receiverRecord: DeliveryRecord(deliveryNumber: 2, deliveryHash: 'h2'),
+          receiverDatabaseId: 'receiver-db',
+        );
+        await w.backend.transaction(
+          (txn) => w.backend.writeSenderChannelRecordTxn(txn, 'x', advanced),
+        );
+        final b = await w.openProcess();
+        await b.registry.addDestination(
+          NativeDestination(id: 'x', allowHardDelete: true),
+          initiator: _init,
+        );
+        expect(await w.channelRecord('x'), advanced);
+
+        await w.registry.deleteDestination('x', initiator: _init);
+        expect(await w.channelRecord('x'), isNull);
+        expect(
+          (await w.db.backendStateKeys()).where((k) => k.endsWith('_x')),
+          isNot(contains('sender_channel_x')),
+        );
+
+        // Registered again, the destination starts a new record.
+        await w.registry.addDestination(
+          NativeDestination(id: 'x', allowHardDelete: true),
+          initiator: _init,
+        );
+        expect(await w.channelRecord('x'), SenderChannelRecord.initial);
+      });
+
+      // Verifies: EVS-DEV-delivery-channel/E
+      // no registry operation but the registration and the deletion changes
+      //   a sender channel record: date changes, a halt request and its
+      //   cancellation leave it as it was.
+      test('registry operations leave the sender channel record '
+          'unchanged', () async {
+        if (!available) return;
+        await w.registry.addDestination(
+          NativeDestination(id: 'x'),
+          initiator: _init,
+        );
+        const advanced = SenderChannelRecord(
+          generation: 2,
+          receiverRecord: DeliveryRecord(deliveryNumber: 1, deliveryHash: 'h1'),
+          receiverDatabaseId: 'receiver-db',
+        );
+        await w.backend.transaction(
+          (txn) => w.backend.writeSenderChannelRecordTxn(txn, 'x', advanced),
+        );
+        await w.registry.setStartDate(
+          'x',
+          DateTime.utc(2026, 1, 1),
+          initiator: _init,
+        );
+        await w.registry.setEndDate(
+          'x',
+          DateTime.utc(2030, 1, 1),
+          initiator: _init,
+        );
+        await w.note('n1');
+        await w.registry.requestHalt(
+          'x',
+          purpose: HaltPurpose.pause,
+          initiator: _init,
+        );
+        await w.registry.cancelHalt('x', initiator: _init);
+        expect(await w.channelRecord('x'), advanced);
+      });
+
       // Verifies: EVS-DEV-destination-drain/A
       // the latest registration's opt-in is
       //   the one in effect; a deletion acts on it and records it.

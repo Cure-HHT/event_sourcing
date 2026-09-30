@@ -1,5 +1,5 @@
 // Verifies: EVS-PRD-ingest/A
-// EventStore.ingestBatch exists and admits events
+// a delivery presented to the receiver endpoint admits its events
 // Verifies: EVS-PRD-ingest/B
 // upstream identity preserved on each stored event
 // Verifies: EVS-PRD-ingest/C
@@ -7,7 +7,8 @@
 //   batch_context, arrival_hash, previous_ingest_hash, ingest_sequence_number
 // Verifies: EVS-PRD-ingest/F
 // idempotency: duplicate in batch yields
-//   IngestOutcome.duplicate; identity-mismatching event rolls back entire batch
+//   a duplicate_received audit; an identity-mismatching event is kept in a
+//   finding and the rest of the delivery is admitted
 // Verifies: EVS-PRD-hash-chain-integrity/B
 // Chain 2 previous_ingest_hash
 //   threads across events in order within a batch
@@ -18,7 +19,8 @@ import 'package:crypto/crypto.dart';
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
-import 'package:uuid/uuid.dart';
+
+import '../test_support/deliveries.dart';
 
 // ---------------------------------------------------------------------------
 // Fixture helpers
@@ -70,30 +72,12 @@ Future<_Fixture> _openStore({
   return _Fixture(store: store, backend: backend);
 }
 
-/// Build a [BatchEnvelope] from a list of [StoredEvent]s with a fresh batchId.
-BatchEnvelope _buildEnvelope(
-  List<StoredEvent> events, {
-  required String senderHop,
-  required String senderIdentifier,
-  required String senderSoftwareVersion,
-}) {
-  return BatchEnvelope(
-    batchFormatVersion: '2',
-    batchId: const Uuid().v4(),
-    senderHop: senderHop,
-    senderIdentifier: senderIdentifier,
-    senderSoftwareVersion: senderSoftwareVersion,
-    sentAt: DateTime.now().toUtc(),
-    events: events.map((e) => Map<String, Object?>.from(e.toMap())).toList(),
-  );
-}
-
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
 void main() {
-  group('EventStore.ingestBatch — happy path', () {
+  group('delivery ingest — happy path', () {
     test(
       '3-event batch stores 3 events with correct batch_context on each',
       () async {
@@ -145,26 +129,17 @@ void main() {
           expect(e3, isNotNull);
 
           // 2. Build envelope and encode.
-          final envelope = _buildEnvelope(
-            [e1!, e2!, e3!],
-            senderHop: 'mobile-device',
-            senderIdentifier: 'device-1',
-            senderSoftwareVersion: 'my_app@1.0.0',
-          );
-          final bytes = envelope.encode();
-          final expectedHash = sha256.convert(bytes).toString();
+          final delivery = await deliverEventsTo(dest.store, [e1!, e2!, e3!]);
+          final envelope = delivery.envelope;
+          final expectedHash = sha256.convert(delivery.bytes).toString();
 
           // 3. Ingest at destination.
-          final result = await dest.store.ingestBatch(
-            bytes,
-            wireFormat: BatchEnvelope.wireFormat,
-          );
+          final outcomes = await recordOutcomes(dest.store, delivery);
 
           // 4a. Result carries correct batchId and 3 outcomes.
-          expect(result.batchId, equals(envelope.batchId));
-          expect(result.events, hasLength(3));
-          for (final outcome in result.events) {
-            expect(outcome.outcome, equals(IngestOutcome.ingested));
+          expect(outcomes, hasLength(3));
+          for (final outcome in outcomes) {
+            expect(outcome, equals(IngestOutcome.ingested));
           }
 
           // 4b. Each stored subject has batch_context with correct fields.
@@ -189,7 +164,7 @@ void main() {
             expect(bc.batchId, equals(envelope.batchId));
             expect(bc.batchSize, equals(3));
             expect(bc.batchPosition, equals(i));
-            expect(bc.batchWireFormat, equals(BatchEnvelope.wireFormat));
+            expect(bc.batchWireFormat, equals(DeliveryEnvelope.wireFormat));
             expect(bc.batchWireBytesHash, equals(expectedHash));
           }
 
@@ -256,21 +231,12 @@ void main() {
         );
         expect(e, isNotNull);
 
-        final envelope = _buildEnvelope(
-          [e!],
-          senderHop: 'mobile-device',
-          senderIdentifier: 'device-1',
-          senderSoftwareVersion: 'my_app@1.0.0',
-        );
-        final bytes = envelope.encode();
+        final delivery = await deliverEventsTo(dest.store, [e!]);
 
-        final result = await dest.store.ingestBatch(
-          bytes,
-          wireFormat: BatchEnvelope.wireFormat,
-        );
+        final outcomes = await recordOutcomes(dest.store, delivery);
 
-        expect(result.events, hasLength(1));
-        expect(result.events[0].outcome, equals(IngestOutcome.ingested));
+        expect(outcomes, hasLength(1));
+        expect(outcomes[0], equals(IngestOutcome.ingested));
 
         // Verify BatchContext has batchSize=1, batchPosition=0.
         final stored = await dest.backend.transaction(
@@ -334,28 +300,20 @@ void main() {
         expect(e3, isNotNull);
 
         // 2. Pre-ingest e1 at destination via process-local ingestEvent.
-        await dest.store.ingestEvent(e1!);
+        await ingestEventForTest(dest.store, e1!);
 
         // 3. Build batch [e1, e2, e3] and ingest.
-        final envelope = _buildEnvelope(
-          [e1, e2!, e3!],
-          senderHop: 'mobile-device',
-          senderIdentifier: 'device-1',
-          senderSoftwareVersion: 'my_app@1.0.0',
-        );
-        final bytes = envelope.encode();
-        final expectedHash = sha256.convert(bytes).toString();
+        final delivery = await deliverEventsTo(dest.store, [e1, e2!, e3!]);
+        final envelope = delivery.envelope;
+        final expectedHash = sha256.convert(delivery.bytes).toString();
 
-        final result = await dest.store.ingestBatch(
-          bytes,
-          wireFormat: BatchEnvelope.wireFormat,
-        );
+        final outcomes = await recordOutcomes(dest.store, delivery);
 
         // 4a. outcomes: [duplicate, ingested, ingested].
-        expect(result.events, hasLength(3));
-        expect(result.events[0].outcome, equals(IngestOutcome.duplicate));
-        expect(result.events[1].outcome, equals(IngestOutcome.ingested));
-        expect(result.events[2].outcome, equals(IngestOutcome.ingested));
+        expect(outcomes, hasLength(3));
+        expect(outcomes[0], equals(IngestOutcome.duplicate));
+        expect(outcomes[1], equals(IngestOutcome.ingested));
+        expect(outcomes[2], equals(IngestOutcome.ingested));
 
         // 4b. e2 and e3 are stored; e1 is unchanged.
         final storedE2 = await dest.backend.transaction(
@@ -391,15 +349,17 @@ void main() {
         expect(dupBc.batchSize, equals(3));
         expect(dupBc.batchPosition, equals(0)); // e1 was at index 0
         expect(dupBc.batchWireBytesHash, equals(expectedHash));
-        expect(dupBc.batchWireFormat, equals(BatchEnvelope.wireFormat));
+        expect(dupBc.batchWireFormat, equals(DeliveryEnvelope.wireFormat));
       } finally {
         await orig.close();
         await dest.close();
       }
     });
 
-    test('batch with identity-mismatching subject rolls back entirely '
-        '', () async {
+    // Verifies: EVS-DEV-security-findings/G
+    // Verifies: EVS-PRD-ingest/G
+    test('batch with an identity-mismatching subject keeps it in a finding '
+        'and admits the rest', () async {
       final orig = await _openStore(hopId: 'mobile-device');
       final dest = await _openStore(
         hopId: 'control-server',
@@ -420,10 +380,7 @@ void main() {
           initiator: const UserInitiator('u1'),
         );
         expect(e1, isNotNull);
-        await dest.store.ingestEvent(e1!);
-
-        // Capture destination's local sequence counter after first ingest.
-        final seqBefore = await dest.backend.readSequenceCounter();
+        await ingestEventForTest(dest.store, e1!);
 
         // 2. Build a divergent e1 (same event_id, different content, sealed
         //    with the canonical hash of that content).
@@ -455,41 +412,38 @@ void main() {
         expect(e3, isNotNull);
 
         // 4. Build batch [e2 (new), e1Tampered (mismatch), e3 (new)].
-        final envelope = _buildEnvelope(
-          [e2!, e1Tampered, e3!],
-          senderHop: 'mobile-device',
-          senderIdentifier: 'device-1',
-          senderSoftwareVersion: 'my_app@1.0.0',
+        final delivery = await deliverEventsTo(dest.store, [
+          e2!,
+          e1Tampered,
+          e3!,
+        ]);
+
+        // 5. The delivery keeps the divergent e1 in a finding.
+        final outcomes = await recordOutcomes(dest.store, delivery);
+        expect(outcomes, <IngestOutcome>[
+          IngestOutcome.ingested,
+          IngestOutcome.keptInFinding,
+          IngestOutcome.ingested,
+        ]);
+        final findings = await dest.backend.findAllEvents(
+          entryType: kSecurityFindingEntryType,
         );
-        final bytes = envelope.encode();
-
-        // 5. ingestBatch must throw IngestIdentityMismatch.
-        await expectLater(
-          () => dest.store.ingestBatch(
-            bytes,
-            wireFormat: BatchEnvelope.wireFormat,
-          ),
-          throwsA(
-            isA<IngestIdentityMismatch>().having(
-              (e) => e.eventId,
-              'eventId',
-              e1.eventId,
-            ),
-          ),
+        expect(findings.single.data['kind'], 'identity_mismatch');
+        expect(
+          (await dest.backend.findEventById(e1.eventId))!.data,
+          e1.data,
+          reason: 'the held copy stays',
         );
 
-        // 6. Destination's local sequence counter is UNCHANGED (rollback).
-        expect(await dest.backend.readSequenceCounter(), equals(seqBefore));
-
-        // 7. e2 and e3 are NOT stored (rolled back).
+        // 7. e2 and e3 are stored.
         final storedE2 = await dest.backend.transaction(
           (txn) async => dest.backend.findEventByIdInTxn(txn, e2.eventId),
         );
         final storedE3 = await dest.backend.transaction(
           (txn) async => dest.backend.findEventByIdInTxn(txn, e3.eventId),
         );
-        expect(storedE2, isNull);
-        expect(storedE3, isNull);
+        expect(storedE2, isNotNull);
+        expect(storedE3, isNotNull);
 
         // 8. No duplicate_received audit events emitted.
         final auditEvents = await dest.backend.findEventsForAggregate(
@@ -502,15 +456,14 @@ void main() {
       }
     });
 
-    test('unsupported wireFormat throws IngestDecodeFailure', () async {
+    test('bytes that name no channel throw IngestDecodeFailure', () async {
       final dest = await _openStore(hopId: 'control-server');
 
       try {
         await expectLater(
-          () => dest.store.ingestBatch(
-            // Any valid bytes — the format check fires first.
+          () => dest.store.receiverEndpoint.accept(
             Uint8List.fromList([0x7b, 0x7d]),
-            wireFormat: 'esd/batch@99',
+            senderDatabaseIds: const <String>{},
           ),
           throwsA(isA<IngestDecodeFailure>()),
         );

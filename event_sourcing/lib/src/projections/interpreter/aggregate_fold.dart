@@ -10,6 +10,12 @@
 //   same initial state yields byte-identical results (Merge.applyDeepDelta
 //   is deterministic; metadata stamps are taken from event fields, not wall
 //   clock).
+// A derived field's computation is one of the four computation sites the
+//   fold wraps as a FoldFailure (`EVS-DEV-view-convergence` Terms); it
+//   runs before the row write.
+import 'package:event_sourcing/src/projections/integrity_marks.dart';
+import 'package:event_sourcing/src/projections/interpreter/fold_failure.dart';
+import 'package:event_sourcing/src/projections/interpreter/view_row_access.dart';
 import 'package:event_sourcing/src/projections/primitives/merge.dart';
 import 'package:event_sourcing/src/projections/projection_spec.dart';
 import 'package:event_sourcing/src/storage/storage_backend.dart';
@@ -44,7 +50,12 @@ class AggregateFold {
   /// - recursive merge of event.data with null-as-clear,
   /// - apply derived fields,
   /// - stamp metadata,
+  /// - stamp `$integrity` with [integrity], the findings that mark the
+  ///   aggregate, last so it wins over every other key,
   /// - delete row if event.eventType is in spec.tombstoneEventTypes.
+  ///
+  /// Reads and writes the row through [rows] when given, otherwise straight
+  /// through [backend] in [txn] at [copyId].
   ///
   /// Returns an [AggregateFoldChange] describing the mutation for subscriber
   /// notification, or `null` when the event was a tombstone for a row that
@@ -55,14 +66,14 @@ class AggregateFold {
     required StorageBackend backend,
     required AggregateProjectionSpec spec,
     required StoredEvent event,
+    required List<String> integrity,
+    required String copyId,
+    ViewRowAccess? rows,
   }) async {
+    final access = rows ?? DirectViewRowAccess(backend, txn, copyId);
     if (spec.tombstoneEventTypes.contains(event.eventType)) {
-      final existing = await backend.readViewRowInTxn(
-        txn,
-        spec.viewName,
-        event.aggregateId,
-      );
-      await backend.deleteViewRowInTxn(txn, spec.viewName, event.aggregateId);
+      final existing = await access.readRow(event.aggregateId);
+      await access.deleteRow(event.aggregateId);
       if (existing == null) return null; // nothing to report
       return AggregateFoldChange(
         viewName: spec.viewName,
@@ -73,11 +84,7 @@ class AggregateFold {
         isTombstone: true,
       );
     }
-    final priorRaw = await backend.readViewRowInTxn(
-      txn,
-      spec.viewName,
-      event.aggregateId,
-    );
+    final priorRaw = await access.readRow(event.aggregateId);
     final prior = priorRaw ?? const <String, Object?>{};
     final firstEventTimestamp =
         (prior['firstEventTimestamp'] as String?) != null
@@ -101,19 +108,21 @@ class AggregateFold {
     next['sequence'] = event.sequenceNumber;
 
     for (final df in spec.derivedFields) {
-      next[df.fieldName] = df.computation.resolve(
-        rowState: next,
-        firstEventTimestamp: firstEventTimestamp,
+      next[df.fieldName] = guardFold(
+        FoldFailureReason.derivedFieldFailed,
+        () => df.computation.resolve(
+          rowState: next,
+          firstEventTimestamp: firstEventTimestamp,
+        ),
       );
     }
+    // Implements: EVS-PRD-materializer/F
+    // every row carries `$integrity`, the ascending ids of the findings
+    //   that mark its aggregate.
+    next[kIntegrityRowKey] = integrityValue(integrity);
 
     final immutableNext = Map<String, Object?>.unmodifiable(next);
-    await backend.upsertViewRowInTxn(
-      txn,
-      spec.viewName,
-      event.aggregateId,
-      immutableNext,
-    );
+    await access.upsertRow(event.aggregateId, immutableNext);
     return AggregateFoldChange(
       viewName: spec.viewName,
       aggregateId: event.aggregateId,

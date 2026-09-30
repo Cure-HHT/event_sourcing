@@ -68,7 +68,9 @@ class RemoteViewSource implements ViewSource {
       ),
       EndOfReplay<Map<String, Object?>>() => EndOfReplay<T>(
         sequence: u.sequence,
+        state: u.state,
       ),
+      Pending<Map<String, Object?>>() => Pending<T>(aggregateId: u.aggregateId),
     };
   }
 }

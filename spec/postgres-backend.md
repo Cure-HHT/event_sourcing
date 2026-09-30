@@ -107,23 +107,32 @@ operates on. The tables are:
   filter combinations enumerated in
   `EVS-DEV-find-all-events-extended-filters` and the boot's read of the
   library-version events.
-- **`view_rows`** — single table for every materialized view, keyed by
-  `(view_name TEXT, row_key TEXT)` with `row_data JSONB` payload and an
-  `updated_at TIMESTAMPTZ` audit column. `findViewRows` walks
-  `view_name = ?` ordered by `row_key`.
-- **`view_target_versions`** — the per-view target-version map
-  maintained by `EventStore.open`'s snapshot-promotion pass.
-  One row per (view, entry type); columns `view_name TEXT`,
-  `entry_type TEXT`, `target_major INTEGER`, `target_minor INTEGER`,
-  and `behind BOOLEAN` (the view catch-up mark: true while the view is
-  behind the log for that entry type), keyed by
-  `(view_name, entry_type)`.
+  The chain lookups are columns of the same row, written by the insert
+  that stores the event and read from the stored copy's provenance:
+  `origin_database_id`, `sealed_hash` and `origin_position`, and
+  `held_as_authored_by` (the holding database when it holds the copy as
+  authored, otherwise null), with the event's `causal` object (JSONB).
+  Non-unique indexes over the sealed hash, the predecessor and the origin
+  position of each originating database, the events held as authored,
+  and the eligible versions of each aggregate serve the latest authored
+  event, the latest eligible version and the lookups ingest and the chain
+  verification make; the library keeps no index table of its own.
+- **`view_rows`** — single table for every stored copy of every
+  materialized view, keyed by `(copy_id TEXT, row_key TEXT)` with
+  `row_data JSONB` payload and an `updated_at TIMESTAMPTZ` audit column.
+  `findViewRows` walks `copy_id = ?` ordered by `row_key`.
+- **`view_copies`** — one row per stored copy of a view, keyed by `copy_id TEXT`. Columns: `view_name TEXT`, `fingerprint TEXT` (the digest of the view's definition), `watermark BIGINT` (the log position the copy has folded through), `marked_for_deletion BOOLEAN` and `created_at TIMESTAMPTZ`; at most one row per `fingerprint` is not marked for deletion.
+- **`library_roles`** — the runtime and lock roles the deployment declared at provisioning, one row per role with its kind (`runtime` or `lock`); only the owner writes it, and opening a backend reads it (EVS-DEV-postgres-backend/P).
 - **`fifo_entries`** — single table for every outbound FIFO queue,
   keyed by `(destination_id TEXT, sequence_in_queue BIGINT)`. Each row is
   one queue item: `entry_id` (TEXT UNIQUE), the events it carries
   (`event_ids` JSONB, `event_id_first_seq`, `event_id_last_seq`), how it
   was built (`wire_format`, `transform_version`, `wire_payload`,
-  `envelope_metadata`), `enqueued_at`, and its delivery bookkeeping:
+  `envelope_metadata`), `enqueued_at`, its place on its delivery channel
+  (`delivery_number` and `delivery_hash`, and the `delivery_generation` it was
+  acknowledged under), whether the fill enqueued it
+  as transform-failed (`transform_failed BOOLEAN`), and its delivery
+  bookkeeping:
   `attempts` (a JSONB array of recorded attempts), `final_status` (null
   while pending, then `sent`, `wedged` or `tombstoned`) and `sent_at`.
   The table is guarded (EVS-DEV-destination-drain/S): a CHECK
@@ -150,8 +159,9 @@ operates on. The tables are:
   database's generation record and the records that map the generation
   guard's lock keys back to their components, the drain epoch
   (`drain_epoch`), the drainer's declaration (`drainer_declaration`) and
-  heartbeat (`drain_heartbeat`), and each destination's refill guard
-  (`refill_guard_<destination>`)). Columns
+  heartbeat (`drain_heartbeat`), each destination's refill guard
+  (`refill_guard_<destination>`), and every other record the library keeps
+  beside its log that no table above holds). Columns
   `key TEXT PRIMARY KEY`, `value JSONB`.
 - **`security_context`** — the persisted role/permission/scope snapshot
   the substrate maintains for closed-under-events authorization
@@ -193,8 +203,8 @@ The library assumes three kinds of database role, and the deployment
 creates them (EVS-DEV-postgres-backend/K):
 
 - **Owner.** Owns the schema and the tables. Provisioning
-  (`PostgresBackend.provision`, or `open(provisionSchema: true)` in
-  development) runs as this role, in its own deployment step; it is the
+  (`PostgresBackend.provision`, which also records the declared runtime and
+  lock roles) runs as this role, in its own deployment step; it is the
   one library operation the runtime role cannot perform. No process serves
   traffic as the owner: the owner can disable or drop the queue table's
   guard and rewrite the log.
@@ -221,10 +231,22 @@ become the owner or create objects in the schema. Each of them:
   membership, and check its attributes and memberships on the platform's
   server;
 - holds no `CREATE` on the schema: the schema grants `CREATE` to no role
-  but the owner. A server's default `public` schema grants `CREATE` to
-  every role on Postgres majors before 15, so a deployment on `public`
-  runs `REVOKE CREATE ON SCHEMA public FROM PUBLIC`; a schema the owner
-  creates grants nothing to `PUBLIC`.
+  but the owner, and `open` refuses it otherwise. A server's default
+  `public` schema grants `CREATE` to every role on Postgres majors before
+  15, so a deployment on `public` runs
+  `REVOKE CREATE ON SCHEMA public FROM PUBLIC`; a schema the owner creates
+  grants nothing to `PUBLIC`.
+
+The library's schema is the one the storage description names. Every
+statement the library runs, provisioning's included, runs in a transaction
+whose first statement sets the search path, for that transaction only, to
+exactly that schema, `pg_catalog` and `pg_temp`, and `open` refuses when the
+current schema is another (EVS-DEV-postgres-backend/Q+R). No schema but the
+library's decides what its SQL resolves to, so a role that may create
+schemas in the database (an application role, for instance) cannot put
+tables of the library's names in front of it. Because the setting travels
+with each transaction, the pool's connections may run through a
+transaction-mode pooler; only the lock session must be one server session.
 
 The order of a deployment is: create the schema for the owner and grant
 the runtime and lock roles `USAGE` on it; provision as the owner; grant
@@ -237,15 +259,24 @@ on a table the provisioning added.
 The library is built and tested against PostgreSQL 16; that is the
 supported server major.
 
-Grants cannot separate the library from the application that embeds it
-(they share one process and one connection); they separate the process
-from the schema. The library's delivery guarantees still rest on the
-storage precondition (EVS-PRD-destinations/L). The queue table carries a
-database guard (above) that refuses changes outside the shapes of the
-library's writes; `backend_state`, which holds the fill positions,
-schedules, replay requests, wedge records, halt requests, send fences,
-refill guards, the drain epoch, the drainer's declaration and heartbeat,
-the generation records and the database identity, has none.
+Grants cannot separate the library from the application that embeds it, because the application supplies the credentials of the library's roles in the storage description. They separate the process from the schema, and every other role from the library's tables.
+
+Opening a backend checks the grants and memberships the server records. It refuses a role not declared at provisioning, a runtime or lock role that could change the schema, a role other than the owner holding `CREATE` on the library's schema, and a database on which a role outside the owner and the declared roles may write a table of the library's schema (through a grant, `pg_write_all_data`, or membership in the owner or a declared role) (EVS-DEV-postgres-backend/M+N+P).
+
+What remains is the storage precondition (EVS-PRD-destinations/L): code that connects with the library's credentials, and the database's administrators, meaning the owner, superusers, and roles holding `CREATEROLE` or the admin option over a library role.
+
+The queue table carries a database guard (above) that refuses changes outside the shapes of the library's writes. `backend_state` has no such guard. It holds the fill positions, schedules, replay requests, wedge records, halt requests, send fences, refill guards, the drain epoch, the drainer's declaration and heartbeat, the generation records and the database identity.
+
+### An application's own tables
+
+An application that keeps tables of its own in the same database (EVS-DEV-postgres-backend/O):
+
+- creates a schema of its own, which the library does not provision, and keeps its tables there;
+- connects under an application role of its own, through a pool it opens itself, never through the library's;
+- grants the application role no privilege on the library's tables beyond `SELECT`, and no membership that lets it inherit or set a library role, the owner or `pg_write_all_data`;
+- on a server before Postgres 15 with the library in the `public` schema, revokes `CREATE` on it from `PUBLIC`, which the library otherwise refuses.
+
+The database then refuses the application role every insert, update, delete and truncation of a library table. A grant that would allow one makes the library refuse to open the database.
 
 ### Runtime role privileges
 
@@ -253,11 +284,12 @@ the generation records and the database identity, has none.
 | --- | --- |
 | `events` | SELECT, INSERT |
 | `view_rows` | SELECT, INSERT, UPDATE, DELETE |
-| `view_target_versions` | SELECT, INSERT, UPDATE, DELETE |
+| `view_copies` | SELECT, INSERT, UPDATE, DELETE |
 | `fifo_entries` | SELECT, INSERT, UPDATE, DELETE |
 | `backend_state` | SELECT, INSERT, UPDATE, DELETE |
 | `security_context` | SELECT, INSERT, UPDATE, DELETE |
 | `idempotency` | SELECT, INSERT, UPDATE, DELETE |
+| `library_roles` | SELECT |
 
 Besides these, the runtime role holds `USAGE` on the schema. `UPDATE` on
 `backend_state` also covers the table lock a re-run transaction takes and

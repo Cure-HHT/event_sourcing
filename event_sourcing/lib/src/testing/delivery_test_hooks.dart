@@ -37,9 +37,17 @@ final Object _zoneKey = Object();
 /// acquisition or a heartbeat fail ([failLockAcquisition],
 /// [failAfterExclusionObtained], [failDrainLockVerification],
 /// [failEpochBumpWithSerializationFailure], [stallEpochBumpPastQueryTimeout],
-/// [holdDrainKeyOutsideLibrary], [failNextHeartbeat]). The boot of
-/// `EventStore.open` has an observing seam ([onBootBodyRun]) and a failure
-/// injection after its library-version append ([afterBootVersionEvent]).
+/// [holdDrainKeyOutsideLibrary], [failNextHeartbeat]); an observing seam
+/// sees each wake of the delivery cycle ([onDeliveryWake]), and a cycle
+/// can be started so that no wake runs a pass of it ([handDrivenCycle]).
+/// The restore operation's one transaction can be made to fail after it
+/// stores the restored events and before it appends the succession event
+/// ([failRestoreStore]), and a test can run between the restore's pull and
+/// its storing transaction ([beforeRestoreTransaction]). The boot of
+/// `EventStore.open` has an observing seam ([onBootBodyRun]), a failure
+/// injection after its library-version append ([afterBootVersionEvent]),
+/// and one after its Postgres transaction's body returns
+/// ([failBootTransactionWithSerializationFailure]).
 /// The incompatible-generation guard and the Postgres lock session have
 /// seams that delay ([insideBootLock]), replace the timers of the lock
 /// session's probe, the delivery cycle's cadence and heartbeat and a
@@ -62,7 +70,7 @@ final Object _zoneKey = Object();
 /// open or a provisioning succeeds or fails as the declared build's would,
 /// none can make an operation succeed that would otherwise fail; an
 /// exception thrown by an observing seam ([onLog], [onRegistryBodyRun],
-/// [onBootBodyRun], [onFenceBodyRun]) is reported and does not reach the
+/// [onBootBodyRun], [onFenceBodyRun], [onDeliveryWake]) is reported and does not reach the
 /// library code that called it, and none receives a database handle or a
 /// transaction.
 @internal
@@ -86,6 +94,7 @@ class DeliveryTestHooks {
     this.onFenceBodyRun,
     this.onBootBodyRun,
     this.afterBootVersionEvent,
+    this.failBootTransactionWithSerializationFailure,
     this.buildDeclaration,
     this.insideBootLock,
     this.splitLockSessionStatements = false,
@@ -113,11 +122,29 @@ class DeliveryTestHooks {
     this.failNextHeartbeat,
     this.afterCommitBeforePublish,
     this.pageVisibility,
+    this.onDeliveryWake,
+    this.handDrivenCycle = false,
+    this.severeLogSink,
+    this.failRestoreStore,
+    this.beforeRestoreTransaction,
+    this.onCatchUpTransactionBegin,
+    this.onCatchUpStep,
+    this.catchUpClock,
+    this.afterViewStateReadBeforeRows,
+    this.failFoldSavepointWithSerializationFailure,
+    this.failCatchUpFoldFindingAppend,
   });
 
   /// Observes every line the library logs. An exception it throws is
   /// reported and does not reach the code that logged.
   final void Function(LibraryLogRecord record)? onLog;
+
+  /// Replaces where a severe-or-above fill or drain log line is written by
+  /// default ([LibraryLogging.severeToStandardError]): installed, the line
+  /// goes to this sink instead of the process's standard error (the browser
+  /// console on the web), so a test observes the line without touching the
+  /// real sink.
+  final void Function(String line)? severeLogSink;
 
   /// Consulted after the last write of a destination-registry operation
   /// whose audit event is of `entryType` (the audit append, and for a
@@ -205,6 +232,13 @@ class DeliveryTestHooks {
   /// appends a library-version event. Returning true makes the boot throw
   /// [InjectedFailure] there, so the transaction rolls back.
   final bool Function()? afterBootVersionEvent;
+
+  /// Consulted by the Postgres backend's boot transaction after its body
+  /// returns, before the transaction commits. Returning true makes the
+  /// transaction raise a genuine SQLSTATE 40001 there, so the boot's own
+  /// bounded retry re-runs the body exactly as a real cross-session
+  /// serialization conflict would.
+  final bool Function()? failBootTransactionWithSerializationFailure;
 
   /// Input substitution: the package version and data-format version that
   /// `EventStore.open`'s boot decides with and records in the
@@ -360,6 +394,75 @@ class DeliveryTestHooks {
   /// a holder hand the lock over and a request wait, and the lock itself is
   /// still granted only by the browser's lock manager.
   final TestPageVisibility? pageVisibility;
+
+  /// Observes each wake of an event store's delivery cycle (after an
+  /// append, a committed registry operation, a committed dispatch or a
+  /// security-context operation), before the trigger fires. `cycleWoken`
+  /// is true when a started, not yet closed delivery cycle held the store's
+  /// trigger slot. An exception it throws is reported and does not reach
+  /// the operation that woke.
+  final void Function(bool cycleWoken)? onDeliveryWake;
+
+  /// Consulted by the restore operation after it stored every restored
+  /// event and before it appends the succession event, inside the
+  /// restore's one transaction. Returning true makes the restore throw
+  /// [InjectedFailure] there, so the transaction rolls back and neither the
+  /// restored events nor the succession event are stored.
+  final bool Function()? failRestoreStore;
+
+  /// Awaited by the restore operation after it finished pulling and before
+  /// it opens its storing transaction, so a test can append a
+  /// disqualifying event in between and observe the transaction's own
+  /// recheck of the restore's log preconditions refuse it.
+  final Future<void> Function()? beforeRestoreTransaction;
+
+  /// Observes the start of each catch-up transaction of a
+  /// `ViewCatchUpDriver`, after its per-copy lock is taken and its copy
+  /// record read, naming the copy's id.
+  final void Function(String copyId)? onCatchUpTransactionBegin;
+
+  /// Awaited before each fold step of a catch-up transaction, naming the
+  /// copy's id and the event's id. Throwing makes the step -- and so the
+  /// transaction -- fail, exercising the catch-up driver's retry
+  /// (EVS-DEV-view-convergence/Q); an unresolved future returned from it
+  /// holds the transaction open, so a test can observe it in flight.
+  final FutureOr<void> Function(String copyId, String eventId)? onCatchUpStep;
+
+  /// Replaces the clock a `ViewCatchUpDriver` reads elapsed time from to
+  /// decide when its 200 ms per-transaction step bound
+  /// (EVS-DEV-view-convergence/N) has passed. Production reads
+  /// `DateTime.now()`.
+  final DateTime Function()? catchUpClock;
+
+  /// Awaited by a consumer-facing view read, inside its storage
+  /// transaction, after it reads its copy's convergence state and before
+  /// it reads its rows, so a test can append an event on another store in
+  /// between and observe that the rows the read returns still match the
+  /// state it already read (EVS-DEV-converging-view-reads/A).
+  final Future<void> Function()? afterViewStateReadBeforeRows;
+
+  /// Consulted by `PostgresBackend.runInSavepointInTxn`, inside the
+  /// savepoint and before its body runs. Returning true makes the library
+  /// raise a genuine SQLSTATE 40001 there, so the savepoint rolls back to
+  /// a real server-side serialization failure -- a storage failure, not a
+  /// fold failure (`EVS-DEV-view-convergence` Terms) -- exactly as a real
+  /// cross-session conflict inside a copy's fold would.
+  final bool Function()? failFoldSavepointWithSerializationFailure;
+
+  /// Consulted before the catch-up driver appends a `fold_failed` finding in
+  /// its own transaction, once a catch-up transaction has rolled back
+  /// unwritten on a fold failure (`EVS-DEV-view-convergence/Z`). Returning
+  /// true makes that append throw [InjectedFailure] instead, standing in for
+  /// a storage failure of the finding's own append: the copy's watermark
+  /// stays before the event, and no pass-over happens, until a later attempt
+  /// succeeds.
+  final bool Function()? failCatchUpFoldFindingAppend;
+
+  /// Read once by `SyncCycle.start`. When true, the started cycle holds its
+  /// event store's trigger slot as any cycle does, but a wake runs no pass
+  /// of it: only a call of the cycle, its cadence and its lock requests
+  /// run passes, so a test drives the passes itself.
+  final bool handDrivenCycle;
 
   /// The seams installed for the current zone, or null. Always null when
   /// assertions are disabled: the zone is read only inside an assertion.

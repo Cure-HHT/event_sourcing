@@ -39,7 +39,9 @@ import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
+import '../test_support/deliveries.dart';
 import '../test_support/queue_test_support.dart';
+import '../test_support/test_backends.dart';
 
 // ---------------------------------------------------------------------------
 // Test fixture helpers
@@ -73,7 +75,10 @@ Future<_Fixture> _bootstrapDatastore({
   );
   final backend = SembastBackend(database: db);
   final datastore = await bootstrapEventStore(
-    backend: backend,
+    storage: ApplicationSuppliedStorage(
+      backend,
+      SembastSecurityContextStore(backend: backend),
+    ),
     source: Source(
       hopId: hopId,
       identifier: identifier,
@@ -82,6 +87,7 @@ Future<_Fixture> _bootstrapDatastore({
     entryTypes: entryTypes,
     destinations: destinations,
   );
+  trackTestBackend(datastore.eventStore, backend);
   return _Fixture(datastore: datastore, backend: backend);
 }
 
@@ -223,11 +229,11 @@ void main() {
           ),
         );
 
-        // Ingest the bridged audit at the receiver. ingestEvent goes
-        // through the same `_ingestOneInTxn` code path as ingestBatch,
-        // so the invariant tested here covers both ingest entry points
-        // (single-event and batch).
-        final outcome = await receiver.datastore.eventStore.ingestEvent(
+        // Ingest the bridged audit at the receiver. The ingest seam
+        // handles the record as each record of a delivery is handled, so
+        // the invariant tested here covers both.
+        final outcome = await ingestEventForTest(
+          receiver.datastore.eventStore,
           auditEvent,
         );
         expect(outcome.outcome, equals(IngestOutcome.ingested));
@@ -382,7 +388,8 @@ void main() {
         );
 
         // Ingest the bridged registry-init audit on the receiver.
-        final outcome = await receiver.datastore.eventStore.ingestEvent(
+        final outcome = await ingestEventForTest(
+          receiver.datastore.eventStore,
           auditEvent,
         );
         expect(outcome.outcome, equals(IngestOutcome.ingested));
@@ -509,7 +516,8 @@ void main() {
         );
 
         // Ingest at receiver.
-        final outcome = await receiver.datastore.eventStore.ingestEvent(
+        final outcome = await ingestEventForTest(
+          receiver.datastore.eventStore,
           auditEvent,
         );
         expect(outcome.outcome, equals(IngestOutcome.ingested));
@@ -602,7 +610,8 @@ void main() {
         ))!;
         expect(headBefore.finalStatus, isNull);
 
-        final outcome = await receiver.datastore.eventStore.ingestEvent(
+        final outcome = await ingestEventForTest(
+          receiver.datastore.eventStore,
           wedgeEvent,
         );
         expect(outcome.outcome, equals(IngestOutcome.ingested));

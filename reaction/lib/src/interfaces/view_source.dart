@@ -5,6 +5,7 @@
 import 'dart:async';
 
 import 'package:event_sourcing/event_sourcing.dart';
+import 'package:reaction/src/wire/subscription_messages.dart';
 
 /// Subscribes to row-level updates for a registered `ProjectionSpec`'s
 /// materialized view. Mirrors the substrate's `EventStore.subscribe<T>`
@@ -45,10 +46,35 @@ abstract interface class ViewSource {
   ///
   /// The stream uses Dart's standard cancellation semantics — call
   /// `.cancel()` on the resulting subscription to dispose.
+  ///
+  /// Errors arrive on the stream's error channel. A
+  /// `ViewConvergingRefusal` is transient: the subscription stays open and
+  /// its rows follow once the named view is current. A [SubscriptionDenied]
+  /// ends the subscription, as does any other error a `RemoteViewSource`
+  /// reports for it.
   Stream<Update<T>> watch<T>({
     required String viewName,
     required T Function(Map<String, Object?>) mapper,
     SubscriptionFilter? filter,
     Set<String>? aggregates,
   });
+}
+
+/// Delivered on a [ViewSource.watch] stream's error channel when the server
+/// refuses the subscription, naming the refused view and the refusal's
+/// [reason]. Terminal: the stream closes after it, and no reconnect
+/// re-issues the subscription.
+final class SubscriptionDenied implements Exception {
+  const SubscriptionDenied({required this.viewName, required this.reason});
+
+  /// The view the refused subscription named.
+  final String viewName;
+
+  /// Why the server refused it.
+  final SubscriptionDenyReason reason;
+
+  @override
+  String toString() =>
+      'SubscriptionDenied: subscription_denied for "$viewName" '
+      '(${reason.toWire()})';
 }

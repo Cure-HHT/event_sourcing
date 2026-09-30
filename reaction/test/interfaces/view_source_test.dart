@@ -75,11 +75,17 @@ void main() {
       String describe(Update<int> u) => switch (u) {
         Snapshot<int>() => 'snapshot',
         EndOfReplay<int>() => 'end-of-replay',
+        Pending<int>() => 'pending',
         Delta<int>() => 'delta',
         Tombstone<int>() => 'tombstone',
       };
       expect(describe(const Snapshot(value: 1, sequence: 1)), 'snapshot');
-      expect(describe(const EndOfReplay(sequence: 2)), 'end-of-replay');
+      expect(
+        describe(
+          const EndOfReplay(sequence: 2, state: ViewConvergenceState.current),
+        ),
+        'end-of-replay',
+      );
       expect(
         describe(const Delta(value: 3, sequence: 3, cause: 'evt')),
         'delta',

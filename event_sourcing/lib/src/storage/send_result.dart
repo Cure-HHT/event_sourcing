@@ -1,12 +1,19 @@
+import 'package:event_sourcing/src/destinations/receiver_response.dart';
+
 /// Categorized outcome of a single `destination.send()` call.
 ///
-/// The drain loop switches on the three subclasses:
+/// The drain loop switches on the four subclasses:
 /// - [SendOk]: the payload was delivered; mark the FIFO head `sent` and
-///   continue draining.
+///   continue draining. For a destination that serializes natively it is
+///   an acceptance carrying no receiver record, on which the head wedges.
+/// - [SendAnswered]: a receiver of the native batch format answered with
+///   its record of the delivery's channel.
 /// - [SendTransient]: retry later per SyncPolicy; `httpStatus` optional
 ///   because not every destination is HTTP-based.
 /// - [SendPermanent]: the payload will never be accepted as-is; mark the
 ///   FIFO head `wedged` and halt this destination's FIFO.
+/// - [SendNotAttempted]: the destination did not attempt delivery; the
+///   drain loop records nothing and ends this destination's pass.
 ///
 /// The translation from a raw HTTP or IO response to a [SendResult] is a
 /// per-destination judgment — default categorization is `2xx -> SendOk`,
@@ -31,6 +38,31 @@ class SendOk extends SendResult {
 
   @override
   String toString() => 'SendOk()';
+}
+
+/// A receiver of the native batch format answered a delivery with an
+/// acknowledgement or an `out_of_sequence` refusal, carrying its record of
+/// the delivery's channel ([decodeReceiverAnswer]). A destination that
+/// serializes natively reports every answer it receives this way; one that
+/// does not never returns it.
+// Implements: EVS-DEV-delivery-channel/L
+// the send outcome that carries the receiver's answer and its record.
+class SendAnswered extends SendResult {
+  const SendAnswered(this.response);
+
+  /// The receiver's answer.
+  final ReceiverResponse response;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is SendAnswered && response == other.response;
+
+  @override
+  int get hashCode => Object.hash(SendAnswered, response);
+
+  @override
+  String toString() => 'SendAnswered($response)';
 }
 
 /// The destination is temporarily unable to accept the payload. The drain
@@ -76,4 +108,29 @@ class SendPermanent extends SendResult {
 
   @override
   String toString() => 'SendPermanent(error: $error)';
+}
+
+/// The destination did not attempt delivery: its transport declined to
+/// send now (a receiver asked it to wait, a transport is paused), rather
+/// than trying and failing. The drain loop SHALL record no attempt, leave
+/// the FIFO head pending with its recorded attempts unchanged, and send
+/// nothing further on this destination in the same pass.
+// Implements: EVS-DEV-destination-retry-budget/C
+// Implements: EVS-DEV-destination-retry-budget/D
+class SendNotAttempted extends SendResult {
+  const SendNotAttempted({this.reason});
+
+  /// Operator-readable explanation, when the destination has one.
+  final String? reason;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is SendNotAttempted && reason == other.reason;
+
+  @override
+  int get hashCode => Object.hash(SendNotAttempted, reason);
+
+  @override
+  String toString() => 'SendNotAttempted(reason: $reason)';
 }

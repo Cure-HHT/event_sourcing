@@ -36,7 +36,10 @@ void main() {
         filter: const SubscriptionFilter(entryTypes: <String>{'demo_note'}),
       );
       datastore = await bootstrapEventStore(
-        backend: backend,
+        storage: ApplicationSuppliedStorage(
+          backend,
+          SembastSecurityContextStore(backend: backend),
+        ),
         source: const Source(
           hopId: 'hub-server',
           identifier: '55555555-5555-4555-8555-555555555555',
@@ -67,7 +70,7 @@ void main() {
             body: SizedBox(
               height: 600,
               child: EventStreamPanel(
-                backend: backend,
+                reader: datastore.eventStore.reader,
                 eventStore: datastore.eventStore,
                 appState: state,
               ),

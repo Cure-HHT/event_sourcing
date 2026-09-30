@@ -491,4 +491,166 @@ void main() {
       expect(entry.toString(), contains('originSequenceNumber: 99'));
     });
   });
+
+  group('ProvenanceEntry library_version and database_id', () {
+    Map<String, Object?> base() => <String, Object?>{
+      'hop': 'originator',
+      'received_at': '2026-01-01T00:00:00.000Z',
+      'identifier': 'db-1',
+      'software_version': 'my_app@1.0.0',
+    };
+
+    // Verifies: EVS-PRD-provenance/A
+    test('libraryVersion and databaseId default to null and are omitted '
+        'from toJson', () {
+      final entry = ProvenanceEntry(
+        hop: 'originator',
+        receivedAt: DateTime.utc(2026),
+        identifier: 'db-1',
+        softwareVersion: 'my_app@1.0.0',
+      );
+      expect(entry.libraryVersion, isNull);
+      expect(entry.databaseId, isNull);
+      expect(entry.toJson().containsKey('library_version'), isFalse);
+      expect(entry.toJson().containsKey('database_id'), isFalse);
+    });
+
+    // Verifies: EVS-PRD-provenance/C
+    test('a constructed entry round-trips library_version and database_id', () {
+      final original = ProvenanceEntry(
+        hop: 'originator',
+        receivedAt: DateTime.utc(2026, 1, 1),
+        identifier: 'db-1',
+        softwareVersion: 'my_app@1.0.0',
+        libraryVersion: 'event_sourcing@0.9.0',
+        databaseId: '9f1c2d3e-0000-4000-8000-000000000001',
+      );
+      final json = original.toJson();
+      expect(json['library_version'], 'event_sourcing@0.9.0');
+      expect(json['database_id'], '9f1c2d3e-0000-4000-8000-000000000001');
+      final decoded = ProvenanceEntry.fromJson(json);
+      expect(decoded.libraryVersion, 'event_sourcing@0.9.0');
+      expect(decoded.databaseId, '9f1c2d3e-0000-4000-8000-000000000001');
+      expect(decoded, equals(original));
+      expect(decoded.toJson(), equals(json));
+    });
+
+    // Verifies: EVS-PRD-provenance/A
+    test('equality and hashCode include libraryVersion and databaseId', () {
+      ProvenanceEntry make({String? lib, String? db}) => ProvenanceEntry(
+        hop: 'originator',
+        receivedAt: DateTime.utc(2026),
+        identifier: 'db-1',
+        softwareVersion: 'my_app@1.0.0',
+        libraryVersion: lib,
+        databaseId: db,
+      );
+      expect(make(lib: 'a', db: 'x'), equals(make(lib: 'a', db: 'x')));
+      expect(
+        make(lib: 'a', db: 'x').hashCode,
+        make(lib: 'a', db: 'x').hashCode,
+      );
+      expect(make(lib: 'a', db: 'x'), isNot(equals(make(lib: 'b', db: 'x'))));
+      expect(make(lib: 'a', db: 'x'), isNot(equals(make(lib: 'a', db: 'y'))));
+      expect(
+        make(lib: 'a', db: 'x').hashCode,
+        isNot(equals(make(lib: 'b', db: 'x').hashCode)),
+      );
+    });
+
+    // Verifies: EVS-PRD-provenance/E
+    test('a decoded entry without transform_version re-encodes without the '
+        'key', () {
+      final json = base();
+      final encoded = ProvenanceEntry.fromJson(json).toJson();
+      expect(encoded.containsKey('transform_version'), isFalse);
+      expect(encoded, equals(json));
+    });
+
+    // Verifies: EVS-PRD-provenance/E
+    test('a decoded entry with transform_version null keeps the null key', () {
+      final json = base()..['transform_version'] = null;
+      final encoded = ProvenanceEntry.fromJson(json).toJson();
+      expect(encoded.containsKey('transform_version'), isTrue);
+      expect(encoded, equals(json));
+    });
+
+    // Verifies: EVS-PRD-provenance/E
+    test('an unmodelled key survives a decode and re-encode unchanged', () {
+      final json = base()
+        ..['future_field'] = <String, Object?>{
+          'x': 1,
+          'y': <Object?>['a', null, 2.5],
+        };
+      final entry = ProvenanceEntry.fromJson(json);
+      final encoded = entry.toJson();
+      expect(encoded, equals(json));
+      expect(encoded.keys.toList(), json.keys.toList());
+    });
+
+    // Verifies: EVS-PRD-provenance/E
+    test('a decoded entry is isolated from later changes to its source map '
+        'and to the encoded map', () {
+      final nested = <String, Object?>{'x': 1};
+      final json = base()..['future_field'] = nested;
+      final entry = ProvenanceEntry.fromJson(json);
+      nested['x'] = 2;
+      json['hop'] = 'changed';
+      final first = entry.toJson();
+      expect(first['hop'], 'originator');
+      expect(first['future_field'], equals(<String, Object?>{'x': 1}));
+      (first['future_field']! as Map<String, Object?>)['x'] = 3;
+      expect(entry.toJson()['future_field'], equals(<String, Object?>{'x': 1}));
+    });
+
+    // Verifies: EVS-PRD-provenance/E
+    test('received_at keeps its original spelling on re-encode', () {
+      final json = base()..['received_at'] = '2026-01-01T00:00:00+00:00';
+      final entry = ProvenanceEntry.fromJson(json);
+      expect(entry.receivedAt, DateTime.utc(2026));
+      expect(entry.receivedAt.isUtc, isTrue);
+      expect(entry.toJson()['received_at'], '2026-01-01T00:00:00+00:00');
+    });
+
+    // Verifies: EVS-PRD-provenance/E
+    test('a decoded entry keeps library_version and database_id verbatim', () {
+      final json = base()
+        ..['library_version'] = 'event_sourcing@0.9.0'
+        ..['database_id'] = 'db-uuid';
+      final entry = ProvenanceEntry.fromJson(json);
+      expect(entry.libraryVersion, 'event_sourcing@0.9.0');
+      expect(entry.databaseId, 'db-uuid');
+      expect(entry.toJson(), equals(json));
+    });
+
+    // Verifies: EVS-PRD-provenance/C
+    test('a non-string library_version is refused, naming the field', () {
+      final json = base()..['library_version'] = 3;
+      expect(
+        () => ProvenanceEntry.fromJson(json),
+        throwsA(
+          isA<FormatException>().having(
+            (e) => e.message,
+            'message',
+            contains('library_version'),
+          ),
+        ),
+      );
+    });
+
+    // Verifies: EVS-PRD-provenance/C
+    test('a non-string database_id is refused, naming the field', () {
+      final json = base()..['database_id'] = <String, Object?>{};
+      expect(
+        () => ProvenanceEntry.fromJson(json),
+        throwsA(
+          isA<FormatException>().having(
+            (e) => e.message,
+            'message',
+            contains('database_id'),
+          ),
+        ),
+      );
+    });
+  });
 }

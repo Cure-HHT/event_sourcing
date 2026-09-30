@@ -2,15 +2,18 @@
 // (the wedge event records the retry budget in effect: the budget a
 //   cycle resolves once per pass, a static policy's budget, or the default
 //   budget when neither supplies one, reaches every destination's drain)
-import 'package:event_sourcing/src/destinations/destination_registry.dart';
+import 'package:event_sourcing/src/entry_type_definition.dart';
+import 'package:event_sourcing/src/event_store.dart';
+import 'package:event_sourcing/src/logging.dart';
 import 'package:event_sourcing/src/security/system_entry_types.dart';
 import 'package:event_sourcing/src/storage/final_status.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/sembast_backend.dart';
 import 'package:event_sourcing/src/storage/send_result.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
-import 'package:event_sourcing/src/sync/sync_cycle.dart';
 import 'package:event_sourcing/src/sync/sync_policy.dart';
+import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
+import 'package:event_sourcing/src/versions.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
@@ -19,20 +22,46 @@ import '../test_support/fifo_entry_helpers.dart';
 import '../test_support/registry_with_audit.dart';
 
 const Initiator _testInit = AutomationInitiator(service: 'test-bootstrap');
+const String _noteType = 'note-finalized';
 
 Future<SembastBackend> _openBackend(String path) async {
   final db = await newDatabaseFactoryMemory().openDatabase(path);
   return SembastBackend(database: db);
 }
 
-Future<({SembastBackend backend, DestinationRegistry registry})>
+Future<
+  ({SembastBackend backend, DestinationRegistry registry, EventStore store})
+>
 _bootstrap() async {
   final backend = await _openBackend(
     'sync-cycle-resolver-${DateTime.now().microsecondsSinceEpoch}.db',
   );
-  final deps = await buildAuditedRegistryDeps(backend);
+  final deps = await buildAuditedRegistryDeps(
+    backend,
+    callerEntryTypes: const <EntryTypeDefinition>[
+      EntryTypeDefinition(
+        id: _noteType,
+        registeredVersion: EntryTypeVersion(1, 0),
+        name: _noteType,
+      ),
+    ],
+  );
   final registry = DestinationRegistry(eventStore: deps.eventStore);
-  return (backend: backend, registry: registry);
+  return (backend: backend, registry: registry, store: deps.eventStore);
+}
+
+/// Appends a real event that a destination's default (match-all) filter
+/// would pick up on the next fill, so a test can tell a skipped fill from
+/// one that ran and simply found nothing to do.
+Future<void> _appendFillable(EventStore store, String id) async {
+  await store.append(
+    entryType: _noteType,
+    aggregateId: id,
+    aggregateType: 'note',
+    eventType: 'finalized',
+    data: <String, Object?>{'id': id},
+    initiator: _testInit,
+  );
 }
 
 Future<String> _enqueueOne(
@@ -185,6 +214,128 @@ void main() {
     test('resolver returning null falls back to SyncPolicy.defaults', () async {
       await _expectDefaultBudget(policyResolver: () => null);
     });
+
+    // Verifies: EVS-DEV-destination-drain/J
+    // a resolved policy with a negative
+    //   time bound is treated the same as a sub-one attempt bound: the
+    //   pass logs the refusal severely and fills and drains nothing.
+    test(
+      'resolver returning a negative time bound logs severely and skips the pass',
+      () async {
+        final ctx = await _bootstrap();
+        final dest = FakeDestination(id: 'fake', script: [const SendOk()]);
+        await ctx.registry.addDestination(dest, initiator: _testInit);
+        await ctx.registry.setStartDate(
+          'fake',
+          DateTime.utc(2000),
+          initiator: _testInit,
+        );
+        await _enqueueOne(ctx.backend, 'fake', 'e1');
+        // A second, real event a fill would enqueue if it ran, so the
+        // assertions below can tell a skipped fill from one that ran and
+        // found nothing new.
+        await _appendFillable(ctx.store, 'e2-late');
+        final cursorBefore = await ctx.backend.readFillCursor('fake');
+        final rowsBefore = await ctx.backend.listFifoEntries('fake');
+
+        final logged = <LibraryLogRecord>[];
+        final cycle = await SyncCycle.start(
+          registry: ctx.registry,
+          cadence: const Duration(hours: 1),
+          policyResolver: () => const SyncPolicy(
+            initialBackoff: Duration(seconds: 60),
+            backoffMultiplier: 5.0,
+            maxBackoff: Duration(hours: 2),
+            jitterFraction: 0.1,
+            maxAttempts: 20,
+            maxRetryTime: Duration(milliseconds: -1),
+          ),
+        );
+
+        await runWithDeliveryTestHooks(
+          DeliveryTestHooks(onLog: logged.add),
+          cycle.call,
+        );
+
+        expect(dest.sent, isEmpty);
+        expect(
+          await ctx.backend.readFillCursor('fake'),
+          cursorBefore,
+          reason:
+              'a refused resolved budget fills nothing, not only sends '
+              'nothing',
+        );
+        expect(
+          await ctx.backend.listFifoEntries('fake'),
+          rowsBefore,
+          reason: 'the late event is not enqueued by a skipped fill',
+        );
+        final severeLogs = <LibraryLogRecord>[
+          for (final r in logged)
+            if (r.level == LibraryLogLevel.severe) r,
+        ];
+        expect(severeLogs, isNotEmpty);
+
+        await cycle.close();
+        await ctx.backend.close();
+      },
+    );
+
+    // Verifies: EVS-DEV-destination-drain/J
+    // a resolved policy with a sub-one
+    //   attempt bound is refused the same way as a negative time bound: the
+    //   pass logs the refusal severely and fills and drains nothing.
+    test(
+      'resolver returning a sub-one attempt bound logs severely and skips the pass',
+      () async {
+        final ctx = await _bootstrap();
+        final dest = FakeDestination(id: 'fake', script: [const SendOk()]);
+        await ctx.registry.addDestination(dest, initiator: _testInit);
+        await ctx.registry.setStartDate(
+          'fake',
+          DateTime.utc(2000),
+          initiator: _testInit,
+        );
+        await _enqueueOne(ctx.backend, 'fake', 'e1');
+        await _appendFillable(ctx.store, 'e2-late');
+        final cursorBefore = await ctx.backend.readFillCursor('fake');
+        final rowsBefore = await ctx.backend.listFifoEntries('fake');
+
+        final logged = <LibraryLogRecord>[];
+        final cycle = await SyncCycle.start(
+          registry: ctx.registry,
+          cadence: const Duration(hours: 1),
+          policyResolver: () => _budget(0),
+        );
+
+        await runWithDeliveryTestHooks(
+          DeliveryTestHooks(onLog: logged.add),
+          cycle.call,
+        );
+
+        expect(dest.sent, isEmpty);
+        expect(
+          await ctx.backend.readFillCursor('fake'),
+          cursorBefore,
+          reason:
+              'a refused resolved budget fills nothing, not only sends '
+              'nothing',
+        );
+        expect(
+          await ctx.backend.listFifoEntries('fake'),
+          rowsBefore,
+          reason: 'the late event is not enqueued by a skipped fill',
+        );
+        final severeLogs = <LibraryLogRecord>[
+          for (final r in logged)
+            if (r.level == LibraryLogLevel.severe) r,
+        ];
+        expect(severeLogs, isNotEmpty);
+
+        await cycle.close();
+        await ctx.backend.close();
+      },
+    );
   });
 
   group('mutual exclusivity + throws', () {
@@ -311,13 +462,18 @@ void main() {
 
 /// Drives a destination whose every send is transient through a cycle
 /// started with [policyResolver] (or with neither a policy nor a resolver)
-/// and asserts the head wedges after exactly the default budget of sends.
+/// and asserts the head wedges under the default budget in effect: the
+/// wedge event records the default's attempt and time bounds
+/// (`max_attempts`, `max_retry_ms`) whatever attempt actually spends them.
 Future<void> _expectDefaultBudget({
   SyncPolicy? Function()? policyResolver,
 }) async {
-  final budget = SyncPolicy.defaults.maxAttempts;
+  const defaults = SyncPolicy.defaults;
   final ctx = await _bootstrap();
-  final dest = FakeDestination(id: 'x', script: _transients(budget));
+  final dest = FakeDestination(
+    id: 'x',
+    script: _transients(defaults.maxAttempts),
+  );
   await ctx.registry.addDestination(dest, initiator: _testInit);
   final entryId = await _enqueueOne(ctx.backend, 'x', 'e1');
   var now = DateTime.utc(2026, 4, 22, 10);
@@ -327,7 +483,11 @@ Future<void> _expectDefaultBudget({
     clock: () => now,
     policyResolver: policyResolver,
   );
-  // The default curve caps at 2 h plus 10% jitter; 3 h clears it.
+  // The default curve caps at 2 h plus 10% jitter; 3 h clears it. A
+  // continuously failing item wedges on the default's time bound (24 h)
+  // well before it reaches the default's attempt bound (20): each gap
+  // counts near the curve's 2 h ceiling plus the 1 h cadence, so the 24 h
+  // time bound is spent in about a dozen gaps.
   final sends = await _sendsUntilWedged(
     cycle,
     ctx.backend,
@@ -335,8 +495,11 @@ Future<void> _expectDefaultBudget({
     entryId,
     () => now = now.add(const Duration(hours: 3)),
   );
-  expect(sends, budget);
-  await _expectBudgetWedge(ctx.backend, 'x', budget);
+  final event = (await _wedgeEvents(ctx.backend, 'x')).single;
+  expect(event.data['cause'], 'retry_budget_exhausted');
+  expect(event.data['attempt_count'], sends);
+  expect(event.data['max_attempts'], defaults.maxAttempts);
+  expect(event.data['max_retry_ms'], defaults.maxRetryTime.inMilliseconds);
   await cycle.close();
   await ctx.backend.close();
 }

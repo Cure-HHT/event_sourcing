@@ -14,15 +14,14 @@
 //   instead of running a second pass beside it)
 import 'dart:async';
 
-import 'package:event_sourcing/src/destinations/destination_registry.dart';
 import 'package:event_sourcing/src/destinations/wire_payload.dart';
+import 'package:event_sourcing/src/event_store.dart';
 import 'package:event_sourcing/src/storage/attempt_result.dart';
 import 'package:event_sourcing/src/storage/final_status.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/sembast_backend.dart';
 import 'package:event_sourcing/src/storage/send_result.dart';
 import 'package:event_sourcing/src/sync/clock.dart';
-import 'package:event_sourcing/src/sync/sync_cycle.dart';
 import 'package:event_sourcing/src/sync/sync_policy.dart';
 import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -326,6 +325,64 @@ void main() {
       expect(head, isNotNull);
       expect(head!.entryId, e1RowId);
       expect(head.finalStatus, FinalStatus.wedged);
+    });
+
+    // Verifies: EVS-DEV-destination-drain/J
+    // a static policy with a negative time
+    //   bound is refused before anything starts, the same as a sub-one
+    //   attempt bound, and sends nothing.
+    test(
+      'a static policy with a negative time bound throws ArgumentError at start',
+      () async {
+        final dest = FakeDestination(id: 'fake', script: [const SendOk()]);
+        await registry.addDestination(dest, initiator: _testInit);
+        await _enqueueOne(backend, 'fake', 'e1');
+
+        const badPolicy = SyncPolicy(
+          initialBackoff: Duration(seconds: 60),
+          backoffMultiplier: 5.0,
+          maxBackoff: Duration(hours: 2),
+          jitterFraction: 0.1,
+          maxAttempts: 20,
+          maxRetryTime: Duration(milliseconds: -1),
+        );
+
+        await expectLater(
+          SyncCycle.start(
+            registry: registry,
+            policy: badPolicy,
+            cadence: const Duration(hours: 1),
+          ),
+          throwsArgumentError,
+        );
+        expect(dest.sent, isEmpty);
+      },
+    );
+
+    // Verifies: EVS-DEV-destination-drain/J
+    // a zero time bound is accepted (it is
+    //   not negative): the item still wedges once its window is spent, but
+    //   the cycle starts and sends normally.
+    test('a static policy with a zero time bound is accepted', () async {
+      final dest = FakeDestination(id: 'fake', script: [const SendOk()]);
+      await registry.addDestination(dest, initiator: _testInit);
+      await _enqueueOne(backend, 'fake', 'e1');
+
+      const zeroTimeBoundPolicy = SyncPolicy(
+        initialBackoff: Duration(seconds: 60),
+        backoffMultiplier: 5.0,
+        maxBackoff: Duration(hours: 2),
+        jitterFraction: 0.1,
+        maxAttempts: 20,
+        maxRetryTime: Duration.zero,
+      );
+
+      final sync = await start(
+        clock: () => DateTime.utc(2026, 4, 22, 10),
+        policy: zeroTimeBoundPolicy,
+      );
+      await sync.call();
+      expect(dest.sent, hasLength(1));
     });
 
     // Defensive: when no destinations are registered, the cycle is a

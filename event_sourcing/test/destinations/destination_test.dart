@@ -7,11 +7,14 @@ import 'dart:typed_data';
 import 'package:event_sourcing/src/destinations/destination.dart';
 import 'package:event_sourcing/src/destinations/subscription_filter.dart';
 import 'package:event_sourcing/src/destinations/wire_payload.dart';
+import 'package:event_sourcing/src/lifecycle/lib_version.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/send_result.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
 import 'package:event_sourcing/src/versions.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import '../test_support/record_fixtures.dart';
 
 /// Minimal concrete Destination used only to verify the abstract surface
 /// type-checks and dispatches correctly.
@@ -106,7 +109,7 @@ StoredEvent _mkEvent(String eventId) => StoredEvent(
   aggregateType: 'note',
   entryType: 'epistaxis_event',
   entryTypeVersion: const EntryTypeVersion(1, 0),
-  libFormatVersion: const DataFormatVersion(2, 0),
+  libFormatVersion: LibVersion.dataFormat,
   eventType: 'finalized',
   sequenceNumber: 1,
   data: const <String, dynamic>{},
@@ -114,6 +117,7 @@ StoredEvent _mkEvent(String eventId) => StoredEvent(
   initiator: const UserInitiator('u1'),
   clientTimestamp: DateTime.utc(2026, 4, 22),
   eventHash: 'hash',
+  causal: kRootVersionCausal,
 );
 
 void main() {

@@ -4,9 +4,33 @@
 //   and an observer that throws cannot change what the library does.
 import 'dart:developer' as developer;
 
+import 'package:event_sourcing/src/logging_sink_io.dart'
+    if (dart.library.js_interop) 'package:event_sourcing/src/logging_sink_web.dart';
 import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:logging/logging.dart' as logging;
 import 'package:meta/meta.dart';
+
+/// The fill and drain component names [libraryLog] writes to standard error
+/// by default at severe level or above. Both the delivery-cycle fill and
+/// the drain log under these two names; there is no separate fill
+/// component.
+const Set<String> _severeLogDefaultComponents = {'sync_cycle', 'drain'};
+
+// Implements: EVS-DEV-severe-log-default/A
+// a severe-or-above fill or drain log record reaches the process's
+//   standard error (the browser console on the web) unless the application
+//   turns the default off.
+/// Where the library's severe fill and drain log records go by default.
+class LibraryLogging {
+  LibraryLogging._();
+
+  /// Writes each severe-or-above fill or drain log record to standard error
+  /// (the browser console on the web) as it is logged. An application that
+  /// routes the library's records elsewhere — by listening to
+  /// `Logger.root.onRecord` — turns this off so a record is not written
+  /// twice.
+  static bool severeToStandardError = true;
+}
 
 /// Severity of a library log line, on the `dart:developer` level scale
 /// (the same scale `package:logging` uses).
@@ -90,6 +114,19 @@ void libraryLog(
   logging.Logger(
     record.name,
   ).log(level.loggingLevel, message, error, stackTrace);
+  if (LibraryLogging.severeToStandardError &&
+      level.value >= LibraryLogLevel.severe.value &&
+      _severeLogDefaultComponents.contains(component)) {
+    final line = stackTrace == null
+        ? record.toString()
+        : '$record\n$stackTrace';
+    final sink = DeliveryTestHooks.current?.severeLogSink;
+    if (sink != null) {
+      sink(line);
+    } else {
+      writeSevereLogLine(line);
+    }
+  }
   final onLog = DeliveryTestHooks.current?.onLog;
   if (onLog == null) return;
   try {

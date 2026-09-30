@@ -128,13 +128,13 @@ grants:
         declaredPermissions: declared,
         yamlSource: yaml,
       );
-      final eventsBefore = await eventStore.backend.findAllEvents(limit: 1000);
+      final eventsBefore = await eventStore.reader.findAllEvents(limit: 1000);
       await bootstrapActionPermissions(
         eventStore: eventStore,
         declaredPermissions: declared,
         yamlSource: yaml,
       );
-      final eventsAfter = await eventStore.backend.findAllEvents(limit: 1000);
+      final eventsAfter = await eventStore.reader.findAllEvents(limit: 1000);
       expect(eventsAfter.length, eventsBefore.length);
     });
 

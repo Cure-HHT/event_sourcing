@@ -1,22 +1,28 @@
-// Verifies: EVS-PRD-materializer/A
-// rebuildView replays the event log
-//   through a registered ProjectionSpec to reconstruct a view from scratch;
-//   it is a library-supplied materializer helper.
+// Verifies: EVS-DEV-view-convergence/U
+// rebuildView marks the fingerprint's current unmarked copy for deletion,
+//   resolved from stored state rather than a cached copy id, and creates
+//   an empty copy of the same fingerprint, in one transaction: the copy id
+//   changes and the old copy's rows are gone once catch-up has run. It
+//   does not throw when another instance already rebuilt or marked the
+//   copy.
+// Verifies: EVS-DEV-view-convergence/T
+// finding no unmarked copy of the fingerprint stored (another instance
+//   marked it without replacing it), rebuildView creates one.
+// Verifies: EVS-DEV-view-convergence/V
+// rebuildView returns once the new copy is current for the instance, and
+//   throws ViewConvergenceTimeout, naming the view and the copy's
+//   progress, once the caller-supplied deadline passes first.
 // Verifies: EVS-PRD-materializer/B
-// rebuild is deterministic and idempotent;
-//   tests confirm identical rows across two consecutive rebuilds on the same
-//   log, as well as cross-chunk correctness for large logs.
-// Verifies: EVS-PRD-destinations/K
-// the view rebuild writes only target
-//   versions derived from the entry-type registry: a target that differs
-//   from its entry type's registered version, or names an unregistered entry
-//   type, is refused before any write and the view is left untouched.
-//
-// ProjectionSpec replay; strict-superset target-version map.
+// the rows a rebuild's replacement copy converges to equal the rows the
+//   log already derived.
 
 import 'package:event_sourcing/event_sourcing.dart';
+import 'package:event_sourcing/src/projections/view_fingerprint.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
+
+import '../test_support/record_fixtures.dart';
+import '../test_support/test_backends.dart';
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -25,12 +31,19 @@ import 'package:sembast/sembast_memory.dart';
 var _dbCounter = 0;
 
 const _kEntryType = 'sample_event';
+const _kView = 'toy_view';
 
 const _kAggSpec = AggregateProjectionSpec(
-  viewName: 'toy_view',
+  viewName: _kView,
   interest: SubscriptionFilter(entryTypes: <String>{_kEntryType}),
   tombstoneEventTypes: <String>{'tombstone'},
 );
+
+/// A generous deadline: long enough for an ordinary rebuild of a modest
+/// log to converge in a test process, short enough that a real hang still
+/// fails the test instead of the suite's own timeout.
+DateTime _farDeadline() =>
+    DateTime.now().toUtc().add(const Duration(seconds: 20));
 
 Future<EventStore> _openStore() async {
   _dbCounter += 1;
@@ -46,22 +59,8 @@ Future<EventStore> _openStore() async {
         registeredVersion: EntryTypeVersion(1, 0),
         name: _kEntryType,
       ),
-    )
-    ..register(
-      const EntryTypeDefinition(
-        id: 'other_event',
-        registeredVersion: EntryTypeVersion(1, 0),
-        name: 'other_event',
-      ),
-    )
-    ..register(
-      const EntryTypeDefinition(
-        id: 'newcomer_type',
-        registeredVersion: EntryTypeVersion(2, 0),
-        name: 'newcomer_type',
-      ),
     );
-  return EventStore.openForTest(
+  final store = await EventStore.openForTest(
     storage: backend,
     entryTypes: entryTypes,
     source: const Source(
@@ -72,156 +71,47 @@ Future<EventStore> _openStore() async {
     securityContexts: SembastSecurityContextStore(backend: backend),
     projections: proj,
   );
+  trackTestBackend(store, backend);
+  return store;
 }
 
-Future<void> _appendEvent(
-  EventStore store, {
-  required String eventId,
-  required String aggregateId,
-  required String entryType,
-  required String eventType,
-  required Map<String, dynamic> data,
-  required DateTime clientTimestamp,
-}) async {
-  await store.backend.transaction<void>((txn) async {
-    final seq = await store.backend.nextSequenceNumber(txn);
-    await store.backend.appendEvent(
-      txn,
-      StoredEvent(
-        key: 0,
-        eventId: eventId,
-        aggregateId: aggregateId,
-        aggregateType: 'SampleAggregate',
-        entryType: entryType,
-        entryTypeVersion: const EntryTypeVersion(1, 0),
-        libFormatVersion: const DataFormatVersion(2, 0),
-        eventType: eventType,
-        sequenceNumber: seq,
-        data: data,
-        metadata: const <String, dynamic>{},
-        initiator: const UserInitiator('u1'),
-        clientTimestamp: clientTimestamp,
-        eventHash: 'hash-$eventId',
-      ),
-    );
-  });
-}
+/// Appends through the store's own path, so the event folds inline where
+/// the copy is current, exactly as any ordinary caller's append does.
+Future<StoredEvent?> _appendNote(
+  EventStore store,
+  String aggregateId, {
+  String entryType = _kEntryType,
+  Map<String, Object?> data = const <String, Object?>{'title': 'note'},
+}) => store.append(
+  entryType: entryType,
+  aggregateId: aggregateId,
+  aggregateType: 'SampleAggregate',
+  eventType: 'finalized',
+  data: data,
+  initiator: const UserInitiator('u1'),
+);
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
+/// Polls, yielding to the event loop between checks, until [copyId] is no
+/// longer among the backend's stored view copies. Fails the test after too
+/// many polls rather than hanging forever.
+Future<void> _waitUntilCopyGone(EventStore store, String copyId) async {
+  final backend = testBackendOf(store);
+  for (var i = 0; i < 2000; i++) {
+    final all = await backend.transaction(backend.readViewCopiesInTxn);
+    if (all.every((c) => c.copyId != copyId)) return;
+    await Future<void>.delayed(const Duration(milliseconds: 5));
+  }
+  fail('copy "$copyId" was not deleted in time');
+}
 
 void main() {
-  group('rebuildView (ProjectionSpec-based)`', () {
-    // when a previously-registered entry type is omitted from the supplied
-    // map, and no destructive write happens.
-    test('strict-superset failure on missing existing entry type', () async {
-      final store = await _openStore();
-      // Seed an existing target-version entry for two entry types.
-      await store.backend.transaction((txn) async {
-        await store.backend.writeViewTargetVersionInTxn(
-          txn,
-          'toy_view',
-          'sample_event',
-          const EntryTypeVersion(1, 0),
-        );
-        await store.backend.writeViewTargetVersionInTxn(
-          txn,
-          'toy_view',
-          'other_event',
-          const EntryTypeVersion(1, 0),
-        );
-      });
-      await expectLater(
-        rebuildView(
-          store: store,
-          viewName: 'toy_view',
-          // 'other_event' missing — strict-superset violation.
-          targetVersionByEntryType: const <String, EntryTypeVersion>{
-            'sample_event': EntryTypeVersion(1, 0),
-          },
-        ),
-        throwsArgumentError,
-      );
-      // Existing entries remain.
-      final stored = await store.backend
-          .transaction<Map<String, EntryTypeVersion>>(
-            (txn) async =>
-                store.backend.readAllViewTargetVersionsInTxn(txn, 'toy_view'),
-          );
-      expect(stored.containsKey('other_event'), isTrue);
-      await store.backend.close();
-    });
-
-    for (final (label, targets) in <(String, Map<String, EntryTypeVersion>)>[
-      (
-        'a target below the registered version',
-        <String, EntryTypeVersion>{
-          _kEntryType: const EntryTypeVersion(1, 0),
-          'newcomer_type': const EntryTypeVersion(1, 0),
-        },
-      ),
-      (
-        'a target above the registered version',
-        <String, EntryTypeVersion>{_kEntryType: const EntryTypeVersion(2, 0)},
-      ),
-      (
-        'an unregistered entry type',
-        <String, EntryTypeVersion>{
-          _kEntryType: const EntryTypeVersion(1, 0),
-          'bogus': const EntryTypeVersion(7, 0),
-        },
-      ),
-    ]) {
-      test('$label is refused before any write', () async {
-        final store = await _openStore();
-        await _appendEvent(
-          store,
-          eventId: 'e1',
-          aggregateId: 'agg-1',
-          entryType: _kEntryType,
-          eventType: 'finalized',
-          data: const <String, dynamic>{'intensity': 'mild'},
-          clientTimestamp: DateTime.parse('2026-04-22T10:00:00Z'),
-        );
-        await rebuildView(
-          store: store,
-          viewName: 'toy_view',
-          targetVersionByEntryType: const <String, EntryTypeVersion>{
-            _kEntryType: EntryTypeVersion(1, 0),
-          },
-        );
-        final rowsBefore = await store.backend.findViewRows('toy_view');
-        Future<Map<String, EntryTypeVersion>> storedTargets() =>
-            store.backend.transaction<Map<String, EntryTypeVersion>>(
-              (txn) =>
-                  store.backend.readAllViewTargetVersionsInTxn(txn, 'toy_view'),
-            );
-        final targetsBefore = await storedTargets();
-
-        await expectLater(
-          rebuildView(
-            store: store,
-            viewName: 'toy_view',
-            targetVersionByEntryType: targets,
-          ),
-          throwsArgumentError,
-        );
-
-        expect(await store.backend.findViewRows('toy_view'), rowsBefore);
-        expect(await storedTargets(), targetsBefore);
-        await store.backend.close();
-      });
-    }
-
-    // raises StateError.
+  group('rebuildView (fingerprinted view copies)', () {
     test('missing ProjectionSpec raises StateError', () async {
       _dbCounter += 1;
       final db = await newDatabaseFactoryMemory().openDatabase(
         'rebuild-no-spec-$_dbCounter.db',
       );
       final backend = SembastBackend(database: db);
-      // EventStore with empty ProjectionRegistry — no 'toy_view' spec.
       final store = await EventStore.openForTest(
         storage: backend,
         entryTypes: EntryTypeRegistry(),
@@ -232,226 +122,238 @@ void main() {
         ),
         securityContexts: SembastSecurityContextStore(backend: backend),
       );
+      trackTestBackend(store, backend);
       await expectLater(
-        rebuildView(
-          store: store,
-          viewName: 'toy_view',
-          targetVersionByEntryType: const <String, EntryTypeVersion>{
-            'sample_event': EntryTypeVersion(1, 0),
-          },
-        ),
+        rebuildView(store: store, viewName: _kView, deadline: _farDeadline()),
         throwsStateError,
       );
-      await store.backend.close();
+      await testBackendOf(store).close();
     });
 
-    // allowed (strict superset).
-    test('superset accept — new entry type added', () async {
+    test('rebuild replaces the copy: rows match, copy id changed, old copy '
+        'gone after catch-up', () async {
       final store = await _openStore();
-      await store.backend.transaction((txn) async {
-        await store.backend.writeViewTargetVersionInTxn(
-          txn,
-          'toy_view',
-          'sample_event',
-          const EntryTypeVersion(1, 0),
-        );
-      });
-      await _appendEvent(
-        store,
-        eventId: 'e1',
-        aggregateId: 'agg-1',
-        entryType: 'sample_event',
-        eventType: 'finalized',
-        data: const <String, dynamic>{'intensity': 'mild'},
-        clientTimestamp: DateTime.parse('2026-04-22T10:00:00Z'),
-      );
-      final processed = await rebuildView(
-        store: store,
-        viewName: 'toy_view',
-        targetVersionByEntryType: const <String, EntryTypeVersion>{
-          'sample_event': EntryTypeVersion(1, 0),
-          'newcomer_type': EntryTypeVersion(2, 0), // brand new — allowed
-        },
-      );
-      expect(processed, 1);
-      final stored = await store.backend
-          .transaction<Map<String, EntryTypeVersion>>(
-            (txn) async =>
-                store.backend.readAllViewTargetVersionsInTxn(txn, 'toy_view'),
-          );
-      expect(stored, <String, EntryTypeVersion>{
-        'sample_event': const EntryTypeVersion(1, 0),
-        'newcomer_type': const EntryTypeVersion(2, 0),
-      });
-      await store.backend.close();
-    });
+      await _appendNote(store, 'agg-1', data: const {'intensity': 'mild'});
+      await _appendNote(store, 'agg-2', data: const {'intensity': 'severe'});
+      final beforeRows = (await store.reader.findViewRows(_kView)).rows;
+      expect(beforeRows, hasLength(2));
+      final oldCopyId = store.copyIdOf(_kView);
 
-    // produces the same view rows (idempotent).
-    test('idempotent rebuild', () async {
-      final store = await _openStore();
-      await _appendEvent(
-        store,
-        eventId: 'e1',
-        aggregateId: 'agg-1',
-        entryType: 'sample_event',
-        eventType: 'finalized',
-        data: const <String, dynamic>{'intensity': 'mild'},
-        clientTimestamp: DateTime.parse('2026-04-22T10:00:00Z'),
-      );
-      await _appendEvent(
-        store,
-        eventId: 'e2',
-        aggregateId: 'agg-2',
-        entryType: 'sample_event',
-        eventType: 'finalized',
-        data: const <String, dynamic>{'intensity': 'severe'},
-        clientTimestamp: DateTime.parse('2026-04-22T11:00:00Z'),
-      );
-      const map = <String, EntryTypeVersion>{
-        'sample_event': EntryTypeVersion(1, 0),
-      };
-      Future<Map<String, EntryTypeVersion>> targets() =>
-          store.backend.transaction(
-            (txn) =>
-                store.backend.readAllViewTargetVersionsInTxn(txn, 'toy_view'),
-          );
-      final first = await rebuildView(
+      await rebuildView(
         store: store,
-        viewName: 'toy_view',
-        targetVersionByEntryType: map,
-      );
-      final firstRows = await store.backend.findViewRows('toy_view');
-      expect(firstRows, hasLength(2));
-      final firstTargets = await targets();
-      final second = await rebuildView(
-        store: store,
-        viewName: 'toy_view',
-        targetVersionByEntryType: map,
-      );
-      final secondRows = await store.backend.findViewRows('toy_view');
-      expect(first, second);
-      // Whole rows, every field, equal across the two rebuilds.
-      expect(secondRows, firstRows);
-      expect(await targets(), firstTargets);
-      expect(firstTargets, map);
-      await store.backend.close();
-    });
-
-    // view_target_versions atomically; view rows absent from the rebuilt
-    // event log do not survive.
-    test('rebuild removes prior view rows not derivable from '
-        'the event log', () async {
-      final store = await _openStore();
-      // Seed toy_view with a garbage row not backed by any event.
-      await store.backend.transaction((txn) async {
-        await store.backend.upsertViewRowInTxn(
-          txn,
-          'toy_view',
-          'garbage-agg',
-          <String, Object?>{'aggregate_id': 'garbage-agg', 'garbage': true},
-        );
-      });
-      // One legitimate event on agg-1.
-      await _appendEvent(
-        store,
-        eventId: 'e1',
-        aggregateId: 'agg-1',
-        entryType: 'sample_event',
-        eventType: 'finalized',
-        data: const <String, dynamic>{'intensity': 'mild'},
-        clientTimestamp: DateTime.parse('2026-04-22T10:00:00Z'),
+        viewName: _kView,
+        deadline: _farDeadline(),
       );
 
-      final processed = await rebuildView(
-        store: store,
-        viewName: 'toy_view',
-        targetVersionByEntryType: const <String, EntryTypeVersion>{
-          'sample_event': EntryTypeVersion(1, 0),
-        },
-      );
-
-      expect(processed, 1);
-      final rows = await store.backend.findViewRows('toy_view');
-      expect(rows, hasLength(1));
-      expect(rows.single['latestEventId'], equals('e1'));
+      final newCopyId = store.copyIdOf(_kView);
+      expect(newCopyId, isNot(oldCopyId));
+      final afterRead = await store.reader.findViewRows(_kView);
+      expect(afterRead.state, ViewConvergenceState.current);
       expect(
-        rows.map((r) => r['latestEventId']),
-        isNot(contains('garbage-agg')),
+        {for (final r in afterRead.rows) r['aggregateId']: r['intensity']},
+        {for (final r in beforeRows) r['aggregateId']: r['intensity']},
       );
-      await store.backend.close();
+
+      await _waitUntilCopyGone(store, oldCopyId);
+      await testBackendOf(store).close();
     });
 
-    // when the log spans multiple streaming chunks.
-    test('large event log spanning multiple chunks rebuilds '
-        'correctly — no events dropped at chunk boundaries', () async {
+    test('a garbage row not derivable from the log does not survive the '
+        'replacement copy', () async {
       final store = await _openStore();
-      const totalEvents = 1250;
-      for (var i = 0; i < totalEvents; i++) {
-        final aggregateId = i.isEven ? 'agg-even' : 'agg-odd';
-        await _appendEvent(
-          store,
-          eventId: 'ev-$i',
-          aggregateId: aggregateId,
-          entryType: 'sample_event',
-          eventType: 'finalized',
-          data: <String, dynamic>{'index': i},
-          clientTimestamp: DateTime.utc(
-            2026,
-            4,
-            22,
-            10,
-          ).add(Duration(seconds: i)),
+      final oldCopyId = store.copyIdOf(_kView);
+      await testBackendOf(store).transaction((txn) async {
+        await testBackendOf(store).upsertViewRowInTxn(
+          txn,
+          oldCopyId,
+          'garbage-agg',
+          <String, Object?>{'aggregateId': 'garbage-agg', 'garbage': true},
         );
+      });
+      await _appendNote(store, 'agg-1');
+
+      await rebuildView(
+        store: store,
+        viewName: _kView,
+        deadline: _farDeadline(),
+      );
+
+      final rows = (await store.reader.findViewRows(_kView)).rows;
+      expect(rows, hasLength(1));
+      expect(rows.single['aggregateId'], 'agg-1');
+      await testBackendOf(store).close();
+    });
+
+    test('a deadline that passes before the copy converges throws '
+        'ViewConvergenceTimeout naming the view and its progress', () async {
+      // A registered major of 1 with a stray event stamped at major 2:
+      // the fold step refuses it every attempt (EVS-DEV-version-
+      // compatibility), so the replacement copy never converges and any
+      // deadline is guaranteed to pass first.
+      final store = await _openStore();
+      await _appendNote(store, 'agg-1');
+      final backend = testBackendOf(store);
+      await backend.transaction((txn) async {
+        final seq = await backend.nextSequenceNumber(txn);
+        final previous = await backend.readLatestEventHash(txn);
+        await backend.appendEvent(
+          txn,
+          StoredEvent(
+            key: 0,
+            eventId: 'bad-event',
+            aggregateId: 'agg-bad',
+            aggregateType: 'SampleAggregate',
+            entryType: _kEntryType,
+            entryTypeVersion: const EntryTypeVersion(2, 0),
+            libFormatVersion: LibVersion.dataFormat,
+            eventType: 'finalized',
+            sequenceNumber: seq,
+            data: const <String, Object?>{'intensity': 'future'},
+            metadata: const <String, dynamic>{},
+            initiator: const UserInitiator('u1'),
+            clientTimestamp: DateTime.now().toUtc(),
+            eventHash: 'hash-bad-event',
+            previousEventHash: previous,
+            causal: kRootVersionCausal,
+          ),
+        );
+      });
+
+      final deadline = DateTime.now().toUtc().add(
+        const Duration(milliseconds: 300),
+      );
+      await expectLater(
+        rebuildView(store: store, viewName: _kView, deadline: deadline),
+        throwsA(
+          isA<ViewConvergenceTimeout>()
+              .having(
+                (e) => e.converging.map((s) => s.viewName),
+                'converging view names',
+                contains(_kView),
+              )
+              .having(
+                (e) => e.converging.firstWhere((s) => s.viewName == _kView),
+                "the view's copy progress",
+                predicate<ViewCopyStatus>(
+                  (s) => s.watermark < s.logHead,
+                  'watermark behind the log head (still converging)',
+                ),
+              ),
+        ),
+      );
+      await testBackendOf(store).close();
+    });
+
+    test('an appending loop during the rebuild never waits past one '
+        'catch-up transaction', () async {
+      final store = await _openStore();
+      const totalEvents = 300;
+      for (var i = 0; i < totalEvents; i++) {
+        await _appendNote(store, 'agg-${i % 20}', data: {'index': i});
       }
 
-      final processed = await rebuildView(
+      var rebuildDone = false;
+      final rebuildFuture = rebuildView(
         store: store,
-        viewName: 'toy_view',
-        targetVersionByEntryType: const <String, EntryTypeVersion>{
-          'sample_event': EntryTypeVersion(1, 0),
-        },
-      );
-      expect(processed, totalEvents);
+        viewName: _kView,
+        deadline: _farDeadline(),
+      ).whenComplete(() => rebuildDone = true);
 
-      final rows = await store.backend.findViewRows('toy_view');
-      expect(rows, hasLength(2));
-      // AggregateFold stamps 'aggregateId' into every view row so we can
-      // look up directly without parsing the event-id string.
-      final byId = <String, Map<String, Object?>>{
-        for (final r in rows) r['aggregateId'] as String: r,
-      };
-      // Each aggregate's last event wrote {'index': N}.
-      // With AggregateProjectionSpec deep-merge: the final row reflects
-      // the last event's data merged over all prior events.
-      expect(byId['agg-odd']!['index'], totalEvents - 1); // 1249 (odd)
-      expect(byId['agg-even']!['index'], totalEvents - 2); // 1248 (even)
-      await store.backend.close();
+      var appendsWhileConverging = 0;
+      for (var i = 0; i < 20; i++) {
+        final stopwatch = Stopwatch()..start();
+        await _appendNote(
+          store,
+          'other-agg-$i',
+          entryType: _kEntryType,
+          data: const {'unrelated': true},
+        );
+        stopwatch.stop();
+        expect(
+          stopwatch.elapsed,
+          lessThan(const Duration(seconds: 2)),
+          reason:
+              'an append never waits for the whole rebuild to finish, '
+              'only for at most the catch-up transaction in flight',
+        );
+        if (!rebuildDone) appendsWhileConverging++;
+      }
+      await rebuildFuture;
+      expect(
+        appendsWhileConverging,
+        greaterThan(0),
+        reason:
+            'at least one append interleaved with the still-converging '
+            'rebuild rather than waiting behind it',
+      );
+      await testBackendOf(store).close();
     });
 
-    // PromoterRegistry with no registered steps (identity) produces the
-    // original payload unchanged.
-    test('identity promoter (empty registry) passes payload through', () async {
+    test('rebuildView resolves the copy by fingerprint, not the stale '
+        'in-memory copy id: it does not throw when another instance already '
+        'rebuilt the view', () async {
       final store = await _openStore();
-      await _appendEvent(
-        store,
-        eventId: 'e1',
-        aggregateId: 'agg-1',
-        entryType: 'sample_event',
-        eventType: 'finalized',
-        data: const <String, dynamic>{'answer': 42},
-        clientTimestamp: DateTime.parse('2026-04-22T10:00:00Z'),
+      await _appendNote(store, 'agg-1');
+      final backend = testBackendOf(store);
+      final staleCopyId = store.copyIdOf(_kView);
+      final spec = store.projections.lookup(_kView)!;
+      final fingerprint = viewFingerprint(
+        spec,
+        store.entryTypes,
+        store.promoters,
       );
-      final processed = await rebuildView(
+
+      // Stands in for another instance's rebuild: it marks the copy this
+      // instance's cache still names and creates the replacement, all
+      // before this instance's own catch-up has refreshed its cache.
+      final otherInstanceCopyId = await backend.transaction<String>((
+        txn,
+      ) async {
+        await backend.markViewCopyForDeletionInTxn(txn, staleCopyId);
+        return backend.createViewCopyInTxn(txn, _kView, fingerprint, 0);
+      });
+
+      await rebuildView(
         store: store,
-        viewName: 'toy_view',
-        targetVersionByEntryType: const <String, EntryTypeVersion>{
-          'sample_event': EntryTypeVersion(1, 0),
-        },
+        viewName: _kView,
+        deadline: _farDeadline(),
       );
-      expect(processed, 1);
-      final rows = await store.backend.findViewRows('toy_view');
-      expect(rows.single['answer'], 42);
-      await store.backend.close();
+
+      final copies = await backend.transaction(backend.readViewCopiesInTxn);
+      final unmarkedOfFingerprint = copies.where(
+        (c) => c.fingerprint == fingerprint && !c.markedForDeletion,
+      );
+      expect(unmarkedOfFingerprint, hasLength(1));
+      expect(unmarkedOfFingerprint.single.copyId, isNot(otherInstanceCopyId));
+      expect(unmarkedOfFingerprint.single.copyId, isNot(staleCopyId));
+
+      final afterRead = await store.reader.findViewRows(_kView);
+      expect(afterRead.state, ViewConvergenceState.current);
+      expect(afterRead.rows, hasLength(1));
+      await testBackendOf(store).close();
+    });
+
+    test('rebuildView creates a replacement when another instance already '
+        'marked the copy without creating one', () async {
+      final store = await _openStore();
+      await _appendNote(store, 'agg-1');
+      final backend = testBackendOf(store);
+      final staleCopyId = store.copyIdOf(_kView);
+
+      await backend.transaction((txn) async {
+        await backend.markViewCopyForDeletionInTxn(txn, staleCopyId);
+      });
+
+      await rebuildView(
+        store: store,
+        viewName: _kView,
+        deadline: _farDeadline(),
+      );
+
+      final afterRead = await store.reader.findViewRows(_kView);
+      expect(afterRead.state, ViewConvergenceState.current);
+      expect(afterRead.rows, hasLength(1));
+      await testBackendOf(store).close();
     });
   });
 }

@@ -45,16 +45,16 @@ void main() {
         );
 
         // Row is stored under the aggregateId key.
-        final row = await eventStore.backend.transaction(
-          (txn) => eventStore.backend.readViewRowInTxn(
+        final row = await eventStore.reader.transaction(
+          (txn) => eventStore.reader.readViewRowInTxn(
             txn,
             kRolePermissionGrantsView,
             'admin:user.invite',
           ),
         );
-        expect(row, isNotNull);
-        expect(row!['role'], 'admin');
-        expect(row['permissionName'], 'user.invite');
+        expect(row.row, isA<SettledRow>());
+        expect(row.row.dataOrNull!['role'], 'admin');
+        expect(row.row.dataOrNull!['permissionName'], 'user.invite');
       },
     );
 
@@ -85,14 +85,14 @@ void main() {
         initiator: const AutomationInitiator(service: 'test'),
       );
 
-      final row = await eventStore.backend.transaction(
-        (txn) => eventStore.backend.readViewRowInTxn(
+      final row = await eventStore.reader.transaction(
+        (txn) => eventStore.reader.readViewRowInTxn(
           txn,
           kRolePermissionGrantsView,
           'admin:user.invite',
         ),
       );
-      expect(row, isNull);
+      expect(row.row, isA<AbsentRow>());
     });
 
     test('events with a different aggregateType are ignored (no-op)', () async {
@@ -111,10 +111,10 @@ void main() {
         initiator: const AutomationInitiator(service: 'test'),
       );
 
-      final rows = await eventStore.backend.findViewRows(
+      final rows = await eventStore.reader.findViewRows(
         kRolePermissionGrantsView,
       );
-      expect(rows, isEmpty);
+      expect(rows.rows, isEmpty);
     });
 
     test('re-inserting the same aggregateId is idempotent (upsert)', () async {
@@ -142,21 +142,21 @@ void main() {
         initiator: const AutomationInitiator(service: 'test'),
       );
 
-      final rows = await eventStore.backend.findViewRows(
+      final rows = await eventStore.reader.findViewRows(
         kRolePermissionGrantsView,
       );
       // Exactly one row — upsert overwrote, no duplicates.
-      expect(rows.where((r) => r['role'] == 'admin').length, 1);
+      expect(rows.rows.where((r) => r['role'] == 'admin').length, 1);
 
-      final row = await eventStore.backend.transaction(
-        (txn) => eventStore.backend.readViewRowInTxn(
+      final row = await eventStore.reader.transaction(
+        (txn) => eventStore.reader.readViewRowInTxn(
           txn,
           kRolePermissionGrantsView,
           aggregateId,
         ),
       );
-      expect(row, isNotNull);
-      expect(row!['permissionName'], 'user.invite');
+      expect(row.row, isA<SettledRow>());
+      expect(row.row.dataOrNull!['permissionName'], 'user.invite');
     });
   });
 }

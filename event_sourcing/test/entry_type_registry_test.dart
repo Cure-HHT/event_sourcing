@@ -1,7 +1,6 @@
-import 'package:event_sourcing/src/entry_type_definition.dart';
-import 'package:event_sourcing/src/entry_type_registry.dart';
-import 'package:event_sourcing/src/versions.dart';
+import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:sembast/sembast_memory.dart';
 
 /// Minimal fixture: two distinct `EntryTypeDefinition`s with unique ids.
 EntryTypeDefinition _defn(String id) => EntryTypeDefinition(
@@ -90,5 +89,90 @@ void main() {
       expect(registry.isRegistered('any'), isFalse);
       expect(registry.byId('any'), isNull);
     });
+
+    // Sealed like ProjectionRegistry and PromoterRegistry: three things
+    // read the whole registry at EventStore.open (a fingerprint whose
+    // interest names no entry type, the generation descriptor, the
+    // registry audit), so a registration after open would silently change
+    // them.
+    // Verifies: EVS-DEV-version-compatibility/K (registry complete at open)
+    test('register after seal throws and leaves the registry unchanged', () {
+      final before = _defn('before_seal');
+      registry
+        ..register(before)
+        ..seal();
+      expect(registry.isSealed, isTrue);
+      expect(() => registry.register(_defn('after_seal')), throwsArgumentError);
+      expect(registry.all(), hasLength(1));
+      expect(registry.byId('before_seal'), same(before));
+      expect(registry.byId('after_seal'), isNull);
+    });
+
+    // A registration attempted after EventStore.open is refused and leaves
+    // the registry as the boot read it.
+    // Verifies: EVS-DEV-version-compatibility/K
+    test('EventStore.open seals the entry-type registry it is given', () async {
+      final db = await newDatabaseFactoryMemory().openDatabase(
+        'entry-type-seal-open-${DateTime.now().microsecondsSinceEpoch}.db',
+      );
+      final backend = SembastBackend(database: db);
+      final registry = EntryTypeRegistry()..register(_defn('before_open'));
+
+      final store = await EventStore.open(
+        storage: ApplicationSuppliedStorage(
+          backend,
+          SembastSecurityContextStore(backend: backend),
+        ),
+        entryTypes: registry,
+        source: const Source(
+          hopId: 'test-server',
+          identifier: 'test-instance-1',
+          softwareVersion: 'event_sourcing_test@0.0.0',
+        ),
+        projections: ProjectionRegistry(),
+        promoters: PromoterRegistry(),
+      );
+      addTearDown(store.close);
+
+      expect(registry.isSealed, isTrue);
+      expect(() => registry.register(_defn('after_open')), throwsArgumentError);
+      expect(registry.byId('after_open'), isNull);
+    });
+
+    // EventStore.openForTest seals the registry it is handed as part of
+    // its boot (the same seal EventStore.open performs). A registration
+    // attempted after the open must be refused and leave the registry as
+    // the boot read it.
+    // Verifies: EVS-DEV-version-compatibility/K (registry complete at open)
+    test(
+      'EventStore.openForTest seals the entry-type registry it is given',
+      () async {
+        final db = await newDatabaseFactoryMemory().openDatabase(
+          'entry-type-seal-${DateTime.now().microsecondsSinceEpoch}.db',
+        );
+        final backend = SembastBackend(database: db);
+        final securityContexts = SembastSecurityContextStore(backend: backend);
+        final registry = EntryTypeRegistry()..register(_defn('before_open'));
+
+        await EventStore.openForTest(
+          storage: backend,
+          entryTypes: registry,
+          source: const Source(
+            hopId: 'test-server',
+            identifier: 'test-instance-1',
+            softwareVersion: 'event_sourcing_test@0.0.0',
+          ),
+          securityContexts: securityContexts,
+        );
+
+        expect(registry.isSealed, isTrue);
+        expect(
+          () => registry.register(_defn('after_open')),
+          throwsArgumentError,
+        );
+        expect(registry.byId('after_open'), isNull);
+        expect(registry.byId('before_open'), isNotNull);
+      },
+    );
   });
 }

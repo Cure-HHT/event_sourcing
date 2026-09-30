@@ -7,13 +7,13 @@ import 'package:flutter/material.dart';
 
 class EventStreamPanel extends StatefulWidget {
   const EventStreamPanel({
-    required this.backend,
+    required this.reader,
     required this.eventStore,
     required this.appState,
     super.key,
   });
 
-  final StorageBackend backend;
+  final StorageReader reader;
 
   /// Owns the per-pane `Source` used to discriminate locally-originated
   /// rows from rows ingested from another hop. Drives the `[L]` / `[R]`
@@ -66,7 +66,7 @@ class _EventStreamPanelState extends State<EventStreamPanel> {
   Future<void> _refresh() async {
     final refresh = ++_refreshes;
     try {
-      final events = await widget.backend.findAllEvents(limit: 500);
+      final events = await widget.reader.findAllEvents(limit: 500);
       if (!mounted || refresh != _refreshes) return;
       setState(() {
         _events = events;

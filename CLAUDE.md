@@ -103,11 +103,15 @@ These commitments shape the library's design.
   data-format version, older ones included, all in one boot transaction.
   Compatibility is decided by the data-format major: an older library of
   the same major opens and is recorded; another major is refused before
-  any write. The log records each open, not which of two builds
-  running side by side appended a given event. A view equals a replay
-  of the events under the projection and promoter specs of the build
-  that registers it once that build has re-derived it (boot promotion
-  and view catch-up at its open, or `rebuildView`).
+  any write. Every provenance entry the library stamps records the
+  library version that stamped it, so the log states which of two builds
+  running side by side appended or stored a given event. Views are
+  stored per definition: once a build's copy of a view is current, it
+  equals a replay of the events under that build's projection and
+  promoter specs, provided the builds sharing the copy define its code
+  (interest predicate, table row functions) alike; until then the
+  library reports the view as converging and serves none of its
+  unsettled rows.
 - **Entry-type version is substrate-owned.** Entry-type versions and
   the library's data-format version are `major.minor`. The substrate
   stamps `entryTypeVersion = entryTypes.byId(entryType).registeredVersion`
@@ -117,15 +121,17 @@ These commitments shape the library's design.
   promoters are `DefaultField` only, enforced at registration, while
   `RenameField`/`DropField` need a major step. Downgrade refusal and
   ingest compare majors only, so builds of one major share a database.
-  `EventStore.open` re-derives lagging view rows from the log through the
-  same fold step the interpreter and `rebuildView` use, so boot promotion
-  equals event-replay-with-promotion by construction. The normative
-  requirements live in `spec/dev-version-compatibility.md` and the
-  boot-flow DEV specs (`spec/dev-append-stamps-registered-version.md`,
+  `EventStore.open` creates an empty copy for every view whose
+  definition, entry-type versions included, no stored copy has, and the
+  copy catches up with the log after the open, in short transactions
+  ordered against every append, through the same fold step appends use,
+  so promotion equals event-replay-with-promotion by construction. The
+  normative requirements live in `spec/dev-version-compatibility.md` and
+  the boot-flow DEV specs (`spec/dev-append-stamps-registered-version.md`,
   `spec/dev-ingest-promotes-before-fold.md`,
-  `spec/dev-snapshot-promotion-on-open.md`,
   `spec/dev-entry-type-downgrade-refusal.md`,
-  `spec/dev-view-target-versions-seeding.md`).
+  `spec/dev-view-convergence.md`,
+  `spec/dev-converging-view-reads.md`).
 - **Originator-of-first-event canonicalization convention.** A Layer-2
   convention (see Epistemic layers): whoever appends the first event
   for an aggregate is treated as the initial canonicalization authority
@@ -144,7 +150,7 @@ These commitments shape the library's design.
   DataInvalidation targets software. Multi-editor work likely subsumes
   DataInvalidation.
 - **Reactive substrate intent.** Ingest-always + filters + at-least-
-  once delivery + per-aggregate-per-Source ordering. This is realized by
+  once delivery + per-aggregate-per-origin ordering. This is realized by
   a unified `subscribe<T>(filter, mode)` primitive (modes:
   `Events`, `AggregateMode<T>`; `View<T>` deferred) and the declarative
   projection interpreter described above. Cross-process resume /
@@ -169,12 +175,25 @@ different interpretation than it ships.
 the substrate's hard guarantees. They are tamper-evident and absolute:
 
 - The event at sequence N has hash H
-- The hash chain from genesis to N is intact
-- The provenance entries say the event passed through hops A → B → C
-  with attribution to initiators I₁, I₂, I₃ at times t₁, t₂, t₃
+- The hash chain from genesis to N is intact: each database's storage chain
+  has no break, and each fork, or reused origin position, of a database's
+  origin chain that a holder met is recorded as a security finding
+- A security finding records that a named database detected a named
+  integrity anomaly, with the hashes, positions and records it compared
+- The event names, as its causal parents, the versions of its aggregate the
+  library stamped for it
+- The provenance entries say which database authored the event and
+  which databases stored it after (a receiver, or a successor that
+  restores it), with
+  attribution to initiators and times
 - The append of this event was atomic with its row writes inside the
   same transaction
-- Per-aggregate-per-Source order is preserved
+- The events of one aggregate that one database wrote on one branch of
+  its origin chain are stored in the order it wrote them whenever they
+  reach the log through one path (its own appends, one delivery channel,
+  one restore)
+- Each delivery a receiver accepted on a channel follows the one before
+  it, by number and hash link
 
 ALCOA+ alignment lives entirely at this layer. The cryptographic and
 structural facts are what regulators can be defended against.
@@ -195,6 +214,18 @@ They are useful defaults, not unique truths:
   derived-only views)
 - "Version" is a major.minor pair per entry type (the substrate could
   equally use content-hash-as-version)
+- A version follows the latest eligible version of its aggregate, and an
+  annotation is about the current one (the substrate could equally track
+  causality per field, or not at all)
+- A successor's events after its succession event continue its
+  predecessor's authorship (the substrate could equally treat the
+  successor as a new writer)
+- An aggregate a held security finding reaches (one it names, or one
+  with an event of a forked database at or above the fork's lowest
+  position; a received finding reaches only what its originating
+  database or that database's succession lineage authored) is folded
+  as usual and marked as having an outstanding finding (the substrate
+  could equally withhold it, or ignore the finding)
 
 The library bundles these as primitives because most consumers want
 them, but they don't carry the same epistemic weight as Layer 1.
@@ -258,33 +289,69 @@ The currently-trusted inputs are:
   tab's page is visible and released once a hidden page's sends in
   flight have their outcomes committed (or one cadence has passed); one
   that admits two drainers of a database lets both send and record
-  outcomes. Precondition
-  (`EVS-PRD-destinations/L`):
-  the library's delivery guarantees, its views and its security-context
-  records hold only while its persisted state (destination queues, the
-  views it materializes, the records it keeps beside them, such as fill
-  positions, schedules, replay requests, wedge records, halt requests,
-  send fences, refill guards, the registry check record, the database
-  identity, the generation records, the view catch-up marks, the fencing
-  epoch and the declared configuration, and the security context it
-  stores beside each event) changes only through the library's
-  operations, and reserved system events are appended only by the
-  library's own operations. At most one drainer per database: the
-  requirement is `EVS-PRD-destinations/V`. On Postgres the queue table's
-  guard (`EVS-DEV-destination-drain/S`), while it is in place (the schema
+  outcomes. Precondition (`EVS-PRD-destinations/L`): the library's delivery
+  guarantees, its views and its security-context records hold only while
+  no code other than the library writes the storage of a database the
+  library opened, and only while the library runs in a build with
+  assertions disabled. A write by other code means any of these:
+  a connection with the credentials of the library's Postgres roles; a
+  role administering the database (the owner of its tables, a superuser,
+  a holder of `CREATEROLE` or of the admin option over a library role); a
+  handle on the location or the file of its Sembast database; or, on the
+  web, script on the page.
+  For a database opened over a storage backend the application supplied,
+  they also hold only while its persisted state changes only through the
+  library's operations and reserved system events are appended only by
+  the library's own operations. That state is the destination queues, the views
+  the library materializes, the records it keeps beside them (fill
+  positions, schedules, replay requests, transform failure records,
+  wedge records, halt requests, send fences, refill guards, the sender
+  channel records, on Sembast the record of the latest sequence the
+  database authored and the record of whether it holds a security
+  finding, the registry check record, the database
+  identity, the generation records, the declared library roles, the
+  view copies' identities, definition fingerprints, fold watermarks and
+  deletion marks, the fencing epoch and the declared configuration), and
+  the security context it stores beside each event. For its delivery
+  channels they also hold only while each sending database identity has
+  one live source at a time.
+  At most one drainer per database: the requirement is
+  `EVS-PRD-destinations/V`. On Postgres the queue table's guard
+  (`EVS-DEV-destination-drain/S`), while it is in place (the schema
   owner can remove it), refuses every change to a queue item outside the
-  shapes of the library's own writes, from any role; it
-  cannot tell a hand-written change of a legal shape from the library's
-  own, so it is a safety net and adds no trusted input.
-  Every `StorageBackend` member that writes, and the event store's
-  reserved append operations, are `@internal`, which the analyzer
-  enforces but nothing enforces at run time: the consumer
-  holds the backend (and, on Sembast, the database it opened), and a
-  backend in another package keeps the guard only by marking its own
-  overrides `@internal`.
+  shapes of the library's own writes, from any role; it cannot tell a
+  hand-written change of a legal shape from the library's own, so it is
+  a safety net and adds no trusted input.
+  The library opens the storage of the backends it ships from a
+  description the application supplies and keeps the writing access. No
+  object it hands the application writes its persisted state or appends
+  a reserved event outside the library's closed lists of public
+  operations, publishes, or yields a database, pool, session or engine
+  transaction; Dart's library privacy enforces this at run time
+  (`EVS-PRD-storage-barrier`). On Postgres every transaction the library
+  runs sets its search path, for that transaction only, to the schema
+  the description names (so the pool may run through a transaction-mode
+  pooler; only the lock session must be one server session), and the
+  library refuses to open a database on which a role outside the owner
+  and the declared library roles may write its tables, create objects
+  in its schema, or act as one of those roles
+  (`EVS-DEV-postgres-backend/M`, `EVS-DEV-postgres-backend/Q`).
+  A backend the application constructs and supplies is held by the
+  application. Its internal members are guarded by the analyzer alone,
+  and a backend in another package keeps that guard only by marking its
+  own overrides `@internal`.
+- **The library's storage credentials and location.** The Postgres
+  credentials of the library's runtime and lock roles, and the location
+  of a Sembast database the library opens, reach the library in the
+  storage description the application supplies. They are trusted to be
+  used by no code but the library: code that uses them opens its own
+  connection or handle, which the run-time barrier does not reach
+  (`EVS-PRD-destinations/L`). This is an unaudited deployment input
+  with no pluggable interface (`spec/roadmap/storage.md`).
 - **Deployment-supplied Postgres lock-session path.** The connection a
-  `PostgresBackend` holds its generation locks and the drain lock on
-  (`lockUrl`, or the pool's URL) is trusted to be one server session reaching the pool's
+  `PostgresBackend` holds its generation locks (including the
+  registrations of the view definitions it registers) and the drain
+  lock on (`lockUrl`, or the pool's URL) is trusted to be one server session reaching the pool's
   server, database and schema (a direct connection or a session-mode
   proxy that resets sessions, never a transaction-mode pooler), to carry
   the keepalives the library sets, and to let the lock role end its own
@@ -321,14 +388,20 @@ The currently-trusted inputs are:
   are enqueued and what each queue item carries), its send outcomes (a
   permanent failure wedges the queue head), the `SyncPolicy` given to
   `SyncCycle` statically or through `policyResolver` (its retry curve
-  decides backoff, its attempt budget decides when an item wedges; the
-  library refuses a budget below one), and the `clock` given to
+  decides backoff, and its retry budget, an attempt bound and a time
+  bound, decides when an item, or a transform that keeps failing,
+  wedges; the library refuses an attempt bound below one or a negative
+  time bound), a send outcome stating that no delivery was attempted
+  (it records no attempt and spends no budget), and the `clock` given to
   `SyncCycle` (fill computes its window's upper bound from it, so it
-  decides which events are enqueued). Each wedge appends a wedge event
-  recording the outcome category, the numeric status and the budget in
-  effect (`EVS-PRD-destinations/P`-`R`), so every wedge decision is
-  auditable from the log; the clock's readings are not recorded, so its
-  influence on the fill window is an unaudited input. Queue items are
+  decides which events are enqueued, and it times each attempt, so it
+  decides, with the cycle's cadence that caps each counted gap, when the
+  time bound is spent). Each wedge appends a wedge
+  event recording the outcome category, the numeric status and both
+  bounds of the budget in effect (`EVS-PRD-destinations/P`-`R`), so every
+  wedge decision is auditable from the log and the queue item's attempt
+  times; the clock's readings are not in the log, so its influence on
+  the fill window is an unaudited input. Queue items are
   built by the configuration the drain-lock holder declares
   (`declaredConfiguration`); `destination_registered` records the
   registering process's configuration, not the one in effect, and the
@@ -340,6 +413,35 @@ The currently-trusted inputs are:
   under a refill guard writes; the log records its value, but the library
   cannot check that it changes when code it cannot read (a transform, a
   predicate, a batching rule) changes (`spec/roadmap/sync.md`).
+  For a destination that serializes natively, the transport and the
+  receiver behind it are also trusted to carry the receiver's channel
+  record back on every acknowledgement and refusal, and to serve the
+  channel listing and restore pulls a successor makes
+  (`EVS-PRD-delivery-channel`). The sender reads each record against its
+  own: a record above its own naming a delivery it attempted or sent on
+  the current generation is adopted, a receiver behind is sent its
+  missing deliveries again exactly as sent, a record ahead at a number
+  where it marked no delivery sent, naming no delivery it attempted, is
+  recorded as a `sender_regressed` finding, and any other record
+  is recorded as a `channel_unexplained` finding; the latter two continue
+  the registration on a new generation filled again from the start of
+  the log, so a wrong record is attributable and no channel stops for an
+  integrity reason (`EVS-DEV-security-findings`). A succession restore
+  checks that each served delivery chains from delivery 1, recomputes to
+  its hash and carries events that verify; those checks prove
+  consistency, not authorship, because the hashes are unkeyed and
+  nothing is signed. The receiver is therefore trusted not to fabricate
+  events carrying a predecessor's identity, to serve every delivery it
+  accepted (a restore stores what it serves as the predecessor's
+  history), and not to claim a record ahead of its log. A served
+  delivery that fails a check is recorded as a security finding and the
+  served data is stored as served. Each database identity is assumed to
+  have one live source at a time: a second live source (a cloned file,
+  or a restored backup run beside the original) is detected, not
+  prevented. Both
+  keep delivering, and the forks and reused origin positions where
+  their events meet are recorded as findings in the logs that meet
+  them.
 - **Caller-supplied `Principal.userId` on action submissions and
   event metadata.** Identity is still accepted on faith — the
   substrate does not authenticate which user the caller claims to be
@@ -375,6 +477,16 @@ The currently-trusted inputs are:
   `TrustingAuthValidator` (dev/test); production deployments supply
   their own validator or middleware that closes the
   Principal-on-faith gap for that deployment.
+  The library's receiver endpoint (`EVS-DEV-delivery-receiver/N`) takes
+  from that flow the set of sender database identities a caller may
+  deliver for and read; every operation that accepts a native delivery
+  takes it, the event store's batch ingest included. The flow is trusted
+  to bind each caller to the right identities, since that binding decides
+  which channels a caller reaches and which successions a receiver
+  accepts (`EVS-DEV-sender-succession/F`); every receiver a successor
+  delivers to must bind the successor's caller to its predecessor too,
+  or it refuses the succession, an authentication refusal on which the
+  successor's delivery waits.
 
 Everything else — projection rules (`ProjectionSpec`), promoter rules
 (`PromoterSpec`), policy logic (in-lib in 0.x, see Architectural

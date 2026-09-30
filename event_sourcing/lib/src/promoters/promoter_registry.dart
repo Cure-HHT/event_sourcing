@@ -1,5 +1,5 @@
 // Implements: EVS-DEV-ingest-promotes-before-fold/C
-// Implements: EVS-DEV-snapshot-promotion-on-open/B
+// Implements: EVS-DEV-view-convergence/K
 import 'package:event_sourcing/src/promoters/primitives/transform.dart';
 import 'package:event_sourcing/src/promoters/promoter_spec.dart';
 import 'package:event_sourcing/src/versions.dart';
@@ -175,4 +175,20 @@ class PromoterRegistry {
   }
 
   bool get isSealed => _sealed;
+
+  /// The steps registered for ([viewName], [entryType]), ordered by
+  /// [PromoterSpec.fromVersion]. `viewFingerprint` reads this to cover the
+  /// promoter chain a view registers for each entry type its fingerprint
+  /// names.
+  // Implements: EVS-DEV-view-convergence/A (fingerprint term)
+  List<PromoterSpec> stepsFor({
+    required String viewName,
+    required String entryType,
+  }) {
+    final steps = [
+      for (final spec in _byKey.values)
+        if (spec.viewName == viewName && spec.entryType == entryType) spec,
+    ]..sort((a, b) => a.fromVersion.compareTo(b.fromVersion));
+    return steps;
+  }
 }

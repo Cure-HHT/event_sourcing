@@ -3,7 +3,7 @@
 // The one-drainer rule is stated where an adopter meets it, and every
 // statement points back to the requirement that is its source of truth:
 // the guide's section on several processes sharing one database and its
-// "Open a storage backend" step, the README's `PostgresBackend` entry, the
+// "Describe the storage" step, the README's `PostgresBackend` entry, the
 // dartdoc of `SyncCycle`, of `PostgresBackend.open` and `provision`, of
 // `DestinationRegistry.readDeliveryStatus` and `deleteDestination`, the
 // package CHANGELOG's one-drainer section, and the CLAUDE.md trust
@@ -120,8 +120,8 @@ List<Location> locations(String repoRoot) {
             ),
     ),
     Location(
-      'guide, "1. Open a storage backend"',
-      markdownSection(guide, '### 1. Open a storage backend'),
+      'guide, "1. Describe the storage"',
+      markdownSection(guide, '### 1. Describe the storage'),
     ),
     Location(
       'README, "Storage backends", the PostgresBackend entry',

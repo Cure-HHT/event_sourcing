@@ -3,24 +3,35 @@
 // the drainer's fill and drain directly under a drain lock the harness
 // takes. This file declares no tests, so it carries no citation.
 import 'package:event_sourcing/src/destinations/destination.dart';
-import 'package:event_sourcing/src/destinations/destination_registry.dart';
 import 'package:event_sourcing/src/destinations/destination_schedule.dart';
+import 'package:event_sourcing/src/destinations/receiver_response.dart'
+    show ReceiverRefusal, RefusalKind;
+import 'package:event_sourcing/src/destinations/subscription_filter.dart';
+import 'package:event_sourcing/src/event_store.dart';
+import 'package:event_sourcing/src/ingest/delivery_channel.dart';
+import 'package:event_sourcing/src/security/system_entry_types.dart'
+    show
+        kDestinationChannelResumedEntryType,
+        kDestinationSenderSucceededEntryType;
 import 'package:event_sourcing/src/storage/drain_lock.dart';
 import 'package:event_sourcing/src/storage/drain_records.dart';
 import 'package:event_sourcing/src/storage/final_status.dart';
+import 'package:event_sourcing/src/storage/initiator.dart';
+import 'package:event_sourcing/src/storage/queue_records.dart'
+    show SenderChannelRecord;
 import 'package:event_sourcing/src/storage/sembast_backend.dart';
 import 'package:event_sourcing/src/storage/send_result.dart';
 import 'package:event_sourcing/src/storage/source.dart';
 import 'package:event_sourcing/src/storage/storage_backend.dart';
 import 'package:event_sourcing/src/storage/transaction.dart';
 import 'package:event_sourcing/src/sync/clock.dart';
-import 'package:event_sourcing/src/sync/drain.dart';
-import 'package:event_sourcing/src/sync/fill_batch.dart';
-import 'package:event_sourcing/src/sync/sync_cycle.dart';
 import 'package:event_sourcing/src/sync/sync_policy.dart';
+import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'fake_destination.dart';
+import 'native_destination.dart';
+import 'test_backends.dart';
 
 /// The `backend_state` keys of the drain lock's records: the drain epoch,
 /// the heartbeat and the drainer's declaration.
@@ -55,23 +66,31 @@ final class TestCycle {
   SyncCycle? _cycle;
   Map<String, UnservedReason> _lastUnserved = const <String, UnservedReason>{};
 
-  Object get _key =>
-      registry.backend.drainExclusionKey(registry.eventStore.databaseId);
+  Object get _key => testBackendOf(
+    registry.eventStore,
+  ).drainExclusionKey(registry.eventStore.databaseId);
 
   /// The started cycle, starting one when none is.
   Future<SyncCycle> started() async {
     final running = _cycle;
     if (running != null) return running;
     await pauseTestCycles(_key, except: this);
-    final cycle = await SyncCycle.start(
-      registry: registry,
-      clock: clock,
-      policy: policy,
-      policyResolver: policyResolver,
-      cadence: const Duration(hours: 1),
-      configurationVersion: configurationVersion,
+    // Hand-driven: no append or registry operation wakes it, so a pass runs
+    // only when the test calls it. The cycle is started under that seam
+    // alone, whatever the caller installed: its cadence and heartbeat are
+    // an hour and no test drives them, and each pass reads the seams of the
+    // zone that calls the cycle.
+    final cycle = await runWithDeliveryTestHooks(
+      const DeliveryTestHooks(handDrivenCycle: true),
+      () => SyncCycle.start(
+        registry: registry,
+        clock: clock,
+        policy: policy,
+        policyResolver: policyResolver,
+        cadence: const Duration(hours: 1),
+        configurationVersion: configurationVersion,
+      ),
     );
-    registry.eventStore.deliveryTrigger = null;
     _cycle = cycle;
     _testCycles.add(this);
     addTearDown(pause);
@@ -200,7 +219,11 @@ final class _BoundLock implements DrainLock {
 /// The database identity a harness drain lock is taken for: the stored one,
 /// or, on a backend no event store has opened, a fixed test identity (on
 /// Postgres, minted and stored, since its drain lock verifies it).
-Future<String> _harnessDatabaseId(StorageBackend backend) =>
+///
+/// A fixture that stamps a raw test event's provenance calls this to name
+/// the same identity a later fill or drain will resolve for the backend,
+/// so the event reads as this database's own (`EVS-DEV-destination-drain/V`).
+Future<String> harnessDatabaseIdForTest(StorageBackend backend) =>
     backend.transaction((txn) async {
       final stored = await backend.readDatabaseIdTxn(txn);
       if (stored != null) return stored;
@@ -218,7 +241,7 @@ Future<T> withTestDrainLock<T>(
   Future<T> Function(DrainLock lock) body, {
   String? databaseId,
 }) async {
-  final id = databaseId ?? await _harnessDatabaseId(backend);
+  final id = databaseId ?? await harnessDatabaseIdForTest(backend);
   final key = backend.drainExclusionKey(id);
   await pauseTestCycles(key);
   final shared = _sharedLocks.putIfAbsent(
@@ -244,17 +267,22 @@ Future<T> withTestDrainLock<T>(
 }
 
 /// `drain` under a drain lock the harness takes (see [withTestDrainLock]).
+/// [cadence] defaults to the value `SyncCycle` itself defaults to, so a
+/// scenario that cares about the retry budget's time bound overrides it
+/// explicitly; one that does not may ignore it.
 Future<void> drainForTest(
   Destination destination, {
   required DestinationRegistry registry,
   Clock? clock,
   SyncPolicy? policy,
+  Duration cadence = const Duration(seconds: 15),
 }) => withTestDrainLock(
-  registry.backend,
+  testBackendOf(registry.eventStore),
   (lock) => drain(
     destination,
     registry: registry,
     lock: lock,
+    cadence: cadence,
     clock: clock,
     policy: policy,
   ),
@@ -266,13 +294,17 @@ Future<void> honourHaltForTest(
   String destinationId, {
   required DestinationRegistry registry,
 }) => withTestDrainLock(
-  registry.backend,
+  testBackendOf(registry.eventStore),
   (lock) => honourHaltById(destinationId, registry: registry, lock: lock),
   databaseId: registry.eventStore.databaseId,
 );
 
 /// `fillBatch` under a drain lock the harness takes. [source] defaults to
-/// a fixed test source.
+/// a fixed test source. [databaseId] overrides the harness identity a test
+/// resolves for [backend], for a test whose raw-appended events were
+/// stamped as authored by an identity a later step in the same test moved
+/// the harness away from (e.g. an `EventStore` opened over the backend
+/// after the events were appended).
 Future<void> fillForTest(
   Destination destination, {
   required StorageBackend backend,
@@ -280,18 +312,29 @@ Future<void> fillForTest(
   Clock? clock,
   bool flushHeld = false,
   String? declaredFingerprint,
-}) => withTestDrainLock(
-  backend,
-  (lock) => fillBatch(
-    destination,
-    backend: backend,
-    source: source ?? testFillSource,
-    lock: lock,
-    clock: clock,
-    flushHeld: flushHeld,
-    declaredFingerprint: declaredFingerprint,
-  ),
-);
+  String? databaseId,
+  SyncPolicy policy = SyncPolicy.defaults,
+  Duration cadence = const Duration(seconds: 15),
+}) async {
+  final resolvedDatabaseId =
+      databaseId ?? await harnessDatabaseIdForTest(backend);
+  return withTestDrainLock(
+    backend,
+    (lock) => fillBatch(
+      destination,
+      backend: backend,
+      source: source ?? testFillSource,
+      lock: lock,
+      clock: clock,
+      policy: policy,
+      cadence: cadence,
+      flushHeld: flushHeld,
+      declaredFingerprint: declaredFingerprint,
+      databaseId: resolvedDatabaseId,
+    ),
+    databaseId: resolvedDatabaseId,
+  );
+}
 
 /// The source a direct fill stamps native envelopes with when a test gives
 /// none.
@@ -335,8 +378,8 @@ Future<String> wedgeHeadForTest(
   String error = 'refused by the test receiver',
   DateTime? at,
 }) async {
-  final backend = registry.backend;
-  final head = await backend.readFifoHead(destinationId);
+  final reader = registry.eventStore.reader;
+  final head = await reader.readFifoHead(destinationId);
   if (head == null || head.finalStatus != null) {
     throw StateError(
       'wedgeHeadForTest($destinationId): the head is not pending '
@@ -351,7 +394,7 @@ Future<String> wedgeHeadForTest(
     registry: registry,
     clock: () => at ?? DateTime.utc(2100),
   );
-  final after = await backend.readFifoRow(destinationId, head.entryId);
+  final after = await reader.readFifoRow(destinationId, head.entryId);
   if (after?.finalStatus != FinalStatus.wedged) {
     throw StateError(
       'wedgeHeadForTest($destinationId): the head did not wedge',
@@ -362,7 +405,9 @@ Future<String> wedgeHeadForTest(
 
 /// Persist [schedule] (see [persistScheduleForTest]) and run one fill over
 /// it: the fill reads the persisted schedule, so a test that describes the
-/// window in memory persists it first.
+/// window in memory persists it first. For a destination that serializes
+/// natively it also writes the sender channel record a registration writes,
+/// when there is none.
 Future<void> fillWithScheduleForTest(
   Destination destination, {
   required StorageBackend backend,
@@ -370,13 +415,103 @@ Future<void> fillWithScheduleForTest(
   Source? source,
   Clock? clock,
   bool flushHeld = false,
+  String? databaseId,
 }) async {
   await persistScheduleForTest(backend, destination.id, schedule);
+  if (destination.serializesNatively) {
+    await backend.transaction((txn) async {
+      if (await backend.readSenderChannelRecordTxn(txn, destination.id) ==
+          null) {
+        await backend.writeSenderChannelRecordTxn(
+          txn,
+          destination.id,
+          SenderChannelRecord.initial,
+        );
+      }
+    });
+  }
   await fillForTest(
     destination,
     backend: backend,
     source: source,
     clock: clock,
     flushHeld: flushHeld,
+    databaseId: databaseId,
   );
+}
+
+/// Not yet built: the destination audit kind no operation of this build
+/// appends (the restore's succession event), so no fixture can append one.
+/// Fixtures that append one audit of every kind leave it out; delete this
+/// set when it has an emitter.
+const Set<String> destinationAuditsWithoutEmitter = <String>{
+  kDestinationSenderSucceededEntryType,
+};
+
+/// Appends a resume event the supported way, through the drainer: registers
+/// a destination [id] that serializes natively and admits every event,
+/// delivers the log to its in-step receiver in one delivery, then answers
+/// the next delivery with the receiver's record moved back to before the
+/// first, so the drainer resumes the channel. [backend] is the backend
+/// [registry]'s event store was opened over. Throws [StateError] when no
+/// resume event was appended.
+Future<void> resumeChannelForTest(
+  DestinationRegistry registry,
+  StorageBackend backend, {
+  required Initiator initiator,
+  String id = 'resumed',
+}) async {
+  final d = NativeDestination(
+    id: id,
+    batchCapacity: 1000000,
+    filter: const SubscriptionFilter(includeSystemEvents: true),
+  );
+  await registry.addDestination(d, initiator: initiator);
+  await registry.setStartDate(id, DateTime.utc(2000), initiator: initiator);
+  DateTime later() => DateTime.utc(2100);
+  final databaseId = registry.eventStore.databaseId;
+  Future<void> pass() async {
+    await fillForTest(d, backend: backend, clock: later);
+    await withTestDrainLock(
+      backend,
+      (lock) => drain(
+        d,
+        registry: registry,
+        lock: lock,
+        cadence: const Duration(seconds: 15),
+        clock: later,
+      ),
+      databaseId: databaseId,
+    );
+  }
+
+  await pass();
+  final schedule = await backend.transaction(
+    (txn) => backend.readScheduleTxn(txn, id),
+  );
+  d.enqueueScript(
+    SendAnswered(
+      ReceiverRefusal(
+        channel: DeliveryChannel(
+          senderDatabaseId: databaseId,
+          destinationId: id,
+          registrationId: schedule!.registrationId!,
+          generation: 1,
+        ),
+        receiverDatabaseId: d.receiverDatabaseId,
+        record: DeliveryRecord.none,
+        refusal: RefusalKind.outOfSequence,
+      ),
+    ),
+  );
+  await registry.setEndDate(id, DateTime.utc(2100), initiator: initiator);
+  await pass();
+  final resumes = await backend.findAllEvents();
+  if (!resumes.any(
+    (e) =>
+        e.entryType == kDestinationChannelResumedEntryType &&
+        e.data['id'] == id,
+  )) {
+    throw StateError('resumeChannelForTest($id): no resume event appended');
+  }
 }

@@ -41,14 +41,16 @@ Future<EventStore> _open(
   );
   try {
     return await EventStore.open(
-      storage: backend,
+      storage: ApplicationSuppliedStorage(
+        backend,
+        SembastSecurityContextStore(backend: backend),
+      ),
       entryTypes: registry,
       source: const Source(
         hopId: 'gen-hop',
         identifier: 'gen-install',
         softwareVersion: 'gen-test',
       ),
-      securityContexts: SembastSecurityContextStore(backend: backend),
     );
   } catch (_) {
     await backend.close();
@@ -208,8 +210,7 @@ void main() {
         throwsA(
           isA<EntryTypeVersionDowngradeError>()
               .having((e) => e.entryType, 'entryType', _kX)
-              .having((e) => e.fromVersion.major, 'recorded major', 2)
-              .having((e) => e.recordedByOpen, 'recordedByOpen', isTrue),
+              .having((e) => e.fromVersion.major, 'recorded major', 2),
         ),
       );
       expect(await _contents(path), before);
@@ -222,10 +223,10 @@ void main() {
     test('after a build of another data-format major opened, the compiled '
         'build is refused', () async {
       await runWithDeliveryTestHooks(
-        const DeliveryTestHooks(
+        DeliveryTestHooks(
           buildDeclaration: (
             version: '9.0.0',
-            dataFormat: DataFormatVersion(3, 0),
+            dataFormat: DataFormatVersion(LibVersion.dataFormat.major + 1, 0),
           ),
         ),
         () async => (await _open(path)).close(),

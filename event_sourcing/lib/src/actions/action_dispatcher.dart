@@ -30,32 +30,12 @@
 //   TotalWildcardScope / class-mismatched returns, and scope stamping
 //   onto the denial event when one was returned.
 
-import 'dart:convert' show utf8;
-
-import 'package:canonical_json_jcs/canonical_json_jcs.dart';
-import 'package:crypto/crypto.dart' show sha256;
-import 'package:event_sourcing/src/actions/action_context.dart';
-import 'package:event_sourcing/src/actions/action_registry.dart';
-import 'package:event_sourcing/src/actions/action_submission.dart';
-import 'package:event_sourcing/src/actions/authorization_decision.dart'
-    show Deny, DenyReason;
-import 'package:event_sourcing/src/actions/authorization_policy.dart';
-import 'package:event_sourcing/src/actions/denial_events.dart';
-import 'package:event_sourcing/src/actions/dispatch_result.dart';
-import 'package:event_sourcing/src/actions/execution_result.dart';
-import 'package:event_sourcing/src/actions/idempotency.dart';
-import 'package:event_sourcing/src/actions/idempotency_errors.dart';
-import 'package:event_sourcing/src/actions/idempotency_store.dart';
-import 'package:event_sourcing/src/actions/permission.dart';
-import 'package:event_sourcing/src/actions/principal.dart' show UserPrincipal;
-import 'package:event_sourcing/src/actions/scope_value.dart';
-import 'package:event_sourcing/src/event_draft.dart';
-import 'package:event_sourcing/src/event_store.dart';
-import 'package:uuid/uuid.dart';
+part of '../event_store.dart';
 
 /// Runs every untrusted-ingress action through the standard 10-stage
 /// pipeline. in `spec/dev-event-sourcing.md` for the
 /// stage list and contract.
+
 class ActionDispatcher {
   ActionDispatcher({
     required this.registry,
@@ -101,7 +81,10 @@ class ActionDispatcher {
   ///             emit `authorization_denied` (with `permission_denied`,
   ///             optional `principal_active_role`, and `deny_reason`) and
   ///             return [DispatchAuthorizationDenied]. All-Allow falls
-  ///             through to Stage 7.
+  ///             through to Stage 7. A [ViewConvergingRefusal] the policy
+  ///             throws propagates to the caller instead: the transaction
+  ///             rolls back and the dispatcher appends no event
+  ///             (EVS-DEV-converging-view-reads/H).
   ///   Stage 7 — call `action.execute(parsedInput, ctx)`. On throw, emit
   ///             `execution_failed` and return [DispatchExecutionFailed].
   ///   Stage 8 — atomically persist all events from `result.events` in a
@@ -412,7 +395,16 @@ class ActionDispatcher {
       // Implements: EVS-DEV-destination-drain-lock/D
       // the committed dispatch wakes the delivery cycle; the wake never
       //   raises into the dispatch.
-      events.wakeDeliveryCycle();
+      events._wakeDeliveryCycle();
+    } on ViewConvergingRefusal {
+      // Implements: EVS-DEV-converging-view-reads/H
+      // A view the policy would decide from is converging for this
+      // instance: the backend already rolled the dispatch tx back, so no
+      // policy read and no append from it are recorded. The refusal is
+      // transient and appends nothing -- not authorization_denied, not
+      // execution_failed -- and propagates to the caller, who sees the
+      // same submission succeed once the named view is current.
+      rethrow;
     } on Object catch (err) {
       // Transaction was rolled back by the backend. Distinguish:
       //   - execute() threw  → emit execution_failed denial (we captured

@@ -5,12 +5,12 @@
 // (JSON serialization and
 //   deserialization of BatchContext without loss of information)
 
-/// Per-event record of batch membership for events received via
-/// `EventStore.ingestBatch`.
+/// Per-event record of batch membership for events received in a
+/// delivery.
 ///
 /// Stamped into the receiver-hop `ProvenanceEntry.batchContext` field. Null
-/// on originator entries, null on process-local `ingestEvent` entries, null
-/// on receiver-originated audit events not emitted in response to a batch.
+/// on originator entries and on receiver-originated audit events not
+/// emitted in response to a delivery.
 ///
 /// All five fields together recover the context an auditor needs to recover
 /// a batch from stored events: the batch id groups the events, the position

@@ -7,7 +7,8 @@
 // event_sourcing by path, with `invalid_use_of_internal_member` as an
 // error, is reported for every use of an internal member -- on the
 // barrel's types and through a `src/` import alike -- and not for the
-// public reads, transaction and close operations. A call of the test-only
+// public reads, transaction and close operations. A member private to its
+// Dart library is not visible to the consumer at all. A call of the test-only
 // EventStore.openForTest from production code is reported as well. A third-party backend,
 // in a package of its own, that overrides every contract member and marks
 // each override of an internal member internal analyzes clean, and a
@@ -33,18 +34,23 @@ const _internalUse = <String>{'invalid_use_of_internal_member'};
 const _expected = <String, Set<String>>{
   'calls_enqueue_fifo_internal.dart': _internalUse,
   'calls_upsert_view_row_internal.dart': _internalUse,
-  'calls_unwrap_sembast_txn_internal.dart': _internalUse,
-  'calls_publish_collector_internal.dart': _internalUse,
   'calls_drain_internal.dart': _internalUse,
-  'calls_wedge_head_in_txn_internal.dart': _internalUse,
-  'calls_append_reserved_internal.dart': _internalUse,
+  // The test-only wedge entry point is visible for testing as well.
+  'calls_wedge_head_in_txn_internal.dart': <String>{
+    'invalid_use_of_internal_member',
+    'invalid_use_of_visible_for_testing_member',
+  },
+  // Members private to their Dart library: the consumer cannot name them.
+  'calls_library_private_members.dart': <String>{
+    'undefined_getter',
+    'undefined_setter',
+    'undefined_method',
+  },
   'calls_fill_batch_internal.dart': _internalUse,
   'calls_drain_lock_internal.dart': _internalUse,
   'calls_historical_replay_internal.dart': _internalUse,
   'calls_test_hooks_internal.dart': _internalUse,
-  'calls_set_view_target_version_internal.dart': _internalUse,
   'calls_pool_internal.dart': _internalUse,
-  'calls_postgres_txn_session_internal.dart': _internalUse,
   // The test-support accessor is also visible-for-testing only.
   'calls_database_for_testing_internal.dart': <String>{
     'invalid_use_of_internal_member',
@@ -64,27 +70,19 @@ const _expected = <String, Set<String>>{
 const _minimumInternalUses = <String, int>{
   'calls_enqueue_fifo_internal.dart': 1,
   'calls_upsert_view_row_internal.dart': 1,
-  'calls_unwrap_sembast_txn_internal.dart': 1,
-  // collector.add and collector.addRowChanges.
-  'calls_publish_collector_internal.dart': 2,
   // drain and honourHaltById.
   'calls_drain_internal.dart': 2,
-  // DestinationRegistry.eventStore, DestinationRegistry.wedgeHeadInTxn and
-  // DestinationRegistry.honourHaltInTxn.
-  'calls_wedge_head_in_txn_internal.dart': 3,
-  // EventStore.appendReserved and EventStore.appendReservedInTxn.
-  'calls_append_reserved_internal.dart': 2,
+  // DestinationRegistry.eventStore and wedgeHeadInTxnForTest.
+  'calls_wedge_head_in_txn_internal.dart': 2,
   'calls_fill_batch_internal.dart': 1,
-  // tryAcquireDrainLock, requestDrainLock, writeRefillGuardTxn, the trigger
-  // slot's setter and PostgresBackend.whenRegistered.
-  'calls_drain_lock_internal.dart': 5,
+  // tryAcquireDrainLock, requestDrainLock, writeRefillGuardTxn and
+  // PostgresBackend.whenRegistered.
+  'calls_drain_lock_internal.dart': 4,
   // buildHistoricalReplayRows and writeQueueItemsTxn.
   'calls_historical_replay_internal.dart': 2,
   // runWithDeliveryTestHooks and the DeliveryTestHooks constructor.
   'calls_test_hooks_internal.dart': 2,
-  'calls_set_view_target_version_internal.dart': 1,
   'calls_pool_internal.dart': 1,
-  'calls_postgres_txn_session_internal.dart': 1,
   'calls_database_for_testing_internal.dart': 1,
   // The abstract store's deleteInTxn and the concrete store's override.
   'calls_security_context_internal.dart': 2,

@@ -9,13 +9,13 @@ import 'package:event_sourcing/event_sourcing.dart'
         FifoEntry,
         HaltPurpose,
         HaltRequest,
-        SembastBackend,
         SetEndDateResult,
         StoredEvent,
         UserInitiator;
 import 'package:event_sourcing_demo/app_state.dart';
 import 'package:event_sourcing_demo/demo_destination.dart';
 import 'package:event_sourcing_demo/demo_knobs.dart';
+import 'package:event_sourcing_demo/storage_watch.dart';
 import 'package:event_sourcing_demo/widgets/styles.dart';
 import 'package:event_sourcing_demo/widgets/wedges_panel.dart' show refusalText;
 import 'package:flutter/material.dart';
@@ -23,7 +23,7 @@ import 'package:flutter/material.dart';
 class FifoPanel extends StatefulWidget {
   const FifoPanel({
     required this.destination,
-    required this.backend,
+    required this.watch,
     required this.appState,
     super.key,
   });
@@ -31,12 +31,12 @@ class FifoPanel extends StatefulWidget {
   /// The destination this panel renders. Either a `DemoDestination`
   /// (lossy 3rd-party shape: `transform()` produces opaque bytes the
   /// FIFO row stores under `wire_payload`) or any other [Destination]
-  /// such as a native `esd/batch@2` destination (FIFO row stores
+  /// such as a native `esd/batch@3` destination (FIFO row stores
   /// `envelope_metadata` instead). The demo-specific
   /// connection / latency / batch-size knobs render whenever the
   /// destination implements [DemoKnobs] — both demo destinations do.
   final Destination destination;
-  final SembastBackend backend;
+  final StorageWatch watch;
   final AppState appState;
 
   @override
@@ -60,7 +60,7 @@ class _FifoPanelState extends State<FifoPanel> {
   /// Non-null when the destination implements [DemoKnobs], in which case
   /// the panel renders the live-tunable connection / latency / batch-size
   /// / accumulate knobs. Both `DemoDestination` (lossy) and
-  /// `NativeDemoDestination` (esd/batch@2) implement DemoKnobs in the
+  /// `NativeDemoDestination` (esd/batch@3) implement DemoKnobs in the
   /// example app, so all three columns expose the same controls.
   /// Null for production destinations that don't carry these knobs.
   DemoKnobs? get _demo {
@@ -79,12 +79,12 @@ class _FifoPanelState extends State<FifoPanel> {
       demo.maxAccumulateTimeN.addListener(_onNotifier);
     }
     widget.appState.addListener(_onNotifier);
-    _fifoSub = widget.backend.watchFifo(widget.destination.id).listen((rows) {
+    _fifoSub = widget.watch.queue(widget.destination.id).listen((rows) {
       if (!mounted) return;
       _onFifoSnapshot(rows);
     });
     // A halt request and its cancellation are events, not queue changes.
-    _eventsSub = widget.backend.watchEvents().listen((_) {
+    _eventsSub = widget.watch.events().listen((_) {
       if (!mounted) return;
       unawaited(_reloadHalt());
     });
@@ -139,7 +139,7 @@ class _FifoPanelState extends State<FifoPanel> {
       for (final row in rows) {
         if (row.eventIds.isEmpty) continue;
         final tailId = row.eventIds.last;
-        final tail = await widget.backend.findEventById(tailId);
+        final tail = await widget.watch.reader.findEventById(tailId);
         if (tail != null) {
           seqByEventId[tailId] = tail.sequenceNumber;
         }
@@ -588,7 +588,6 @@ class _FifoPanelState extends State<FifoPanel> {
           display[i].entryId,
         ),
         destinationId: widget.destination.id,
-        backend: widget.backend,
         onTombstoneAndRefill: () async {
           try {
             await widget.appState.recover(
@@ -596,7 +595,7 @@ class _FifoPanelState extends State<FifoPanel> {
               display[i].entryId,
             );
             _flashBanner('tombstoned & refilled');
-            // FIFO mutation: watchFifo emits a fresh snapshot which
+            // FIFO mutation: the queue watch emits a fresh snapshot which
             // _onFifoSnapshot consumes — no explicit refresh needed.
           } catch (e) {
             _flashBanner('recovery refused: ${refusalText(e)}');
@@ -614,7 +613,6 @@ class _FifoRowTile extends StatelessWidget {
     required this.selected,
     required this.onTap,
     required this.destinationId,
-    required this.backend,
     required this.onTombstoneAndRefill,
   });
 
@@ -623,7 +621,6 @@ class _FifoRowTile extends StatelessWidget {
   final bool selected;
   final VoidCallback onTap;
   final String destinationId;
-  final SembastBackend backend;
   final VoidCallback onTombstoneAndRefill;
 
   @override

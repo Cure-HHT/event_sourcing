@@ -1,6 +1,6 @@
 // Implements: EVS-PRD-materializer/A
 // Implements: EVS-DEV-ingest-promotes-before-fold/C
-// Implements: EVS-DEV-snapshot-promotion-on-open/B
+// Implements: EVS-DEV-view-convergence/K
 import 'package:event_sourcing/src/promoters/primitives/transform.dart';
 import 'package:event_sourcing/src/versions.dart';
 

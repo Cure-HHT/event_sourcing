@@ -6,22 +6,22 @@
 //   stopped, the 2.0 build opens (a major bump is deployed
 //   stop-then-start).
 //
-// Gated on PG_TEST_URL. Drops and recreates the `public` schema, so it runs
-// one file at a time like every Postgres test.
+// Gated on PG_TEST_URL. Drops the demo schema and runs the demo's deployment
+// step, so it runs one file at a time like every Postgres test; the
+// instances connect as the declared runtime role.
 
 @TestOn('vm')
 library;
 
 import 'dart:async';
-import 'dart:io';
 
 import 'package:action_permissions_demo/server/bootstrap.dart';
 import 'package:action_permissions_demo/server/log_destination.dart';
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:postgres/postgres.dart';
 
 import 'support/demo_bootstrap.dart';
+import 'support/demo_postgres.dart';
 
 Future<DemoServerComponents> _boot(
   PostgresBackend backend,
@@ -30,8 +30,7 @@ Future<DemoServerComponents> _boot(
   Map<String, EntryTypeVersion> entryTypeVersions =
       const <String, EntryTypeVersion>{},
 }) => bootstrapDemoServer(
-  backend: backend,
-  idempotencyStore: PostgresIdempotencyStore.forBackend(backend),
+  storage: demoStorageOver(backend),
   permissionsYaml: validPermissionsYaml,
   usersYaml: validUsersYaml,
   installIdentifier: installIdentifier,
@@ -62,8 +61,8 @@ Future<void> _note(EventStore store, String id) async {
 }
 
 void main() {
-  final url = Platform.environment['PG_TEST_URL'];
-  if (url == null || url.isEmpty) {
+  final db = DemoPostgres.fromEnvironment();
+  if (db == null) {
     test('skipped — PG_TEST_URL unset', () {
       markTestSkipped('PG_TEST_URL unset; skipping the generation guard test');
     });
@@ -72,20 +71,10 @@ void main() {
 
   test('a build raising an entry-type major is refused while the running '
       'build serves, and opens once it has stopped', () async {
-    final tmp = await Connection.open(
-      PostgresBackend.endpointFromUrl(url),
-      settings: const ConnectionSettings(sslMode: SslMode.disable),
-    );
-    await tmp.execute('DROP SCHEMA public CASCADE');
-    await tmp.execute('CREATE SCHEMA public');
-    await tmp.close();
-    await PostgresBackend.provision(url, sslMode: SslMode.disable);
+    await db.reset();
 
     final deliveredOld = <String>[];
-    final oldBackend = await PostgresBackend.open(
-      url: url,
-      sslMode: SslMode.disable,
-    );
+    final oldBackend = await db.open();
     final old = await _boot(
       oldBackend,
       'cccc0003-0000-4000-8000-0000000000c3',
@@ -103,10 +92,7 @@ void main() {
     });
 
     // The 2.0 build is refused while the 1.0 build is connected.
-    final newBackend = await PostgresBackend.open(
-      url: url,
-      sslMode: SslMode.disable,
-    );
+    final newBackend = await db.open();
     addTearDown(newBackend.close);
     final eventsBefore = (await oldBackend.findAllEvents()).length;
     await expectLater(

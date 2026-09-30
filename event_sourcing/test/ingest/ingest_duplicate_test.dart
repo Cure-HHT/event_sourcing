@@ -5,13 +5,13 @@
 // ingest.duplicate_received audit event is
 //   emitted under the ingest-audit aggregate for each duplicate re-presentation
 // Verifies: EVS-PRD-hash-chain-integrity/C
-// verifyEventChain passes on a
-//   receiver-originated duplicate_received event (length-1 provenance trivially
-//   valid)
+// the chain verification passes over a receiver-originated
+//   duplicate_received event
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
+import '../test_support/deliveries.dart';
 
 // ---------------------------------------------------------------------------
 // Test fixture helpers
@@ -91,7 +91,7 @@ void main() {
         expect(e, isNotNull);
 
         // First ingest — should be ingested.
-        final first = await dest.store.ingestEvent(e!);
+        final first = await ingestEventForTest(dest.store, e!);
         expect(first.outcome, equals(IngestOutcome.ingested));
         final hashAfterFirst = first.resultHash;
 
@@ -101,7 +101,7 @@ void main() {
         );
 
         // Second ingest of same event — should be duplicate.
-        final second = await dest.store.ingestEvent(e);
+        final second = await ingestEventForTest(dest.store, e);
         expect(second.outcome, equals(IngestOutcome.duplicate));
         // Result hash is unchanged (stored copy not mutated).
         expect(second.resultHash, equals(hashAfterFirst));
@@ -147,8 +147,8 @@ void main() {
           );
           expect(e, isNotNull);
 
-          await dest.store.ingestEvent(e!);
-          await dest.store.ingestEvent(e);
+          await ingestEventForTest(dest.store, e!);
+          await ingestEventForTest(dest.store, e);
 
           // Query the ingest-audit aggregate.
           const auditAggId = 'ingest-audit:control-server';
@@ -188,8 +188,8 @@ void main() {
         );
         expect(e, isNotNull);
 
-        await dest.store.ingestEvent(e!);
-        await dest.store.ingestEvent(e);
+        await ingestEventForTest(dest.store, e!);
+        await ingestEventForTest(dest.store, e);
 
         // The audit event's provenance[0].batchContext must be absent/null.
         const auditAggId = 'ingest-audit:control-server';
@@ -208,8 +208,8 @@ void main() {
       }
     });
 
-    test('verifyEventChain passes on an ingest.duplicate_received audit event '
-        '', () async {
+    test('the chain verification passes over a log holding an '
+        'ingest.duplicate_received audit event', () async {
       final orig = await _openStore(hopId: 'mobile-device');
       final dest = await _openStore(
         hopId: 'control-server',
@@ -230,10 +230,10 @@ void main() {
         expect(e, isNotNull);
 
         // 2. First ingest — lands the subject event.
-        await dest.store.ingestEvent(e!);
+        await ingestEventForTest(dest.store, e!);
 
         // 3. Second ingest of same event — emits ingest.duplicate_received.
-        await dest.store.ingestEvent(e);
+        await ingestEventForTest(dest.store, e);
 
         // 4. Query the ingest-audit aggregate for the duplicate_received event.
         const auditAggId = 'ingest-audit:control-server';
@@ -248,10 +248,8 @@ void main() {
         final dupEvent = dupEvents.first;
 
         // 5. The duplicate_received event is receiver-originated, so its
-        //    provenance has exactly one entry (the receiver hop). The walk
-        //    loop in verifyEventChain iterates from length-1 down to k=1;
-        //    for length-1 (k stops at 1, i.e. never executes), it returns
-        //    trivially ok=true. Confirm this.
+        //    provenance has exactly one entry (the receiver hop), and the
+        //    verification checks it as an event the receiver authored.
         final provenance = (dupEvent.metadata['provenance'] as List<Object?>)
             .cast<Map<String, Object?>>();
         expect(
@@ -260,9 +258,12 @@ void main() {
           reason: 'receiver-originated event has a single-entry provenance',
         );
 
-        final verdict = await dest.store.verifyEventChain(dupEvent);
+        final verdict = await dest.store.reader.verifyChains(
+          from: dupEvent.sequenceNumber,
+          to: dupEvent.sequenceNumber,
+        );
         expect(verdict.isValid, isTrue);
-        expect(verdict.failures, isEmpty);
+        expect(verdict.findings, isEmpty);
       } finally {
         await orig.close();
         await dest.close();
@@ -288,9 +289,9 @@ void main() {
         );
         expect(e, isNotNull);
 
-        await dest.store.ingestEvent(e!);
-        await dest.store.ingestEvent(e);
-        await dest.store.ingestEvent(e);
+        await ingestEventForTest(dest.store, e!);
+        await ingestEventForTest(dest.store, e);
+        await ingestEventForTest(dest.store, e);
 
         const auditAggId = 'ingest-audit:control-server';
         final auditEvents = await dest.backend.findEventsForAggregate(

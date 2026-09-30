@@ -4,8 +4,8 @@ import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing_demo/widgets/styles.dart';
 import 'package:flutter/material.dart';
 
-/// Demonstrates the typed cross-store audit query (`StorageBackend.queryAudit`,
-/// ). Renders one row per `(event, securityContext)` pair returned
+/// Demonstrates the typed cross-store audit query (`StorageReader.queryAudit`).
+/// Renders one row per `(event, securityContext)` pair returned
 /// by the join, with an optional `flow_token` filter. Re-queries on every
 /// event arrival so the list stays live without a polling timer.
 ///
@@ -16,13 +16,9 @@ import 'package:flutter/material.dart';
 /// the toggle OFF do not write a security_context sidecar row and so do
 /// not appear in the join.
 class AuditPanel extends StatefulWidget {
-  const AuditPanel({
-    required this.backend,
-    required this.eventStore,
-    super.key,
-  });
+  const AuditPanel({required this.reader, required this.eventStore, super.key});
 
-  final StorageBackend backend;
+  final StorageReader reader;
   final EventStore eventStore;
 
   @override
@@ -66,7 +62,7 @@ class _AuditPanelState extends State<AuditPanel> {
   Future<void> _refresh() async {
     final refresh = ++_refreshes;
     try {
-      final page = await widget.backend.queryAudit(flowToken: _flowTokenFilter);
+      final page = await widget.reader.queryAudit(flowToken: _flowTokenFilter);
       if (!mounted || refresh != _refreshes) return;
       setState(() {
         _page = page;

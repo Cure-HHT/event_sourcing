@@ -8,6 +8,8 @@
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../test_support/record_fixtures.dart';
+
 /// Build a synthetic [StoredEvent] for [SubscriptionFilter.matches]
 /// assertions. `matches()` only inspects `entryType` and `eventType`, so
 /// every other field is filled with valid placeholder data.
@@ -21,7 +23,7 @@ StoredEvent _mkEvent({
   aggregateType: 'note',
   entryType: entryType,
   entryTypeVersion: const EntryTypeVersion(1, 0),
-  libFormatVersion: const DataFormatVersion(2, 0),
+  libFormatVersion: LibVersion.dataFormat,
   eventType: eventType,
   sequenceNumber: 1,
   data: const <String, dynamic>{},
@@ -29,6 +31,7 @@ StoredEvent _mkEvent({
   initiator: const UserInitiator('u1'),
   clientTimestamp: DateTime.utc(2026, 4, 26),
   eventHash: 'hash',
+  causal: kRootVersionCausal,
 );
 
 StoredEvent _systemEvent() =>

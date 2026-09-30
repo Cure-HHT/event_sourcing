@@ -22,7 +22,10 @@ Future<(EventStoreBundle, SembastBackend)> _open(
   final db = await factory.openDatabase(name);
   final backend = SembastBackend(database: db);
   final bundle = await bootstrapEventStore(
-    backend: backend,
+    storage: ApplicationSuppliedStorage(
+      backend,
+      SembastSecurityContextStore(backend: backend),
+    ),
     source: _source,
     entryTypes: allDemoEntryTypes,
     destinations: const <Destination>[],
@@ -200,7 +203,7 @@ class _CountingStore implements EventStore {
   int activeSubscriptions = 0;
 
   @override
-  StorageBackend get backend => _inner.backend;
+  StorageReader get reader => _inner.reader;
 
   @override
   Stream<Update<T>> subscribe<T>(

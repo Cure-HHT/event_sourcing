@@ -1,101 +1,62 @@
 // Implements: EVS-PRD-ingest/A
 // ingest path existence; these exceptions are
 //   the typed error surface of the ingest path
-// Implements: EVS-PRD-ingest/D
-// IngestChainBroken reports hash-chain
-//   verification failure at the ingest boundary
-// Implements: EVS-PRD-ingest/F
-// IngestIdentityMismatch is thrown (not
-//   silently duplicated) when a re-presented event's hash differs, preserving
-//   idempotency semantics (identical re-presentations are safe; divergent
-//   re-presentations are rejected)
 
-import 'package:event_sourcing/src/ingest/chain_verdict.dart';
 import 'package:event_sourcing/src/versions.dart';
 
-/// Thrown by `EventStore.ingestBatch` / `ingestEvent` / `BatchEnvelope.decode`
-/// when the input bytes cannot be parsed as a well-formed `esd/batch@2`
-/// envelope (malformed JSON, wrong shape, unsupported format version,
-/// missing required fields).
+/// Thrown by `DeliveryEnvelope.decode` when the input bytes cannot be
+/// parsed as a well-formed delivery envelope (malformed JSON, wrong shape,
+/// unsupported format version, missing required fields). A record inside a
+/// well-formed envelope that the library cannot store as an event is kept
+/// in a security finding instead.
+///
+/// [reason] names the refusal: one of [formatUnsupported],
+/// [attributesNotObject], [noEvents] and [malformed]. It is the reason a
+/// receiver's `rejected` refusal carries.
+// Implements: EVS-DEV-delivery-receiver/A
+// a batch that is not in the native batch format, one whose attributes is
+//   not an object and one that carries no event are refused, each by its
+//   own name.
 class IngestDecodeFailure implements Exception {
-  const IngestDecodeFailure(this.message);
+  const IngestDecodeFailure(this.message, {this.reason = malformed});
+
+  /// The batch is not in the format the decoder reads.
+  static const String formatUnsupported = 'batch_format_unsupported';
+
+  /// The batch's `attributes` is not a JSON object.
+  static const String attributesNotObject = 'attributes_not_object';
+
+  /// The batch carries no event.
+  static const String noEvents = 'batch_empty';
+
+  /// Every other malformedness: bytes that are not UTF-8 JSON, a missing,
+  /// extra or mistyped field.
+  static const String malformed = 'batch_malformed';
+
   final String message;
+
+  /// The name of the refusal.
+  final String reason;
+
   @override
-  String toString() => 'IngestDecodeFailure: $message';
+  String toString() => 'IngestDecodeFailure($reason): $message';
 }
 
-/// Thrown by `ingestBatch` / `ingestEvent`, before any write, when an
-/// incoming event's Chain 1 does not verify: its `event_hash` is not the
-/// canonical hash of the record it carries
-/// ([ChainFailureKind.eventHashMismatch]), some hop's `arrival_hash` does not
-/// match the hash the prior state would produce
-/// ([ChainFailureKind.arrivalHashMismatch]), or it carries no provenance
-/// ([ChainFailureKind.provenanceMissing]). `ingestBatch` refuses the whole
-/// batch.
-class IngestChainBroken implements Exception {
-  const IngestChainBroken({
-    required this.eventId,
-    required this.kind,
-    required this.hopIndex,
-    required this.expectedHash,
-    required this.actualHash,
-  });
-
-  /// The refused event.
-  final String eventId;
-
-  /// Which link failed.
-  final ChainFailureKind kind;
-
-  /// The `provenance[]` index of the failing hop: for
-  /// [ChainFailureKind.eventHashMismatch], the last hop, whose hash
-  /// `event_hash` is; -1 when provenance is missing.
-  final int hopIndex;
-
-  /// The hash the event states: its `event_hash`, or the hop's
-  /// `arrival_hash`.
-  final String expectedHash;
-
-  /// The hash recomputed from the event's content.
-  final String actualHash;
-  @override
-  String toString() =>
-      'IngestChainBroken(eventId: $eventId, kind: ${kind.name}, '
-      'hopIndex: $hopIndex, expected: $expectedHash, actual: $actualHash)';
-}
-
-/// Thrown by `ingestBatch` / `ingestEvent` when an incoming event's
-/// `event_id` matches an already-stored event but the incoming wire
-/// `event_hash` differs from the stored copy's
-/// `provenance[thisHop].arrival_hash` (i.e., the two copies are NOT
-/// byte-identical).
-class IngestIdentityMismatch implements Exception {
-  const IngestIdentityMismatch({
-    required this.eventId,
-    required this.incomingHash,
-    required this.storedArrivalHash,
-  });
-  final String eventId;
-  final String incomingHash;
-  final String storedArrivalHash;
-  @override
-  String toString() =>
-      'IngestIdentityMismatch(eventId: $eventId, incoming: $incomingHash, '
-      'storedArrival: $storedArrivalHash)';
-}
-
-/// Thrown by `EventStore.ingestBatch` and `EventStore.ingestEvent` when an
-/// incoming event's data-format major differs from the receiver's
+/// Thrown by the receiver endpoint's delivery accept path when an incoming
+/// event's data-format major differs from the receiver's
 /// (`LibVersion.dataFormat`). The receiver reads no other data-format
-/// major, so it refuses the event before any write, and `ingestBatch`
-/// refuses the whole batch. Operator action: run builds of one data-format
-/// major on both sides.
+/// major, so it refuses the event before any write, and a delivery
+/// carrying such an event is refused whole. Operator action: run builds of
+/// one data-format major on both sides.
 class IngestDataFormatIncompatible implements Exception {
   const IngestDataFormatIncompatible({
     required this.eventId,
     required this.wireFormat,
     required this.receiverFormat,
   });
+
+  /// The reason a receiver's `rejected` refusal names for this refusal.
+  static const String refusalReason = 'data_format_incompatible';
 
   /// The refused event.
   final String eventId;
@@ -112,10 +73,10 @@ class IngestDataFormatIncompatible implements Exception {
       'wire: $wireFormat, receiver: $receiverFormat)';
 }
 
-/// Thrown by `EventStore.ingestBatch` and `EventStore.ingestEvent` when an
-/// incoming event's entry-type major is above the major the receiver
-/// registers for its entry type. The receiver refuses the event before any
-/// write, and `ingestBatch` refuses the whole batch. An event of the
+/// Thrown by the receiver endpoint's delivery accept path when an incoming
+/// event's entry-type major is above the major the receiver registers for
+/// its entry type. The receiver refuses the event before any write, and a
+/// delivery carrying such an event is refused whole. An event of the
 /// registered major is accepted at any minor. Operator action: upgrade the
 /// receiver's entry-type registry to the event's major.
 class IngestEntryTypeVersionAhead implements Exception {
@@ -125,6 +86,9 @@ class IngestEntryTypeVersionAhead implements Exception {
     required this.wireVersion,
     required this.receiverVersion,
   });
+
+  /// The reason a receiver's `rejected` refusal names for this refusal.
+  static const String refusalReason = 'entry_type_version_ahead';
   final String eventId;
   final String entryType;
 
@@ -139,13 +103,13 @@ class IngestEntryTypeVersionAhead implements Exception {
       'wire: $wireVersion, receiver: $receiverVersion)';
 }
 
-/// Thrown by `EventStore.ingestBatch` and `EventStore.ingestEvent` when an
-/// incoming event is of a lower entry-type version than the receiver
-/// registers and the receiver's promoter steps for a view the event folds
-/// into do not lead from the event's version to the registered one: a
-/// lower major with no major step registered from it, or a version past
-/// the start of that major step. The receiver refuses the event before any
-/// write, and `ingestBatch` refuses the whole batch. Operator action:
+/// Thrown by the receiver endpoint's delivery accept path when an incoming
+/// event is of a lower entry-type version than the receiver registers and
+/// the receiver's promoter steps for a view the event folds into do not
+/// lead from the event's version to the registered one: a lower major
+/// with no major step registered from it, or a version past the start of
+/// that major step. The receiver refuses the event before any write, and a
+/// delivery carrying such an event is refused whole. Operator action:
 /// register the missing promoter step for [viewName], or stop the peer
 /// sending the event's major.
 class IngestEntryTypeVersionUnpromotable implements Exception {
@@ -157,6 +121,9 @@ class IngestEntryTypeVersionUnpromotable implements Exception {
     required this.receiverVersion,
     required this.reason,
   });
+
+  /// The reason a receiver's `rejected` refusal names for this refusal.
+  static const String refusalReason = 'entry_type_version_unpromotable';
   final String eventId;
   final String entryType;
 
@@ -178,72 +145,72 @@ class IngestEntryTypeVersionUnpromotable implements Exception {
       '$receiverVersion): $reason';
 }
 
-/// Why ingest refused an event of a reserved system entry type
-/// ([IngestReservedEventRefused]).
-enum ReservedEventRefusal {
-  /// The event's aggregate type is not the one the library appends its
-  /// entry type with, or its event type is not one of those.
-  shapeMismatch,
+/// A delivery or a pull refused because the caller may not act for the
+/// sending database it names: [senderDatabaseId] is not in the set of
+/// sender database identities the deployment's authentication states for
+/// the caller. Thrown before any read of a channel and any write; it
+/// carries no receiver record, and the deployment's transport answers it as
+/// an authentication refusal.
+class DeliveryAuthenticationRefused implements Exception {
+  const DeliveryAuthenticationRefused({required this.senderDatabaseId});
 
-  /// The event is a destination audit event naming the receiver's own
-  /// database identity (`data.database_id` equals the receiver's
-  /// `EventStore.databaseId`), and the receiver does not hold it.
-  namesReceiverDatabase,
-
-  /// The event is a destination audit event whose destination identifier
-  /// (`data.id`) or database identity (`data.database_id`) is missing, not a
-  /// string, empty, or contains `|`.
-  malformed,
-}
-
-/// Thrown by `EventStore.ingestBatch` and `EventStore.ingestEvent` when an
-/// incoming event of a reserved system entry type is not one the library
-/// appends. The receiver refuses the event before any write, and
-/// `ingestBatch` refuses the whole batch.
-///
-/// The library declares, for every reserved entry type, the one aggregate
-/// type and the event types it appends that entry type with, fixed within a
-/// data-format major, and the shape of every destination audit event (a
-/// destination identifier and the identity of the database that appended
-/// it, each a non-empty string without `|`). An event outside them
-/// ([ReservedEventRefusal.shapeMismatch], [ReservedEventRefusal.malformed])
-/// is not an event any library of the receiver's data-format major
-/// appended, whoever forwarded it.
-///
-/// A destination audit event naming the receiver's own database that the
-/// receiver does not hold ([ReservedEventRefusal.namesReceiverDatabase]) is
-/// refused too: it is a forgery, the trace of a durability failure of the
-/// receiver's storage, or an audit the receiver appended and lost when its
-/// database was restored from a backup, which a peer forwards back to it. A
-/// peer reaches the receiver with the receiver's own events only through a
-/// destination that forwards them back, and such a destination fails without
-/// any restore: an own event the receiver still holds is refused as
-/// [IngestIdentityMismatch]. The fix is that destination's filter: leave
-/// out the events that originated at the receiver, then recover the
-/// destination's wedged head, which rebuilds its pending items under the new
-/// filter.
-///
-/// Operator action otherwise: find the peer build or the process that
-/// produced the event; a peer running the library forwards only events in
-/// the declared shapes.
-class IngestReservedEventRefused implements Exception {
-  const IngestReservedEventRefused({
-    required this.eventId,
-    required this.entryType,
-    required this.reason,
-  });
-
-  /// The refused event.
-  final String eventId;
-
-  /// The reserved entry type the event carries.
-  final String entryType;
-
-  /// Why the event was refused.
-  final ReservedEventRefusal reason;
+  /// The sending database the delivery's channel, or the pull, names.
+  final String senderDatabaseId;
 
   @override
   String toString() =>
-      'IngestReservedEventRefused(event_id: $eventId, entry_type: '
-      '$entryType, reason: ${reason.name})';
+      'DeliveryAuthenticationRefused: the caller may not act for '
+      'sender database $senderDatabaseId';
+}
+
+/// Thrown by `EventStore.restoreFromReceiver` before anything is stored,
+/// naming one of the restore's refusals: the successor's log already holds
+/// an authored event of an application entry type, the successor's log
+/// already holds a succession event it authored, the named predecessor is
+/// the successor's own identity, the receiver lists no channel for the
+/// named predecessor, or a pull answered that it could not serve a
+/// delivery the restore asked for. The two log-holds refusals are checked
+/// before the restore pulls anything and checked again inside the
+/// transaction that would store the restore, before any write, so a
+/// disqualifying event appended between the two checks still refuses the
+/// restore.
+// Implements: EVS-DEV-sender-succession/H
+// the restore refuses, before storing anything, into a successor whose
+//   log holds an authored application event or an authored succession
+//   event, one naming the successor's own identity, one the receiver
+//   lists no channel for, and one whose pull cannot serve a delivery
+//   asked for; the log-holds checks run again inside the storing
+//   transaction.
+// Implements: EVS-PRD-delivery-channel/R
+// the restore refuses, before storing anything, into a database that has
+//   authored an event of an application entry type.
+class SuccessionRestoreRefused implements Exception {
+  const SuccessionRestoreRefused(this.reason, this.message);
+
+  /// The successor's log already holds an authored event of an
+  /// application (non-reserved) entry type.
+  static const String applicationEventAuthored = 'application_event_authored';
+
+  /// The successor's log already holds a succession event it authored.
+  static const String successionAlreadyAuthored = 'succession_already_authored';
+
+  /// The named predecessor is the successor's own database identity.
+  static const String predecessorIsSelf = 'predecessor_is_self';
+
+  /// The receiver lists no channel for the named predecessor.
+  static const String noChannelListed = 'no_channel_listed';
+
+  /// A pull answered that it could not serve a delivery the restore asked
+  /// for: `unservableDeliveryNumber` was set, or it served fewer
+  /// deliveries than asked.
+  static const String deliveryUnservable = 'delivery_unservable';
+
+  /// The name of the refusal: one of the constants above.
+  final String reason;
+
+  /// A human-readable description of the refusal.
+  final String message;
+
+  @override
+  String toString() => 'SuccessionRestoreRefused($reason): $message';
 }

@@ -10,6 +10,7 @@ import 'dart:math' show Random;
 import 'package:crypto/crypto.dart';
 import 'package:event_sourcing/src/logging.dart';
 import 'package:event_sourcing/src/storage/postgres/postgres_exceptions.dart';
+import 'package:event_sourcing/src/storage/postgres/postgres_search_path.dart';
 import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:meta/meta.dart' show internal;
 import 'package:postgres/postgres.dart';
@@ -24,7 +25,9 @@ final class PostgresScope {
   /// `current_database()`.
   final String database;
 
-  /// `current_schema()`, or null when no schema on the search path exists.
+  /// `current_schema()` inside a library transaction: the first schema on
+  /// its search path that exists and that the role may use, or null when
+  /// none does.
   final String? schema;
 
   @override
@@ -39,7 +42,7 @@ final class PostgresScope {
   @override
   String toString() => '$database/${schema ?? '(no schema)'}';
 
-  /// Reads the scope [session] reaches.
+  /// Reads the scope [session], a library transaction, reaches.
   static Future<PostgresScope> read(Session session) async {
     final r = await session.execute(
       'SELECT current_database(), current_schema()',
@@ -87,16 +90,17 @@ WHERE l.locktype = 'advisory'
 ''';
 
 /// Verifies that [session] reaches the same Postgres server as [pool]. A
-/// connection of [pool] takes a transaction-level advisory lock on a random
-/// key, and the lock session must see that lock, held by that connection's
-/// server process, in its own `pg_locks`. Another server -- another
-/// instance whose database and schema have the same names, or a standby --
-/// does not list it, so its advisory locks would be invisible to the
-/// instances that use the pool's server. A mismatch throws
+/// library transaction of [pool] over [schema] takes a transaction-level
+/// advisory lock on a random key, and the lock session must see that lock,
+/// held by that connection's server process, in its own `pg_locks`. Another
+/// server -- another instance whose database and schema have the same
+/// names, or a standby -- does not list it, so its advisory locks would be
+/// invisible to the instances that use the pool's server. A mismatch throws
 /// [LockSessionConfigurationException].
 @internal
 Future<void> verifyLockSessionServer(
   SessionExecutor pool,
+  String schema,
   PostgresLockSession session,
 ) async {
   final random = Random.secure();
@@ -104,7 +108,7 @@ Future<void> verifyLockSessionServer(
   for (var i = 0; i < 8; i++) {
     key = (key << 8) | random.nextInt(256);
   }
-  await pool.runTx<void>((tx) async {
+  await runLibraryTransaction<void>(pool, schema, (tx) async {
     await tx.execute(
       Sql.named('SELECT pg_advisory_xact_lock(@k)'),
       parameters: <String, Object?>{'k': key},
@@ -156,22 +160,30 @@ const int lockSessionKeepaliveCount = 3;
 /// One dedicated Postgres connection, the lock session, on which the
 /// library holds its advisory locks.
 ///
-/// Every library statement or transaction on it goes through [run], which
-/// runs one operation at a time: the driver starts a statement's timeout
-/// clock before the statement reaches the connection, and a timed-out
-/// statement's cancel request cancels whatever the session runs, so no
-/// library statement waits on the connection behind another. A connection
-/// failure or a timeout of any operation declares the session lost.
+/// Every library statement on it runs inside a library transaction
+/// ([runLibraryTransactionOnConnection]); session-level advisory locks
+/// taken in one outlive its commit and its rollback. Every operation goes
+/// through [run], which runs one operation at a time: the driver starts a
+/// statement's timeout clock before the statement reaches the connection,
+/// and a timed-out statement's cancel request cancels whatever the session
+/// runs, so no library statement waits on the connection behind another.
+/// A connection failure or a timeout of any operation declares the session
+/// lost.
 @internal
 final class PostgresLockSession {
   PostgresLockSession._(
     this._connection, {
+    required this.schema,
     required this.scope,
     required this.identity,
     required this.connectTimeout,
   });
 
   final Connection _connection;
+
+  /// The schema every library transaction on the session puts first on
+  /// its search path.
+  final String schema;
 
   /// The database and schema the session reaches.
   final PostgresScope scope;
@@ -204,13 +216,14 @@ final class PostgresLockSession {
   /// Opens the lock session to [endpoint] and checks it.
   ///
   /// The check sets a random session setting and reads it back, with the
-  /// server process id, in three separate statements; every one must show
-  /// the same process id and the setting, or the connection is not one
-  /// server session. It then compares the database and schema the session
+  /// server process id, in three separate library transactions; every one
+  /// must show the same process id and the setting, or the connection is
+  /// not one server session. It then compares the database and schema the session
   /// reaches with [expectedScope]. Any mismatch closes the connection and
   /// throws [LockSessionConfigurationException].
   static Future<PostgresLockSession> open({
     required Endpoint endpoint,
+    required String schema,
     required SslMode sslMode,
     required Duration queryTimeout,
     required PostgresScope expectedScope,
@@ -224,23 +237,30 @@ final class PostgresLockSession {
     );
     final connection = await Connection.open(endpoint, settings: settings);
     try {
-      await connection.execute(
-        'SET tcp_keepalives_idle = $lockSessionKeepaliveIdleSeconds',
-      );
-      await connection.execute(
-        'SET tcp_keepalives_interval = $lockSessionKeepaliveIntervalSeconds',
-      );
-      await connection.execute(
-        'SET tcp_keepalives_count = $lockSessionKeepaliveCount',
-      );
-      await connection.execute('SET idle_session_timeout = 0');
-      await connection.execute('SET idle_in_transaction_session_timeout = 0');
-
       final token = _randomToken();
-      await connection.execute(
-        Sql.named("SELECT set_config('event_sourcing.lock_token', @t, false)"),
-        parameters: <String, Object?>{'t': token},
-      );
+      // Session settings made inside a transaction outlive its commit.
+      await runLibraryTransactionOnConnection<void>(connection, schema, (
+        tx,
+      ) async {
+        await tx.execute(
+          'SET tcp_keepalives_idle = $lockSessionKeepaliveIdleSeconds',
+        );
+        await tx.execute(
+          'SET tcp_keepalives_interval = $lockSessionKeepaliveIntervalSeconds',
+        );
+        await tx.execute(
+          'SET tcp_keepalives_count = $lockSessionKeepaliveCount',
+        );
+        await tx.execute('SET idle_session_timeout = 0');
+        await tx.execute('SET idle_in_transaction_session_timeout = 0');
+        await tx.execute(
+          Sql.named(
+            "SELECT pg_catalog.set_config('event_sourcing.lock_token', @t, "
+            'false)',
+          ),
+          parameters: <String, Object?>{'t': token},
+        );
+      });
       Connection? second;
       if (hooks?.splitLockSessionStatements ?? false) {
         second = await Connection.open(endpoint, settings: settings);
@@ -249,9 +269,16 @@ final class PostgresLockSession {
       try {
         for (var i = 0; i < 3; i++) {
           final via = (second != null && i.isOdd) ? second : connection;
-          final r = await via.execute(
-            'SELECT pg_backend_pid(), '
-            "current_setting('event_sourcing.lock_token', true)",
+          // Separate transactions: a transaction-mode pooler keeps one
+          // transaction on one server session, so only separate ones can
+          // show that the connection is not one.
+          final r = await runLibraryTransactionOnConnection(
+            via,
+            schema,
+            (tx) => tx.execute(
+              'SELECT pg_backend_pid(), '
+              "current_setting('event_sourcing.lock_token', true)",
+            ),
           );
           observed.add((r.first[0]! as int, r.first[1] as String?));
         }
@@ -266,20 +293,29 @@ final class PostgresLockSession {
           'the setting the first statement made',
         );
       }
-      final scope = await PostgresScope.read(connection);
+      final scope = await runLibraryTransactionOnConnection(
+        connection,
+        schema,
+        PostgresScope.read,
+      );
       if (scope != expectedScope) {
         throw LockSessionConfigurationException(
           'the lock connection reaches $scope, but the pool reaches '
           '$expectedScope',
         );
       }
-      final started = await connection.execute(
-        'SELECT backend_start FROM pg_stat_activity '
-        'WHERE pid = pg_backend_pid()',
+      final started = await runLibraryTransactionOnConnection(
+        connection,
+        schema,
+        (tx) => tx.execute(
+          'SELECT backend_start FROM pg_stat_activity '
+          'WHERE pid = pg_backend_pid()',
+        ),
       );
       final backendStart = (started.first[0]! as DateTime).toUtc();
       return PostgresLockSession._(
         connection,
+        schema: schema,
         scope: scope,
         identity: (pid: pid, backendStart: backendStart),
         connectTimeout: queryTimeout,
@@ -290,20 +326,46 @@ final class PostgresLockSession {
     }
   }
 
-  /// Runs [op] on the session once every earlier operation has finished.
+  /// Runs [op] in one library transaction on the session
+  /// ([runLibraryTransactionOnConnection], at `SERIALIZABLE` with
+  /// [serializable]), once every earlier operation has finished. An error
+  /// [op] throws rolls the transaction back; the session-level advisory
+  /// locks it took or released stay so. The query timeout bounds every
+  /// statement of the transaction, its control statements included.
   ///
   /// A connection failure or a timeout declares the session lost and is
-  /// rethrown; a statement the server refused (a SQL error) is rethrown
-  /// without declaring it.
+  /// rethrown, and so does a rollback that fails; a statement the server
+  /// refused (a SQL error) is rethrown without declaring it.
   @internal
-  Future<T> run<T>(Future<T> Function(Connection connection) op) {
+  Future<T> run<T>(
+    Future<T> Function(Session session) op, {
+    bool serializable = false,
+  }) => _serialized(
+    () => runLibraryTransactionOnConnection<T>(
+      _connection,
+      schema,
+      op,
+      serializable: serializable,
+      onRollbackFailure: declareLost,
+    ),
+  );
+
+  /// Runs [op] on the session's connection, outside any library
+  /// transaction, once every earlier operation has finished: a read of the
+  /// session's own state, for tests.
+  @internal
+  Future<T> runOutsideTransactionForTest<T>(
+    Future<T> Function(Connection connection) op,
+  ) => _serialized(() => op(_connection));
+
+  Future<T> _serialized<T>(Future<T> Function() op) {
     final result = _tail.then((_) async {
       if (_lost) {
         throw PgException('the lock session was declared lost');
       }
       _busy = true;
       try {
-        return await op(_connection);
+        return await op();
       } catch (e) {
         if (isConnectionFailure(e)) declareLost(e);
         rethrow;

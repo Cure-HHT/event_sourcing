@@ -5,11 +5,6 @@
 
 import 'package:analyzer/dart/element/element.dart';
 import 'package:event_sourcing/event_sourcing.dart';
-import 'package:event_sourcing/src/security/system_entry_types.dart'
-    show
-        kEntryTypeRegistryInitializedEntryType,
-        kLibVersionInitializedEntryType,
-        kViewSnapshotPromotedEntryType;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
@@ -104,7 +99,7 @@ void main() {
             'not a caller-supplied value and not a default.',
       );
       expect(stored.libFormatVersion, LibVersion.dataFormat);
-      final readBack = await store.backend.findEventById(stored.eventId);
+      final readBack = await store.reader.findEventById(stored.eventId);
       expect(readBack!.entryTypeVersion, const EntryTypeVersion(7, 3));
       expect(readBack.libFormatVersion, LibVersion.dataFormat);
     });
@@ -135,7 +130,7 @@ void main() {
         );
         expect(stored!.entryTypeVersion, const EntryTypeVersion(7, 3));
         expect(stored.libFormatVersion, LibVersion.dataFormat);
-        final readBack = await store.backend.findEventById(stored.eventId);
+        final readBack = await store.reader.findEventById(stored.eventId);
         expect(readBack!.entryTypeVersion, const EntryTypeVersion(7, 3));
         expect(readBack.libFormatVersion, LibVersion.dataFormat);
       },
@@ -165,7 +160,10 @@ void main() {
       SembastBackend backend,
       EntryTypeVersion registered,
     ) => bootstrapEventStore(
-      backend: backend,
+      storage: ApplicationSuppliedStorage(
+        backend,
+        SembastSecurityContextStore(backend: backend),
+      ),
       source: const Source(
         hopId: 'test',
         identifier: 'test-install',
@@ -190,8 +188,8 @@ void main() {
     );
 
     // Verifies: EVS-DEV-version-compatibility/C
-    test('the library-version, registry and snapshot-promotion audits carry '
-        'the data format and their registered versions', () async {
+    test('the library-version and registry audits carry the data format '
+        'and their registered versions', () async {
       final db = await newDatabaseFactoryMemory().openDatabase(
         'append-stamps-internal-${_dbCounter++}.db',
       );
@@ -206,7 +204,6 @@ void main() {
       for (final entryType in <String>[
         kLibVersionInitializedEntryType,
         kEntryTypeRegistryInitializedEntryType,
-        kViewSnapshotPromotedEntryType,
       ]) {
         final events = await backend.findAllEvents(entryType: entryType);
         expect(events, isNotEmpty, reason: entryType);

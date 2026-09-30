@@ -12,25 +12,24 @@ import 'package:event_sourcing/src/security/system_entry_types.dart'
 import 'package:flutter_test/flutter_test.dart';
 
 /// Every row of the default destination-wedges view, keyed by row key.
-Future<Map<String, Map<String, Object?>>> wedgesViewRows(
-  StorageBackend backend,
-) async => <String, Map<String, Object?>>{
-  for (final row in await backend.findViewRows(
-    defaultDestinationWedgesSpec.viewName,
-  ))
-    row['aggregateId']! as String: Map<String, Object?>.of(row),
-};
+///
+/// Reads through [store]'s reader, which translates the view's name to its
+/// storage copy id (row storage addresses rows by copy id, not view name).
+Future<Map<String, Map<String, Object?>>> wedgesViewRows(EventStore store) =>
+    wedgesViewRowsOf(store.reader);
 
-/// The three entry types the default view folds, at [store]'s registered
-/// versions: the target map a rebuild of the view takes.
-Map<String, EntryTypeVersion> wedgesViewTargets(EventStore store) =>
-    <String, EntryTypeVersion>{
-      for (final id in <String>[
-        kDestinationWedgedEntryType,
-        kDestinationWedgeRecoveredEntryType,
-        kDestinationDeletedEntryType,
-      ])
-        id: store.entryTypes.byId(id)!.registeredVersion,
+/// Every row of the default destination-wedges view, as [reader] reads it,
+/// keyed by row key.
+Future<Map<String, Map<String, Object?>>> wedgesViewRowsOf(
+  StorageReader reader,
+) async => _byRowKey(
+  (await reader.findViewRows(defaultDestinationWedgesSpec.viewName)).rows,
+);
+
+Map<String, Map<String, Object?>> _byRowKey(List<Map<String, dynamic>> rows) =>
+    <String, Map<String, Object?>>{
+      for (final row in rows)
+        row['aggregateId']! as String: Map<String, Object?>.of(row),
     };
 
 /// Asserts the view-queue invariant on [store]:
@@ -43,9 +42,9 @@ Map<String, EntryTypeVersion> wedgesViewTargets(EventStore store) =>
 /// 3. in [store]'s log, every recovery event naming [store]'s own database
 ///    follows a wedge event naming the same database, destination and item.
 Future<void> expectWedgesViewMatchesQueue(EventStore store) async {
-  final backend = store.backend;
+  final reader = store.reader;
   final wedgedItems = <(String, String)>{};
-  for (final event in await backend.findAllEvents()) {
+  for (final event in await reader.findAllEvents()) {
     if (event.entryType != kDestinationWedgedEntryType &&
         event.entryType != kDestinationWedgeRecoveredEntryType) {
       continue;
@@ -67,14 +66,14 @@ Future<void> expectWedgesViewMatchesQueue(EventStore store) async {
       );
     }
   }
-  final before = await wedgesViewRows(backend);
+  final before = await wedgesViewRowsOf(reader);
   final local = <(String, String)>{
     for (final row in before.values)
       if (row['database_id'] == store.databaseId)
         (row['id']! as String, row['row_id']! as String),
   };
   final wedged = <(String, String)>{
-    for (final summary in await backend.wedgedFifos())
+    for (final summary in await reader.wedgedFifos())
       (summary.destinationId, summary.headEntryId),
   };
   expect(
@@ -94,10 +93,10 @@ Future<void> expectWedgesViewMatchesQueue(EventStore store) async {
   await rebuildView(
     store: store,
     viewName: defaultDestinationWedgesSpec.viewName,
-    targetVersionByEntryType: wedgesViewTargets(store),
+    deadline: DateTime.now().toUtc().add(const Duration(seconds: 20)),
   );
   expect(
-    await wedgesViewRows(backend),
+    await wedgesViewRowsOf(reader),
     before,
     reason: 'a replay of the whole log derives the same rows',
   );
@@ -108,7 +107,7 @@ Future<void> expectWedgesViewMatchesQueue(EventStore store) async {
 /// for its entry type, and every destination audit carries a destination
 /// identifier and a database identity.
 Future<void> expectReservedShapes(EventStore store) async {
-  for (final event in await store.backend.findAllEvents()) {
+  for (final event in await store.reader.findAllEvents()) {
     if (!kReservedSystemEntryTypeIds.contains(event.entryType)) continue;
     final shape = kReservedEventShapes[event.entryType];
     expect(shape, isNotNull, reason: event.entryType);

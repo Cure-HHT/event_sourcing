@@ -50,6 +50,10 @@ class DemoDestination implements Destination, DemoKnobs {
   @override
   bool get serializesNatively => false;
 
+  // Not a native destination: it has no receiver endpoint to pull from.
+  @override
+  ChannelPull? get channelPull => null;
+
   @override
   Duration get maxAccumulateTime => maxAccumulateTimeN.value;
 

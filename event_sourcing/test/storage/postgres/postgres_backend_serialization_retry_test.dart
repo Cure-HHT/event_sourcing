@@ -35,6 +35,15 @@
 //   it does not lock, as long as bootLockWait has not passed, and then
 //   throws TransactionRetryExhaustedException; a re-run boot records one
 //   initialization.
+// Verifies: EVS-DEV-event-store-open/B
+// a boot a serialization failure re-runs still appends exactly one
+//   lib_version_initialized: the aborted run's append rolled back with the
+//   rest of its transaction, so only the committed re-run's append is
+//   locally in the log.
+// Verifies: EVS-DEV-event-store-open/F
+// the re-run boot records the same database identity `EventStore.open`
+//   returns, minted or read once by the committed run, never by the
+//   rolled-back one.
 
 @TestOn('vm')
 library;
@@ -42,21 +51,22 @@ library;
 import 'dart:async';
 
 import 'package:event_sourcing/event_sourcing.dart';
-import 'package:event_sourcing/src/storage/postgres/postgres_txn.dart';
 import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:postgres/postgres.dart';
 import 'package:test/test.dart';
 
+import '../../test_support/record_fixtures.dart';
 import 'test_postgres_url.dart';
 
 void main() {
-  final url = testPostgresUrl();
-  if (url == null) {
+  final db = PostgresTestDatabase.fromEnvironment();
+  if (db == null) {
     test('skipped — PG_TEST_URL unset', () {
       markTestSkipped('PG_TEST_URL unset; skipping Postgres tests');
     });
     return;
   }
+  tearDownAll(db.drop);
 
   group('PostgresBackend serialization-conflict retry', () {
     late PostgresBackend backend;
@@ -64,18 +74,8 @@ void main() {
     setUp(() async {
       // Clean slate so the counter starts at 0 and the assertions on the
       // final counter / contiguous sequence numbers are exact.
-      final conn = await Connection.open(
-        PostgresBackend.endpointFromUrl(url),
-        settings: const ConnectionSettings(sslMode: SslMode.disable),
-      );
-      await conn.execute('DROP SCHEMA public CASCADE');
-      await conn.execute('CREATE SCHEMA public');
-      await conn.close();
-      backend = await PostgresBackend.open(
-        url: url,
-        sslMode: SslMode.disable,
-        provisionSchema: true,
-      );
+      await db.reset();
+      backend = await db.open(provision: true);
     });
 
     tearDown(() => backend.close());
@@ -134,7 +134,8 @@ void main() {
 
       // The transactions run at SERIALIZABLE isolation.
       final isolation = await backend.transaction<Object?>((txn) async {
-        final rows = await (txn as PostgresTxn).session.execute(
+        final rows = await backend.queryInTxnForTest(
+          txn,
           'SHOW transaction_isolation',
         );
         return rows.first[0];
@@ -149,23 +150,9 @@ void main() {
     late EventStore storeA;
 
     setUp(() async {
-      final conn = await Connection.open(
-        PostgresBackend.endpointFromUrl(url),
-        settings: const ConnectionSettings(sslMode: SslMode.disable),
-      );
-      await conn.execute('DROP SCHEMA public CASCADE');
-      await conn.execute('CREATE SCHEMA public');
-      await conn.close();
-      backendA = await PostgresBackend.open(
-        url: url,
-        sslMode: SslMode.disable,
-        provisionSchema: true,
-      );
-      backendB = await PostgresBackend.open(
-        url: url,
-        sslMode: SslMode.disable,
-        provisionSchema: true,
-      );
+      await db.reset();
+      backendA = await db.open(provision: true);
+      backendB = await db.open(provision: true);
       storeA = await _openStore(
         backendA,
         'aaaa0001-0000-4000-8000-00000000000a',
@@ -297,7 +284,8 @@ void main() {
 
     /// Whether this transaction holds the table lock a re-run takes.
     Future<bool> holdsStateTableLock(Transaction txn) async {
-      final rows = await (txn as PostgresTxn).session.execute(
+      final rows = await backendA.queryInTxnForTest(
+        txn,
         'SELECT count(*) FROM pg_locks l JOIN pg_class c ON c.oid = l.relation '
         "WHERE c.relname = 'backend_state' AND l.pid = pg_backend_pid() "
         "AND l.mode = 'ShareRowExclusiveLock' AND l.granted",
@@ -365,18 +353,8 @@ void main() {
     late EventStore store;
 
     setUp(() async {
-      final conn = await Connection.open(
-        PostgresBackend.endpointFromUrl(url),
-        settings: const ConnectionSettings(sslMode: SslMode.disable),
-      );
-      await conn.execute('DROP SCHEMA public CASCADE');
-      await conn.execute('CREATE SCHEMA public');
-      await conn.close();
-      backend = await PostgresBackend.open(
-        url: url,
-        sslMode: SslMode.disable,
-        provisionSchema: true,
-      );
+      await db.reset();
+      backend = await db.open(provision: true);
       store = await _openStore(backend, 'aaaa0001-0000-4000-8000-00000000000b');
     });
 
@@ -440,17 +418,8 @@ void main() {
     late Connection contender;
 
     setUp(() async {
-      final conn = await Connection.open(
-        PostgresBackend.endpointFromUrl(url),
-        settings: const ConnectionSettings(sslMode: SslMode.disable),
-      );
-      await conn.execute('DROP SCHEMA public CASCADE');
-      await conn.execute('CREATE SCHEMA public');
-      await conn.close();
-      contender = await Connection.open(
-        PostgresBackend.endpointFromUrl(url),
-        settings: const ConnectionSettings(sslMode: SslMode.disable),
-      );
+      await db.reset();
+      contender = await db.connectAdmin();
     });
 
     tearDown(() async {
@@ -464,11 +433,9 @@ void main() {
     Future<PostgresBackend> openBackend({
       Duration bootLockWait = const Duration(seconds: 60),
     }) async {
-      final backend = await PostgresBackend.open(
-        url: url,
-        sslMode: SslMode.disable,
+      final backend = await db.open(
+        provision: true,
         bootLockWait: bootLockWait,
-        provisionSchema: true,
       );
       backends.add(backend);
       return backend;
@@ -482,7 +449,7 @@ void main() {
       await contender.execute('BEGIN');
       await contender.execute(
         "UPDATE view_rows SET row_data = '{\"writer\": \"contender\"}' "
-        "WHERE view_name = '$_contentionView' AND row_key = 'x'",
+        "WHERE copy_id = '$_contentionView' AND row_key = 'x'",
       );
       await _commitOnceBlocked(contender, boot);
     }
@@ -556,52 +523,64 @@ void main() {
     test('EventStore.open re-runs a boot a serialization failure aborted, '
         'and records one initialization', () async {
       final backend = await openBackend();
-      // The contender seeds the target the boot is about to seed, without
-      // committing, so the boot's insert waits for it and then fails.
-      await contender.execute('BEGIN');
-      await contender.execute(
-        'INSERT INTO view_target_versions '
-        '(view_name, entry_type, target_major, target_minor) '
-        "VALUES ('$_contentionView', 'test_event', 1, 0)",
-      );
       var bootRuns = 0;
-      final open = settle(
-        runWithDeliveryTestHooks(
-          DeliveryTestHooks(onBootBodyRun: () => bootRuns++),
-          () => EventStore.open(
-            storage: backend,
-            entryTypes: EntryTypeRegistry()..register(_testEventDef()),
-            source: const Source(
-              hopId: 'test',
-              identifier: 'aaaa0001-0000-4000-8000-00000000000c',
-              softwareVersion: '0.0.0-test',
-            ),
-            securityContexts: PostgresSecurityContextStore(backend: backend),
-            projections: ProjectionRegistry()
-              ..register(
-                const AggregateProjectionSpec(
-                  viewName: _contentionView,
-                  interest: SubscriptionFilter(
-                    entryTypes: <String>{'test_event'},
-                  ),
-                  tombstoneEventTypes: <String>{},
-                ),
-              ),
+      final store = await runWithDeliveryTestHooks(
+        DeliveryTestHooks(
+          onBootBodyRun: () => bootRuns++,
+          // Only the first run's commit is made to fail: a re-run must
+          // succeed, or the boot would retry forever instead of opening.
+          failBootTransactionWithSerializationFailure: () => bootRuns == 1,
+        ),
+        () => EventStore.open(
+          storage: ApplicationSuppliedStorage(
+            backend,
+            PostgresSecurityContextStore(backend: backend),
           ),
+          entryTypes: EntryTypeRegistry()..register(_testEventDef()),
+          source: const Source(
+            hopId: 'test',
+            identifier: 'aaaa0001-0000-4000-8000-00000000000c',
+            softwareVersion: '0.0.0-test',
+          ),
+          projections: ProjectionRegistry()
+            ..register(
+              const AggregateProjectionSpec(
+                viewName: _contentionView,
+                interest: SubscriptionFilter(
+                  entryTypes: <String>{'test_event'},
+                ),
+                tombstoneEventTypes: <String>{},
+              ),
+            ),
         ),
       );
-      await _commitOnceBlocked(contender, open);
-      final store = await open;
 
       expect(store, isA<EventStore>());
-      expect(bootRuns, 2);
+      expect(bootRuns, 2, reason: 'the aborted run and its re-run');
       final initializations = await backend.findAllEvents(
         entryType: 'lib_version_initialized',
       );
       expect(initializations, hasLength(1));
+      expect(initializations.single.data['database_id'], store.databaseId);
+      final copies = await backend.transaction(backend.readViewCopiesInTxn);
+      final liveByViewName = <String, int>{};
+      for (final copy in copies.where((c) => !c.markedForDeletion)) {
+        liveByViewName[copy.viewName] =
+            (liveByViewName[copy.viewName] ?? 0) + 1;
+      }
       expect(
-        initializations.single.data['database_id'],
-        (store! as EventStore).databaseId,
+        liveByViewName[_contentionView],
+        1,
+        reason:
+            'one live copy for the registered view, not two '
+            'competing for its fingerprint',
+      );
+      expect(
+        liveByViewName.values,
+        everyElement(1),
+        reason:
+            'no registered view has two live copies of its '
+            'fingerprint',
       );
     });
   });
@@ -653,7 +632,7 @@ StoredEvent _event(String eventId, int sequenceNumber) => StoredEvent(
   aggregateType: 'note',
   entryType: 'epistaxis_event',
   entryTypeVersion: const EntryTypeVersion(1, 0),
-  libFormatVersion: const DataFormatVersion(2, 0),
+  libFormatVersion: LibVersion.dataFormat,
   eventType: 'Event',
   sequenceNumber: sequenceNumber,
   data: const <String, dynamic>{},
@@ -661,6 +640,7 @@ StoredEvent _event(String eventId, int sequenceNumber) => StoredEvent(
   initiator: const UserInitiator('u'),
   clientTimestamp: DateTime.utc(2026, 4, 22),
   eventHash: 'hash-$eventId',
+  causal: kRootVersionCausal,
 );
 
 EntryTypeDefinition _testEventDef() => const EntryTypeDefinition(

@@ -1,5 +1,5 @@
 // Verifies: EVS-PRD-ingest/A
-// ingestEvent and ingestBatch admit events from
+// the ingest seam and deliveries admit events from
 //   multiple independent originators into a single local log
 // Verifies: EVS-PRD-ingest/B
 // originator identity preserved per event
@@ -8,8 +8,8 @@
 // Chain 2 ingest_sequence_number and
 //   previous_ingest_hash thread monotonically across interleaved originators
 // Verifies: EVS-PRD-hash-chain-integrity/B
-// verifyIngestChain and
-//   verifyEventChain return ok=true over a multi-originator log
+// the chain verification finds nothing over a multi-originator log, over
+//   the whole log and over each event's own range
 // Verifies: EVS-PRD-ingest/E
 // locally-ingested events from distinct
 //   originators participate in the same Chain 2 (unified ingest sequence)
@@ -17,7 +17,8 @@
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
-import 'package:uuid/uuid.dart';
+
+import '../test_support/deliveries.dart';
 
 // ---------------------------------------------------------------------------
 // Fixture helpers
@@ -62,24 +63,6 @@ Future<_Fixture> _openStore({
     securityContexts: securityContexts,
   );
   return _Fixture(store: store, backend: backend);
-}
-
-/// Build a [BatchEnvelope] from a list of [StoredEvent]s with a fresh batchId.
-BatchEnvelope _buildEnvelope(
-  List<StoredEvent> events, {
-  required String senderHop,
-  required String senderIdentifier,
-  required String senderSoftwareVersion,
-}) {
-  return BatchEnvelope(
-    batchFormatVersion: '2',
-    batchId: const Uuid().v4(),
-    senderHop: senderHop,
-    senderIdentifier: senderIdentifier,
-    senderSoftwareVersion: senderSoftwareVersion,
-    sentAt: DateTime.now().toUtc(),
-    events: events.map((e) => Map<String, Object?>.from(e.toMap())).toList(),
-  );
 }
 
 /// Read the stored event for [eventId] from [fixture].
@@ -169,10 +152,10 @@ void main() {
           expect(eB2, isNotNull);
 
           // Destination ingests one at a time, interleaved across originators.
-          final outA1 = await destination.store.ingestEvent(eA1!);
-          final outB1 = await destination.store.ingestEvent(eB1!);
-          final outA2 = await destination.store.ingestEvent(eA2!);
-          final outB2 = await destination.store.ingestEvent(eB2!);
+          final outA1 = await ingestEventForTest(destination.store, eA1!);
+          final outB1 = await ingestEventForTest(destination.store, eB1!);
+          final outA2 = await ingestEventForTest(destination.store, eA2!);
+          final outB2 = await ingestEventForTest(destination.store, eB2!);
 
           expect(outA1.outcome, equals(IngestOutcome.ingested));
           expect(outB1.outcome, equals(IngestOutcome.ingested));
@@ -250,24 +233,28 @@ void main() {
           expect(storedA1.aggregateId, equals(eA1.aggregateId));
           expect(storedB1.aggregateId, equals(eB1.aggregateId));
 
-          // Assertion: Chain 2 (verifyIngestChain) returns ok=true.
-          final ingestVerdict = await destination.store.verifyIngestChain();
+          // Assertion: the chain verification of the whole log is valid.
+          final ingestVerdict = await destination.store.reader.verifyChains();
           expect(
             ingestVerdict.isValid,
             isTrue,
-            reason: 'verifyIngestChain failures: ${ingestVerdict.failures}',
+            reason:
+                'the chain verification failures: ${ingestVerdict.findings}',
           );
-          expect(ingestVerdict.failures, isEmpty);
+          expect(ingestVerdict.findings, isEmpty);
 
-          // Assertion: Chain 1 (verifyEventChain) passes for every stored event.
+          // Assertion: the verification of each event's own range is valid.
           for (final stored in [storedA1, storedB1, storedA2, storedB2]) {
-            final verdict = await destination.store.verifyEventChain(stored);
+            final verdict = await destination.store.reader.verifyChains(
+              from: stored.sequenceNumber,
+              to: stored.sequenceNumber,
+            );
             expect(
               verdict.isValid,
               isTrue,
               reason:
-                  'verifyEventChain failed for ${stored.eventId}: '
-                  '${verdict.failures}',
+                  'the chain verification failed for ${stored.eventId}: '
+                  '${verdict.findings}',
             );
           }
         } finally {
@@ -282,7 +269,7 @@ void main() {
     // Test 2: batched ingest from two originators
     // -----------------------------------------------------------------------
     test(
-      'ingestBatch from originator A then B threads Chain 2 across both batches',
+      'deliveries from originator A then B thread Chain 2 across both',
       () async {
         final originatorA = await _openStore(
           hopId: 'mobile-device-A',
@@ -348,46 +335,26 @@ void main() {
           expect(eB1, isNotNull);
           expect(eB2, isNotNull);
 
-          // A builds and encodes a batch envelope [eA1, eA2].
-          final envelopeA = _buildEnvelope(
-            [eA1!, eA2!],
-            senderHop: 'mobile-device-A',
-            senderIdentifier: 'device-AAA',
-            senderSoftwareVersion: 'my_app@1.0.0',
-          );
-          final bytesA = envelopeA.encode();
+          // Destination accepts A's delivery, then B's delivery, each on
+          // its sender's channel.
+          final deliveryA = await deliverEventsTo(destination.store, [
+            eA1!,
+            eA2!,
+          ]);
+          final deliveryB = await deliverEventsTo(destination.store, [
+            eB1!,
+            eB2!,
+          ]);
 
-          // B builds and encodes a batch envelope [eB1, eB2].
-          final envelopeB = _buildEnvelope(
-            [eB1!, eB2!],
-            senderHop: 'mobile-device-B',
-            senderIdentifier: 'device-BBB',
-            senderSoftwareVersion: 'my_app@1.0.0',
+          // Assertion: each delivery's events are ingested.
+          expect(
+            await recordOutcomes(destination.store, deliveryA),
+            <IngestOutcome>[IngestOutcome.ingested, IngestOutcome.ingested],
           );
-          final bytesB = envelopeB.encode();
-
-          // Destination ingests A's batch, then B's batch.
-          final resultA = await destination.store.ingestBatch(
-            bytesA,
-            wireFormat: BatchEnvelope.wireFormat,
+          expect(
+            await recordOutcomes(destination.store, deliveryB),
+            <IngestOutcome>[IngestOutcome.ingested, IngestOutcome.ingested],
           );
-          final resultB = await destination.store.ingestBatch(
-            bytesB,
-            wireFormat: BatchEnvelope.wireFormat,
-          );
-
-          // Assertion: each ingestBatch result carries its own batchId and
-          // 2 ingested outcomes.
-          expect(resultA.batchId, equals(envelopeA.batchId));
-          expect(resultA.events, hasLength(2));
-          for (final o in resultA.events) {
-            expect(o.outcome, equals(IngestOutcome.ingested));
-          }
-          expect(resultB.batchId, equals(envelopeB.batchId));
-          expect(resultB.events, hasLength(2));
-          for (final o in resultB.events) {
-            expect(o.outcome, equals(IngestOutcome.ingested));
-          }
 
           // Fetch all four stored events from destination.
           final storedA1 = await _fetchStored(destination, eA1.eventId);
@@ -407,18 +374,30 @@ void main() {
           final provB1 = receiverProv(storedB1);
           final provB2 = receiverProv(storedB2);
 
-          // Assertion: Chain 2 ingest_sequence_numbers 1..4 span both batches.
-          // A's batch was ingested first: eA1=1, eA2=2.
+          // The receiver's accepted-delivery audit of A's delivery, which it
+          // appends after A's events.
+          final auditA =
+              (await destination.store.reader.findAllEvents(
+                entryType: 'ingest-audit',
+              )).singleWhere(
+                (e) =>
+                    e.eventType == 'ingest.delivery_accepted' &&
+                    e.data['delivery_hash'] == deliveryA.envelope.deliveryHash,
+              );
+
+          // Assertion: Chain 2 ingest_sequence_numbers span both deliveries.
+          // A's delivery was accepted first: eA1=1, eA2=2, its audit=3.
           expect(provA1['ingest_sequence_number'], equals(1));
           expect(provA2['ingest_sequence_number'], equals(2));
-          // B's batch ingested second: eB1=3, eB2=4.
-          expect(provB1['ingest_sequence_number'], equals(3));
-          expect(provB2['ingest_sequence_number'], equals(4));
+          // B's delivery accepted second: eB1=4, eB2=5.
+          expect(provB1['ingest_sequence_number'], equals(4));
+          expect(provB2['ingest_sequence_number'], equals(5));
 
-          // Assertion: previous_ingest_hash threads across both batches.
+          // Assertion: previous_ingest_hash threads across both deliveries.
           expect(provA1['previous_ingest_hash'], isNull);
           expect(provA2['previous_ingest_hash'], equals(storedA1.eventHash));
-          expect(provB1['previous_ingest_hash'], equals(storedA2.eventHash));
+          expect(auditA.sequenceNumber, equals(3));
+          expect(provB1['previous_ingest_hash'], equals(auditA.eventHash));
           expect(provB2['previous_ingest_hash'], equals(storedB1.eventHash));
 
           // Assertion: batch_context carries the right batchId for each event.
@@ -429,8 +408,8 @@ void main() {
           final bcA2 = BatchContext.fromJson(
             Map<String, Object?>.from(provA2['batch_context'] as Map),
           );
-          expect(bcA1.batchId, equals(envelopeA.batchId));
-          expect(bcA2.batchId, equals(envelopeA.batchId));
+          expect(bcA1.batchId, equals(deliveryA.envelope.batchId));
+          expect(bcA2.batchId, equals(deliveryA.envelope.batchId));
           expect(bcA1.batchSize, equals(2));
           expect(bcA2.batchSize, equals(2));
           expect(bcA1.batchPosition, equals(0));
@@ -443,8 +422,8 @@ void main() {
           final bcB2 = BatchContext.fromJson(
             Map<String, Object?>.from(provB2['batch_context'] as Map),
           );
-          expect(bcB1.batchId, equals(envelopeB.batchId));
-          expect(bcB2.batchId, equals(envelopeB.batchId));
+          expect(bcB1.batchId, equals(deliveryB.envelope.batchId));
+          expect(bcB2.batchId, equals(deliveryB.envelope.batchId));
           expect(bcB1.batchSize, equals(2));
           expect(bcB2.batchSize, equals(2));
           expect(bcB1.batchPosition, equals(0));
@@ -461,24 +440,28 @@ void main() {
             isEmpty,
           );
 
-          // Assertion: Chain 2 (verifyIngestChain) returns ok=true.
-          final ingestVerdict = await destination.store.verifyIngestChain();
+          // Assertion: the chain verification of the whole log is valid.
+          final ingestVerdict = await destination.store.reader.verifyChains();
           expect(
             ingestVerdict.isValid,
             isTrue,
-            reason: 'verifyIngestChain failures: ${ingestVerdict.failures}',
+            reason:
+                'the chain verification failures: ${ingestVerdict.findings}',
           );
-          expect(ingestVerdict.failures, isEmpty);
+          expect(ingestVerdict.findings, isEmpty);
 
-          // Assertion: Chain 1 (verifyEventChain) passes for every stored event.
+          // Assertion: the verification of each event's own range is valid.
           for (final stored in [storedA1, storedA2, storedB1, storedB2]) {
-            final verdict = await destination.store.verifyEventChain(stored);
+            final verdict = await destination.store.reader.verifyChains(
+              from: stored.sequenceNumber,
+              to: stored.sequenceNumber,
+            );
             expect(
               verdict.isValid,
               isTrue,
               reason:
-                  'verifyEventChain failed for ${stored.eventId}: '
-                  '${verdict.failures}',
+                  'the chain verification failed for ${stored.eventId}: '
+                  '${verdict.findings}',
             );
           }
         } finally {

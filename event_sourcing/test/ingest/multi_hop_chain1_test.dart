@@ -5,11 +5,11 @@
 // each relay appends its own provenance entry;
 //   provenance grows by one entry per hop (length 3 for A->B->C, 4 for A->B->D->C)
 // Verifies: EVS-PRD-hash-chain-integrity/C
-// verifyEventChain walks all hops
+// the chain verification walks all hops
 //   (including the k>1 ingest_sequence_number substitution branch) and returns
 //   ok=true across a 3-hop and a 4-hop chain
 //
-// Regression coverage for the hop-mapping logic in `_verifyChainOn`:
+// Regression coverage for the hop-mapping logic in `hashMismatchEvidence`:
 // the recompute-at-hop-k-1 path uses
 //   - provenance[1].origin_sequence_number for k == 1
 //   - provenance[k-1].ingest_sequence_number for k > 1
@@ -20,6 +20,7 @@
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
+import '../test_support/deliveries.dart';
 
 // ---------------------------------------------------------------------------
 // Test fixture helpers
@@ -84,13 +85,13 @@ void main() {
     // -------------------------------------------------------------------
     // 3-hop chain: originator A -> mobile relay B -> control-server C
     //
-    // Verifies that `verifyEventChain` correctly walks back through both
+    // Verifies that the chain verification correctly walks back through both
     // receiver hops AND the originator-hash terminal step. This exercises
     // the hop-mapping seq-substitution logic for k > 1, which is unique
     // to chains of length >= 3.
     // -------------------------------------------------------------------
     test(
-      'Verifies: -A — verifyEventChain succeeds across a 3-hop chain (A->B->C)',
+      'Verifies: -A — the chain verification succeeds across a 3-hop chain (A->B->C)',
       () async {
         final originatorA = await _openStore(
           hopId: 'mobile-device-A',
@@ -133,8 +134,8 @@ void main() {
           expect(eA2, isNotNull);
 
           // Hop 1: B ingests both of A's events.
-          await relayB.store.ingestEvent(eA1!);
-          await relayB.store.ingestEvent(eA2!);
+          await ingestEventForTest(relayB.store, eA1!);
+          await ingestEventForTest(relayB.store, eA2!);
 
           // Read B's stored copies — these now carry receiver provenance
           // entries from B (length 2: [origin, B]).
@@ -163,8 +164,8 @@ void main() {
           // B's stored copy IS the wire-supplied incoming event:
           // provenance is already [origin-A, receiver-B], and C will
           // append a third hop.
-          final outAtC1 = await controlC.store.ingestEvent(atB1);
-          final outAtC2 = await controlC.store.ingestEvent(atB2);
+          final outAtC1 = await ingestEventForTest(controlC.store, atB1);
+          final outAtC2 = await ingestEventForTest(controlC.store, atB2);
           expect(outAtC1.outcome, equals(IngestOutcome.ingested));
           expect(outAtC2.outcome, equals(IngestOutcome.ingested));
 
@@ -207,30 +208,36 @@ void main() {
             equals(atB1.sequenceNumber),
           );
 
-          // Core assertion: verifyEventChain walks all three hops on C
+          // Core assertion: the chain verification walks all three hops on C
           // and finds no failures. This exercises the
           //   k > 1 -> provenance[k-1].ingest_sequence_number
-          // substitution branch in `_verifyChainOn` that the 2-hop
+          // substitution branch in `hashMismatchEvidence` that the 2-hop
           // fixtures cannot reach.
-          final verdict1 = await controlC.store.verifyEventChain(atC1);
+          final verdict1 = await controlC.store.reader.verifyChains(
+            from: atC1.sequenceNumber,
+            to: atC1.sequenceNumber,
+          );
           expect(
             verdict1.isValid,
             isTrue,
             reason:
-                'verifyEventChain must succeed across 3 hops; '
-                'failures: ${verdict1.failures}',
+                'the chain verification must succeed across 3 hops; '
+                'failures: ${verdict1.findings}',
           );
-          expect(verdict1.failures, isEmpty);
+          expect(verdict1.findings, isEmpty);
 
-          final verdict2 = await controlC.store.verifyEventChain(atC2);
+          final verdict2 = await controlC.store.reader.verifyChains(
+            from: atC2.sequenceNumber,
+            to: atC2.sequenceNumber,
+          );
           expect(
             verdict2.isValid,
             isTrue,
             reason:
-                'verifyEventChain must succeed across 3 hops; '
-                'failures: ${verdict2.failures}',
+                'the chain verification must succeed across 3 hops; '
+                'failures: ${verdict2.findings}',
           );
-          expect(verdict2.failures, isEmpty);
+          expect(verdict2.findings, isEmpty);
         } finally {
           await originatorA.close();
           await relayB.close();
@@ -244,7 +251,7 @@ void main() {
     // depth. originator A -> mobile relay B -> mobile relay D -> control-server C.
     // -------------------------------------------------------------------
     test(
-      'Verifies: -A — verifyEventChain succeeds across a 4-hop chain (A->B->D->C)',
+      'Verifies: -A — the chain verification succeeds across a 4-hop chain (A->B->D->C)',
       () async {
         final originatorA = await _openStore(
           hopId: 'mobile-device-A',
@@ -278,13 +285,13 @@ void main() {
           expect(eA, isNotNull);
 
           // Walk through B, D, C.
-          await relayB.store.ingestEvent(eA!);
+          await ingestEventForTest(relayB.store, eA!);
           final atB = await _fetchStored(relayB, eA.eventId);
 
-          await relayD.store.ingestEvent(atB);
+          await ingestEventForTest(relayD.store, atB);
           final atD = await _fetchStored(relayD, eA.eventId);
 
-          final outAtC = await controlC.store.ingestEvent(atD);
+          final outAtC = await ingestEventForTest(controlC.store, atD);
           expect(outAtC.outcome, equals(IngestOutcome.ingested));
 
           final atC = await _fetchStored(controlC, eA.eventId);
@@ -300,15 +307,18 @@ void main() {
           expect(provAtC[2]['hop'], equals('mobile-relay-D'));
           expect(provAtC[3]['hop'], equals('control-server-C'));
 
-          final verdict = await controlC.store.verifyEventChain(atC);
+          final verdict = await controlC.store.reader.verifyChains(
+            from: atC.sequenceNumber,
+            to: atC.sequenceNumber,
+          );
           expect(
             verdict.isValid,
             isTrue,
             reason:
-                'verifyEventChain must succeed across 4 hops; '
-                'failures: ${verdict.failures}',
+                'the chain verification must succeed across 4 hops; '
+                'failures: ${verdict.findings}',
           );
-          expect(verdict.failures, isEmpty);
+          expect(verdict.findings, isEmpty);
         } finally {
           await originatorA.close();
           await relayB.close();

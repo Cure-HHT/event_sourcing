@@ -81,14 +81,16 @@ Future<EventStore> buildInMemoryEventStore() async {
     ..register(userRoleScopesSpec);
 
   return EventStore.open(
-    storage: backend,
+    storage: ApplicationSuppliedStorage(
+      backend,
+      SembastSecurityContextStore(backend: backend),
+    ),
     entryTypes: typeRegistry,
     source: const Source(
       hopId: 'test-server',
       identifier: 'test-instance-1',
       softwareVersion: 'event_sourcing_test@0.0.0',
     ),
-    securityContexts: SembastSecurityContextStore(backend: backend),
     projections: projections,
   );
 }
@@ -133,14 +135,16 @@ class SembastEventStoreHarness {
     final sourceId = 'test-instance-${DateTime.now().microsecondsSinceEpoch}';
 
     final eventStore = await EventStore.open(
-      storage: backend,
+      storage: ApplicationSuppliedStorage(
+        backend,
+        SembastSecurityContextStore(backend: backend),
+      ),
       entryTypes: typeRegistry,
       source: Source(
         hopId: 'test-server',
         identifier: sourceId,
         softwareVersion: 'event_sourcing_test@0.0.0',
       ),
-      securityContexts: SembastSecurityContextStore(backend: backend),
       projections: projections,
     );
 
@@ -179,7 +183,7 @@ class SembastEventStoreHarness {
 
   /// Return all rows currently materialized for [viewName].
   Future<List<Map<String, dynamic>>> findRows(String viewName) =>
-      _backend.findViewRows(viewName);
+      _backend.findViewRows(eventStore.copyIdOf(viewName));
 
   /// Close the underlying [EventStore] (and, transitively, the backing
   /// in-memory database).

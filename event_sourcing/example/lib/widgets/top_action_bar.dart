@@ -26,14 +26,12 @@ const SecurityDetails _kDemoSecurityDetails = SecurityDetails(
 class TopActionBar extends StatefulWidget {
   const TopActionBar({
     required this.datastore,
-    required this.backend,
     required this.appState,
     required this.onResetAll,
     super.key,
   });
 
   final EventStoreBundle datastore;
-  final SembastBackend backend;
   final AppState appState;
   final Future<void> Function() onResetAll;
 
@@ -44,7 +42,7 @@ class TopActionBar extends StatefulWidget {
 class _TopActionBarState extends State<TopActionBar> {
   final TextEditingController _title = TextEditingController();
   final TextEditingController _body = TextEditingController();
-  final SyntheticBatchBuilder _syntheticBatch = SyntheticBatchBuilder();
+  final SyntheticSender _syntheticSender = SyntheticSender();
 
   // When on, every `_record` call passes `_kDemoSecurityDetails` to
   // `EventStore.append`'s `security:` arg, so the security_context
@@ -105,16 +103,19 @@ class _TopActionBarState extends State<TopActionBar> {
     );
   }
 
-  /// Build a synthetic `esd/batch@2` envelope (one event from
-  /// `remote-mobile-1`) and feed it through `EventStore.ingestBatch`.
-  /// Surfaces the receiver-stamped `origin_sequence_number` in the
-  /// DETAIL panel for the ingested event.
-  Future<void> _ingestSyntheticBatch() async {
-    final envelope = _syntheticBatch.buildSingleEventBatch();
-    await widget.datastore.eventStore.ingestBatch(
-      envelope.encode(),
-      wireFormat: BatchEnvelope.wireFormat,
+  /// Deliver one synthetic event from `remote-mobile-1` to this pane's
+  /// receiver endpoint as the next native delivery on that device's
+  /// channel, and describe the receiver's answer.
+  Future<String> _ingestSyntheticBatch() async {
+    final answer = await _syntheticSender.deliverOne(
+      widget.datastore.eventStore,
     );
+    return switch (answer) {
+      ReceiverAcknowledgement(:final outcome, :final record) =>
+        'Delivery ${record.deliveryNumber} ${outcome.wire}',
+      ReceiverRefusal(:final refusal, :final reason) =>
+        'Delivery refused: ${refusal.wire}${reason == null ? '' : ' ($reason)'}',
+    };
   }
 
   @override
@@ -220,13 +221,11 @@ class _TopActionBarState extends State<TopActionBar> {
           label: 'Ingest batch',
           onTap: () async {
             try {
-              await _ingestSyntheticBatch();
+              final outcome = await _ingestSyntheticBatch();
               if (!mounted) return;
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Ingested 1-event esd/batch@2 envelope'),
-                ),
-              );
+              ScaffoldMessenger.of(
+                context,
+              ).showSnackBar(SnackBar(content: Text(outcome)));
             } catch (e) {
               if (!mounted) return;
               ScaffoldMessenger.of(
@@ -249,17 +248,17 @@ class _TopActionBarState extends State<TopActionBar> {
           label: 'Rebuild view',
           onTap: () async {
             try {
-              final count = await rebuildView(
+              await rebuildView(
                 store: widget.datastore.eventStore,
                 viewName: 'notes',
-                targetVersionByEntryType: const <String, EntryTypeVersion>{
-                  'demo_note': EntryTypeVersion(1, 0),
-                },
+                deadline: DateTime.now().toUtc().add(
+                  const Duration(seconds: 20),
+                ),
               );
               if (!mounted) return;
-              ScaffoldMessenger.of(
-                context,
-              ).showSnackBar(SnackBar(content: Text('Rebuilt $count events')));
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Rebuilt notes view')),
+              );
             } catch (e) {
               if (!mounted) return;
               ScaffoldMessenger.of(

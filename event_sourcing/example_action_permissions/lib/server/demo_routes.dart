@@ -12,6 +12,30 @@ import 'package:event_sourcing/event_sourcing.dart';
 import 'package:shelf/shelf.dart';
 import 'package:shelf_router/shelf_router.dart';
 
+/// Wraps [inner] so that a request refused because a view it reads is
+/// still converging after an open (a [ViewConvergingRefusal] from the
+/// authorization policy or a view read) is answered 503 with the body
+/// `{"error": "view_converging", "view": <name>}` and `Retry-After: 1`,
+/// the shape the reaction server answers with, rather than as a server
+/// error. Any other failure passes through unchanged.
+Handler answerConvergingViewsAs503(Handler inner) => (Request req) async {
+  try {
+    return await inner(req);
+  } on ViewConvergingRefusal catch (e) {
+    return Response(
+      503,
+      body: jsonEncode(<String, Object?>{
+        'error': 'view_converging',
+        'view': e.viewName,
+      }),
+      headers: const <String, String>{
+        'content-type': 'application/json',
+        'retry-after': '1',
+      },
+    );
+  }
+};
+
 class DemoRoutes {
   DemoRoutes({
     required this.components,
@@ -45,7 +69,7 @@ class DemoRoutes {
       ..post('/demo/delivery/refuse-next', _deliveryRefuseNext)
       ..get('/_demo/inspect', _inspect)
       ..post('/_demo/reset', _reset);
-    return router.call;
+    return answerConvergingViewsAs503(router.call);
   }
 
   DispatchTrace? lastTrace() => _lastTrace;
@@ -228,9 +252,9 @@ class DemoRoutes {
     final operator = await _operator(req.url.queryParameters['userId']);
     if (operator == null) return _forbidden();
     final status = await components.destinations.readDeliveryStatus();
-    final wedges = await components.eventStore.backend.findViewRows(
+    final wedges = (await components.eventStore.reader.findViewRows(
       defaultDestinationWedgesSpec.viewName,
-    );
+    )).rows;
     return Response.ok(
       jsonEncode(<String, Object?>{
         'drainer': status.drainer?.toJson(),
@@ -256,17 +280,10 @@ class DemoRoutes {
   /// queue head.
   Future<Response> _deliveryHalt(Request req) =>
       _asOperator(req, (operator, body) async {
-        final purposeWire = _stringField(body, 'purpose') ?? 'pause';
-        final HaltPurpose purpose;
-        try {
-          purpose = HaltPurpose.fromWire(purposeWire);
-        } on FormatException {
-          throw ArgumentError.value(
-            purposeWire,
-            'purpose',
-            'must be pause or reconfigure',
-          );
-        }
+        // The library refuses a purpose it does not request.
+        final purpose = HaltPurpose.fromWire(
+          _stringField(body, 'purpose') ?? 'pause',
+        );
         final requestEventId = await components.destinations.requestHalt(
           _stringField(body, 'destinationId') ?? '',
           initiator: UserInitiator(operator.userId),

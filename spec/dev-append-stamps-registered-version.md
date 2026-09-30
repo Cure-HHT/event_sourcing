@@ -5,7 +5,7 @@
 
 ## Purpose
 
-How the substrate ensures every appended event carries the entry type's current `registeredVersion`, a major and a minor number (see EVS-DEV-version-compatibility). The version is sourced from the substrate's `EntryTypeRegistry` rather than supplied by callers, so producers cannot accidentally (or deliberately) emit events stamped against a version other than the registry's current one. This guarantee is load-bearing for the substrate's promotion contract (see EVS-DEV-ingest-promotes-before-fold and EVS-DEV-snapshot-promotion-on-open).
+How the substrate ensures every appended event carries the entry type's current `registeredVersion`, a major and a minor number (see EVS-DEV-version-compatibility). The version is sourced from the substrate's `EntryTypeRegistry` rather than supplied by callers, so producers cannot accidentally (or deliberately) emit events stamped against a version other than the registry's current one. This guarantee is load-bearing for the substrate's promotion contract (see EVS-DEV-ingest-promotes-before-fold and EVS-DEV-view-convergence).
 
 ## Assertions
 
@@ -21,12 +21,14 @@ D. The library SHALL refuse a registration for an entry type id that already has
 
 **Why deny the parameter?** Allowing caller-supplied `entryTypeVersion` creates two failure modes: callers stamp the wrong version (off-by-one bug surfaces months later during a schema bump), or callers deliberately mis-stamp to bypass ingest-time promotion. Denying the parameter eliminates both. Substrate-owned versioning means there is exactly one source of truth (the registry) and one site that consults it (the append call).
 
-**Why does this require `EntryTypeRegistry` lookup on every append?** Performance impact is negligible (constant-time map lookup), and an entry type's registered version cannot change while a store is open. New entry types may be added after boot — a deployment that does so seeds the corresponding view-target-version rows itself — but an existing definition can never be redefined in place, so no lookup returns a version different from the one that type was registered with. That is what eliminates the race-with-promotion a redefinable registry would introduce.
+**Why does this require `EntryTypeRegistry` lookup on every append?** Performance impact is negligible (constant-time map lookup), and an entry type's registered version cannot change while a store is open. New entry types may be added after boot — which changes the definition of every view whose interest names no entry type, so each gets a copy of its own (EVS-DEV-view-convergence) — but an existing definition can never be redefined in place, so no lookup returns a version different from the one that type was registered with. That is what eliminates the race-with-promotion a redefinable registry would introduce.
 
 **Why refuse a duplicate registration rather than overwrite?** A map would silently let the later registration win. Because the registry is the sole source of the version stamped onto every appended event of a type, a silent overwrite would change that version mid-run, and events appended before and after the overwrite would claim different versions of the same schema with nothing in the log explaining the discontinuity. Refusing makes two competing definitions a startup failure — the point at which a deployment can still be corrected — rather than a data-integrity defect discovered at the next schema bump. This is also the property the per-append lookup above depends on.
 
 ## Changelog
 
+- 2026-09-25 | b0a57e30 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: sync changelog hash
+- 2026-09-26 | - | - | Michael Lewis (<michael@anspar.org>) | Purpose: the promotion contract rests on view copies; Rationale: an added entry type changes the definition of a view that folds it
 - 2026-09-23 | b0a57e30 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-23 | - | - | Michael Lewis (<michael@anspar.org>) | Amend A-C: the stamped version is the registered major and minor
 - 2026-09-07 | 6e9c508c | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash

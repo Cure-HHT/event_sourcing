@@ -8,6 +8,9 @@
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
+import '../test_support/deliveries.dart';
+
+import '../test_support/record_fixtures.dart';
 
 Future<SembastBackend> _openBackend(String path) async {
   final db = await newDatabaseFactoryMemory().openDatabase(path);
@@ -29,7 +32,7 @@ Future<StoredEvent> _appendEvent(
       aggregateType: 'note',
       entryType: 'epistaxis_event',
       entryTypeVersion: const EntryTypeVersion(1, 0),
-      libFormatVersion: const DataFormatVersion(2, 0),
+      libFormatVersion: LibVersion.dataFormat,
       eventType: 'finalized',
       sequenceNumber: seq,
       data: const <String, dynamic>{},
@@ -37,6 +40,7 @@ Future<StoredEvent> _appendEvent(
       initiator: const UserInitiator('u'),
       clientTimestamp: DateTime.utc(2026, 4, 22, 10),
       eventHash: 'hash-$eventId',
+      causal: kRootVersionCausal,
     );
     await backend.appendEvent(txn, event);
     if (rollBack) throw StateError('injected rollback');
@@ -248,7 +252,7 @@ void main() {
         // Ingest the originated event into dest. The receiver-hop event
         // routes through appendEvent under unification, so it must
         // surface on the stream.
-        await destStore.ingestEvent(origEvent!);
+        await ingestEventForTest(destStore, origEvent!);
         await Future<void>.delayed(Duration.zero);
 
         await sub.cancel();

@@ -1,48 +1,49 @@
 import 'package:event_sourcing/event_sourcing.dart';
 
 /// In-memory bridge from one datastore's outgoing `Native` wire payload
-/// to another datastore's [EventStore.ingestBatch]. Demo-only glue used
-/// by the dual-pane example to wire the mobile pane's outgoing native
-/// stream into the hub pane.
+/// to another datastore's receiver endpoint. Demo-only glue used by the
+/// dual-pane example to wire the mobile pane's outgoing native stream into
+/// the hub pane.
 ///
-/// Maps [EventStore.ingestBatch] outcomes to [SendResult]:
-/// - success ([IngestBatchResult]) → [SendOk] (per-event partial outcomes
-///   are the receiver's concern, observable on the receiver's audit panel)
-/// - [IngestDecodeFailure] / [IngestIdentityMismatch] / [IngestChainBroken]
-///   → [SendPermanent] (won't fix on retry)
-/// - [IngestDataFormatIncompatible] / [IngestEntryTypeVersionAhead] /
-///   [IngestEntryTypeVersionUnpromotable] → [SendPermanent] (the receiver
-///   reads no other data-format major, an entry-type major above its
-///   registered one needs a registry upgrade, and a lower version its
-///   promoter steps do not lead from needs a registered step; a retry
-///   cannot succeed until an operator changes a build)
-/// - [IngestReservedEventRefused] → [SendPermanent] (a reserved system event
-///   the library does not append, or a destination audit naming the
-///   receiver's own database that it does not hold, is refused again on
-///   every retry; the destination wedges with a recorded cause)
+/// A native delivery (`esd/batch@3`) goes to the hub's
+/// [EventStore.receiverEndpoint], whose acknowledgement or refusal body is
+/// mapped to a [SendResult] by [decodeReceiverAnswer], as a transport
+/// carrying the receiver's answer does. The demo is one process and trusts
+/// its own panes, so the bridge authenticates the caller for the sender the
+/// delivery's channel names; a deployment's authentication decides that
+/// set from the caller's credential instead.
+///
+/// - a payload in any other wire format → [SendPermanent] (the receiver
+///   admits events only in native deliveries);
+/// - [IngestDecodeFailure] (bytes from which no channel can be read) and
+///   [DeliveryAuthenticationRefused] → [SendPermanent] (won't fix on
+///   retry);
 /// - any other thrown exception → [SendTransient] (treat unknowns as
-///   recoverable so drain retries on the next tick)
+///   recoverable so drain retries on the next tick).
 class DownstreamBridge {
   const DownstreamBridge(this._target);
   final EventStore _target;
 
   Future<SendResult> deliver(WirePayload payload) async {
+    if (payload.contentType != DeliveryEnvelope.wireFormat) {
+      return SendPermanent(
+        error:
+            'unsupported wire format "${payload.contentType}"; the hub '
+            'admits native deliveries (${DeliveryEnvelope.wireFormat}) only',
+      );
+    }
     try {
-      await _target.ingestBatch(payload.bytes, wireFormat: payload.contentType);
-      return const SendOk();
+      final sender = DeliveryEnvelope.decode(
+        payload.bytes,
+      ).channel.senderDatabaseId;
+      final answer = await _target.receiverEndpoint.accept(
+        payload.bytes,
+        senderDatabaseIds: <String>{sender},
+      );
+      return decodeReceiverAnswer(answer.encode());
     } on IngestDecodeFailure catch (e) {
       return SendPermanent(error: e.toString());
-    } on IngestIdentityMismatch catch (e) {
-      return SendPermanent(error: e.toString());
-    } on IngestChainBroken catch (e) {
-      return SendPermanent(error: e.toString());
-    } on IngestDataFormatIncompatible catch (e) {
-      return SendPermanent(error: e.toString());
-    } on IngestEntryTypeVersionAhead catch (e) {
-      return SendPermanent(error: e.toString());
-    } on IngestEntryTypeVersionUnpromotable catch (e) {
-      return SendPermanent(error: e.toString());
-    } on IngestReservedEventRefused catch (e) {
+    } on DeliveryAuthenticationRefused catch (e) {
       return SendPermanent(error: e.toString());
     } catch (e) {
       return SendTransient(error: e.toString());

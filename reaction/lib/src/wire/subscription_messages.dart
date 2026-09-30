@@ -96,7 +96,13 @@ class SubscriptionDeniedMsg extends ServerMessage {
 
 enum WireErrorCode {
   internalError,
-  protocolError;
+  protocolError,
+  // Implements: EVS-PRD-cross-process-event-transport/K
+  // the wire code a subscription refusal carries when computing its
+  //   scoped aggregate set reads a still-converging view; the client
+  //   delivers a typed, transient condition naming the view rather
+  //   than internal_error or a silently narrowed subscription.
+  viewConverging;
 
   String toWire() {
     switch (this) {
@@ -104,6 +110,8 @@ enum WireErrorCode {
         return 'internal_error';
       case WireErrorCode.protocolError:
         return 'protocol_error';
+      case WireErrorCode.viewConverging:
+        return 'view_converging';
     }
   }
 
@@ -113,6 +121,8 @@ enum WireErrorCode {
         return WireErrorCode.internalError;
       case 'protocol_error':
         return WireErrorCode.protocolError;
+      case 'view_converging':
+        return WireErrorCode.viewConverging;
       default:
         throw FormatException('unknown WireErrorCode: $s');
     }
@@ -120,9 +130,21 @@ enum WireErrorCode {
 }
 
 class ErrorMsg extends ServerMessage {
-  const ErrorMsg({required this.code, required this.message});
+  const ErrorMsg({
+    required this.code,
+    required this.message,
+    this.subscriptionId,
+  });
   final WireErrorCode code;
   final String message;
+
+  // Implements: EVS-PRD-cross-process-event-transport/K
+  // names the subscription a view_converging refusal from
+  //   _handleSubscribe refuses, so the client can route it to that
+  //   subscription's stream and deliver the typed condition to its
+  //   caller instead of dropping it as unaddressed. `null` for a
+  //   connection-scoped error (e.g. malformed frames).
+  final String? subscriptionId;
 }
 
 enum StaleDataReason {
@@ -225,7 +247,12 @@ class SubscriptionMessages {
         'reason': m.reason.toWire(),
       };
     } else if (m is ErrorMsg) {
-      return {'type': 'error', 'code': m.code.toWire(), 'message': m.message};
+      return {
+        'type': 'error',
+        'code': m.code.toWire(),
+        'message': m.message,
+        if (m.subscriptionId != null) 'subscriptionId': m.subscriptionId,
+      };
     } else if (m is StaleDataMsg) {
       return {
         'type': 'stale_data',
@@ -252,6 +279,7 @@ class SubscriptionMessages {
         return ErrorMsg(
           code: WireErrorCode.fromWire(requireString(json, 'code')),
           message: requireString(json, 'message'),
+          subscriptionId: json['subscriptionId'] as String?,
         );
       case 'stale_data':
         final reason = json['reason'];

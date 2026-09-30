@@ -10,7 +10,6 @@ library;
 import 'dart:async';
 
 import 'package:event_sourcing/event_sourcing.dart';
-import 'package:event_sourcing/src/event_store.dart' show PublishCollector;
 import 'package:event_sourcing/src/storage/web_locks.dart'
     show browserLockCounts, heldBrowserLocks;
 import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
@@ -94,14 +93,16 @@ Future<EventStore> _openTab(
   }
   try {
     return await EventStore.open(
-      storage: backend,
+      storage: ApplicationSuppliedStorage(
+        backend,
+        SembastSecurityContextStore(backend: backend),
+      ),
       entryTypes: registry,
       source: const Source(
         hopId: 'web-hop',
         identifier: 'web-install',
         softwareVersion: 'web-test',
       ),
-      securityContexts: SembastSecurityContextStore(backend: backend),
       projections: projections,
       promoters: promoters,
     );
@@ -110,26 +111,6 @@ Future<EventStore> _openTab(
     rethrow;
   }
 }
-
-Future<void> _appendNote(EventStore store, String aggregateId) =>
-    store.runTransaction(
-      (Transaction txn, PublishCollector collector) => store.appendInTxn(
-        txn,
-        entryType: _kX,
-        aggregateId: aggregateId,
-        aggregateType: 'note',
-        eventType: 'finalized',
-        data: <String, Object?>{'title': aggregateId},
-        initiator: const UserInitiator('web-user'),
-        flowToken: null,
-        metadata: null,
-        security: null,
-        checkpointReason: null,
-        changeReason: null,
-        dedupeByContent: false,
-        collector: collector,
-      ),
-    );
 
 String _freshName() => 'guard-${DateTime.now().microsecondsSinceEpoch}.db';
 
@@ -317,10 +298,10 @@ void main() {
       'compiled build is refused with the database unchanged', () async {
     final name = _freshName();
     await runWithDeliveryTestHooks(
-      const DeliveryTestHooks(
+      DeliveryTestHooks(
         buildDeclaration: (
           version: '9.0.0',
-          dataFormat: DataFormatVersion(3, 0),
+          dataFormat: DataFormatVersion(LibVersion.dataFormat.major + 1, 0),
         ),
       ),
       () async => (await _openTab(name)).close(),
@@ -351,78 +332,4 @@ void main() {
       expect(await heldBrowserLocks(name), isEmpty);
     },
   );
-
-  // Verifies: EVS-DEV-event-store-open/E
-  // Verifies: EVS-DEV-version-compatibility/E
-  test('a newer-minor tab promotes the view while another tab appends, and '
-      'every row is promoted or the target is left lowered', () async {
-    final name = _freshName();
-    final serving = await _openTab(name, withView: true);
-    for (var i = 0; i < 100; i++) {
-      await _appendNote(serving, 'agg-$i');
-    }
-    var stop = false;
-    var appended = 0;
-    Object? loopError;
-    final loop = () async {
-      try {
-        while (!stop) {
-          await _appendNote(serving, 'late-$appended');
-          appended++;
-        }
-      } on Object catch (e) {
-        loopError = e;
-      }
-    }();
-    while (appended < 3) {
-      await Future<void>.delayed(const Duration(milliseconds: 5));
-    }
-    var bootRuns = 0;
-    final newer = await runWithDeliveryTestHooks(
-      DeliveryTestHooks(onBootBodyRun: () => bootRuns++),
-      () => _openTab(name, x: const EntryTypeVersion(1, 1), withView: true),
-    );
-    // The other tab's writes wait for the boot. The first run may start
-    // from this tab's copy of the database from before those writes, and
-    // then re-runs once on fresh data.
-    expect(bootRuns, lessThanOrEqualTo(2));
-    final atBoot = appended;
-    while (appended < atBoot + 3) {
-      await Future<void>.delayed(const Duration(milliseconds: 5));
-    }
-    stop = true;
-    await loop;
-    expect(
-      loopError,
-      isNull,
-      reason: 'every append of the serving tab commits',
-    );
-    await serving.close();
-    await newer.close();
-
-    final observer = SembastBackend(database: await _openDatabase(name));
-    final rows = await observer.findViewRows(_kView);
-    final target = await observer.transaction(
-      (txn) => observer.readViewTargetVersionInTxn(txn, _kView, _kX),
-    );
-    await observer.close();
-    expect(
-      rows.where((r) => (r['aggregateId']! as String).startsWith('agg-')),
-      hasLength(100),
-    );
-    expect(
-      rows
-          .where((r) => (r['aggregateId']! as String).startsWith('agg-'))
-          .every((r) => r['b'] == 0),
-      isTrue,
-      reason: 'the boot promoted every row it found',
-    );
-    expect(
-      target == const EntryTypeVersion(1, 0) || rows.every((r) => r['b'] == 0),
-      isTrue,
-      reason:
-          'a row folded under 1.0 after the boot left the target lowered '
-          '(it is $target)',
-    );
-  });
 }

@@ -1,24 +1,22 @@
-// Ingest refuses, before any log write, an event whose data-format major
-// differs from the receiver's or whose entry-type major is above the
-// registered major; the data-format check runs first. A batch mixing a
+// The receiver refuses, `rejected` and before any log write, a delivery
+// carrying an event whose data-format major differs from the receiver's or
+// whose entry-type major is above the registered major, naming the refusal
+// and the event; the data-format check runs first. A batch mixing a
 // compatible event with a refused one is covered, on both backends, by
 // test_support/version_compatibility_conformance.dart.
-import 'dart:typed_data';
-
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 import 'package:uuid/uuid.dart';
 
+import '../test_support/deliveries.dart';
+import '../test_support/record_fixtures.dart';
+
 const _uuid = Uuid();
 
-/// Build an `esd/batch@2` envelope manually with a one-event payload, with
-/// caller-controlled `entry_type_version` / `lib_format_version` on the
-/// embedded event. Mirrors the shape produced by
-/// `event_sourcing/example/lib/synthetic_ingest.dart`'s
-/// `SyntheticBatchBuilder.buildSingleEventBatch`, but lives here so the
-/// ingest-validation tests stay self-contained.
-Uint8List _envelope({
+/// A peer's event record with caller-controlled `entry_type_version` /
+/// `lib_format_version`.
+Map<String, Object?> _record({
   required String entryType,
   required EntryTypeVersion entryTypeVersion,
   required DataFormatVersion libFormatVersion,
@@ -32,6 +30,8 @@ Uint8List _envelope({
     'received_at': now.toIso8601String(),
     'identifier': senderIdentifier,
     'software_version': senderSoftwareVersion,
+    'database_id': kPeerDatabaseId,
+    'library_version': kPeerLibraryVersion,
   };
   final eventId = _uuid.v4();
   final eventMap = <String, Object?>{
@@ -58,18 +58,10 @@ Uint8List _envelope({
     'flow_token': null,
     'client_timestamp': now.toIso8601String(),
     'previous_event_hash': null,
+    'causal': kRootVersionCausalJson,
   };
   eventMap['event_hash'] = canonicalEventHash(eventMap);
-  final envelope = BatchEnvelope(
-    batchFormatVersion: BatchEnvelope.currentBatchFormatVersion,
-    batchId: 'test-ingest-${now.microsecondsSinceEpoch}',
-    senderHop: senderHop,
-    senderIdentifier: senderIdentifier,
-    senderSoftwareVersion: senderSoftwareVersion,
-    sentAt: now,
-    events: <Map<String, Object?>>[eventMap],
-  );
-  return envelope.encode();
+  return eventMap;
 }
 
 Future<EventStoreBundle> _bootstrapWithRegistry({
@@ -80,7 +72,10 @@ Future<EventStoreBundle> _bootstrapWithRegistry({
   );
   final backend = SembastBackend(database: db);
   return bootstrapEventStore(
-    backend: backend,
+    storage: ApplicationSuppliedStorage(
+      backend,
+      SembastSecurityContextStore(backend: backend),
+    ),
     source: const Source(
       hopId: 'control-server',
       identifier: 'demo-control',
@@ -100,48 +95,61 @@ Future<EventStoreBundle> _bootstrapWithRegistry({
 void main() {
   group('data-format major differs', () {
     // Verifies: EVS-DEV-version-compatibility/D
-    test('throws IngestDataFormatIncompatible and writes nothing', () async {
-      final ds = await _bootstrapWithRegistry(
-        registeredVersion: const EntryTypeVersion(1, 0),
-      );
-      final backend = ds.eventStore.backend;
-      final eventsBefore = (await backend.findAllEvents()).length;
-      final counterBefore = await backend.readSequenceCounter();
-      final bytes = _envelope(
-        entryType: 'demo_note',
-        entryTypeVersion: const EntryTypeVersion(1, 0),
-        libFormatVersion: const DataFormatVersion(3, 0),
-      );
-      await expectLater(
-        ds.eventStore.ingestBatch(bytes, wireFormat: BatchEnvelope.wireFormat),
-        throwsA(isA<IngestDataFormatIncompatible>()),
-      );
-      expect((await backend.findAllEvents()).length, eventsBefore);
-      expect(await backend.readSequenceCounter(), counterBefore);
-    });
+    test(
+      'is refused rejected naming the data format, and writes nothing',
+      () async {
+        final ds = await _bootstrapWithRegistry(
+          registeredVersion: const EntryTypeVersion(1, 0),
+        );
+        final reader = ds.eventStore.reader;
+        final eventsBefore = (await reader.findAllEvents()).length;
+        final counterBefore = await reader.readSequenceCounter();
+        final record = _record(
+          entryType: 'demo_note',
+          entryTypeVersion: const EntryTypeVersion(1, 0),
+          libFormatVersion: DataFormatVersion(
+            LibVersion.dataFormat.major + 1,
+            0,
+          ),
+        );
+        final answer = (await deliverTo(ds.eventStore, [record])).response;
+        expect(answer, isA<ReceiverRefusal>());
+        final refusal = answer as ReceiverRefusal;
+        expect(refusal.refusal, RefusalKind.rejected);
+        expect(refusal.reason, IngestDataFormatIncompatible.refusalReason);
+        expect(refusal.refusedEventId, record['event_id']);
+        expect((await reader.findAllEvents()).length, eventsBefore);
+        expect(await reader.readSequenceCounter(), counterBefore);
+      },
+    );
   });
 
   group('entry-type major ahead', () {
     // Verifies: EVS-DEV-version-compatibility/D
-    test('throws IngestEntryTypeVersionAhead and writes nothing', () async {
-      final ds = await _bootstrapWithRegistry(
-        registeredVersion: const EntryTypeVersion(2, 0),
-      );
-      final backend = ds.eventStore.backend;
-      final eventsBefore = (await backend.findAllEvents()).length;
-      final counterBefore = await backend.readSequenceCounter();
-      final bytes = _envelope(
-        entryType: 'demo_note',
-        entryTypeVersion: const EntryTypeVersion(5, 0),
-        libFormatVersion: const DataFormatVersion(2, 0),
-      );
-      await expectLater(
-        ds.eventStore.ingestBatch(bytes, wireFormat: BatchEnvelope.wireFormat),
-        throwsA(isA<IngestEntryTypeVersionAhead>()),
-      );
-      expect((await backend.findAllEvents()).length, eventsBefore);
-      expect(await backend.readSequenceCounter(), counterBefore);
-    });
+    test(
+      'is refused rejected naming the entry-type version, and writes nothing',
+      () async {
+        final ds = await _bootstrapWithRegistry(
+          registeredVersion: const EntryTypeVersion(2, 0),
+        );
+        final reader = ds.eventStore.reader;
+        final eventsBefore = (await reader.findAllEvents()).length;
+        final counterBefore = await reader.readSequenceCounter();
+        final record = _record(
+          entryType: 'demo_note',
+          entryTypeVersion: const EntryTypeVersion(5, 0),
+          libFormatVersion: LibVersion.dataFormat,
+        );
+        final answer = (await deliverTo(ds.eventStore, [record])).response;
+        expect(answer, isA<ReceiverRefusal>());
+        final refusal = answer as ReceiverRefusal;
+        expect(refusal.refusal, RefusalKind.rejected);
+        expect(refusal.reason, IngestEntryTypeVersionAhead.refusalReason);
+        expect(refusal.refusedEventId, record['event_id']);
+        expect((await reader.findAllEvents()).length, eventsBefore);
+        expect(await reader.readSequenceCounter(), counterBefore);
+      },
+    );
   });
 
   group('validation order', () {
@@ -150,15 +158,18 @@ void main() {
       final ds = await _bootstrapWithRegistry(
         registeredVersion: const EntryTypeVersion(2, 0),
       );
-      final bytes = _envelope(
+      final record = _record(
         entryType: 'demo_note',
         entryTypeVersion: const EntryTypeVersion(5, 0), // also too high
-        libFormatVersion: const DataFormatVersion(3, 0), // also refused
+        // also refused
+        libFormatVersion: DataFormatVersion(LibVersion.dataFormat.major + 1, 0),
       );
-      await expectLater(
-        ds.eventStore.ingestBatch(bytes, wireFormat: BatchEnvelope.wireFormat),
-        throwsA(isA<IngestDataFormatIncompatible>()),
-      );
+      final answer = (await deliverTo(ds.eventStore, [record])).response;
+      expect(answer, isA<ReceiverRefusal>());
+      final refusal = answer as ReceiverRefusal;
+      expect(refusal.refusal, RefusalKind.rejected);
+      expect(refusal.reason, IngestDataFormatIncompatible.refusalReason);
+      expect(refusal.refusedEventId, record['event_id']);
     });
   });
 
@@ -168,16 +179,16 @@ void main() {
       final ds = await _bootstrapWithRegistry(
         registeredVersion: const EntryTypeVersion(5, 0),
       );
-      final bytes = _envelope(
+      final record = _record(
         entryType: 'demo_note',
         entryTypeVersion: const EntryTypeVersion(3, 0),
-        libFormatVersion: const DataFormatVersion(2, 0),
+        libFormatVersion: LibVersion.dataFormat,
       );
-      final result = await ds.eventStore.ingestBatch(
-        bytes,
-        wireFormat: BatchEnvelope.wireFormat,
-      );
-      expect(result.events.length, 1);
+      final delivery = await deliverTo(ds.eventStore, [record]);
+      expect(delivery.accepted, isTrue);
+      expect(await recordOutcomes(ds.eventStore, delivery), <IngestOutcome>[
+        IngestOutcome.ingested,
+      ]);
     });
   });
 }

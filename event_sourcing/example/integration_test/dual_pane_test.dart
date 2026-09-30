@@ -13,20 +13,16 @@ import 'package:event_sourcing_demo/native_demo_destination.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
-// Hide sembast's Finder to avoid ambiguity with flutter_test's Finder.
-import 'package:sembast/sembast_memory.dart' hide Finder;
 
 class _PaneHandle {
   _PaneHandle({
     required this.datastore,
-    required this.backend,
     required this.appState,
     required this.policyNotifier,
     required this.source,
   });
 
   final EventStoreBundle datastore;
-  final SembastBackend backend;
   final AppState appState;
   final ValueNotifier<SyncPolicy> policyNotifier;
   final Source source;
@@ -42,8 +38,6 @@ Future<_PaneHandle> _mkPane({
   required Source source,
   DownstreamBridge? bridge,
 }) async {
-  final db = await newDatabaseFactoryMemory().openDatabase(dbName);
-  final backend = SembastBackend(database: db);
   final policyNotifier = ValueNotifier<SyncPolicy>(demoDefaultSyncPolicy);
 
   final primary = DemoDestination(
@@ -87,7 +81,7 @@ Future<_PaneHandle> _mkPane({
   );
 
   final datastore = await bootstrapEventStore(
-    backend: backend,
+    storage: SembastStorage.memory(dbName),
     source: source,
     entryTypes: allDemoEntryTypes,
     destinations: <Destination>[primary, secondary, nativeUser, nativeAudit],
@@ -122,7 +116,6 @@ Future<_PaneHandle> _mkPane({
 
   return _PaneHandle(
     datastore: datastore,
-    backend: backend,
     appState: appState,
     policyNotifier: policyNotifier,
     source: source,
@@ -154,7 +147,6 @@ Future<({_PaneHandle mobile, _PaneHandle hub, Widget app})> _setupDualApp({
   final app = DualDemoApp(
     top: DemoPaneConfig(
       datastore: mobile.datastore,
-      backend: mobile.backend,
       appState: mobile.appState,
       dbPath: 'mobile-$testId.db',
       paneLabel: 'MOBILE',
@@ -162,7 +154,6 @@ Future<({_PaneHandle mobile, _PaneHandle hub, Widget app})> _setupDualApp({
     ),
     bottom: DemoPaneConfig(
       datastore: hub.datastore,
-      backend: hub.backend,
       appState: hub.appState,
       dbPath: 'hub-$testId.db',
       paneLabel: 'HUB',
@@ -322,11 +313,11 @@ void main() {
     await tester.pumpAndSettle();
 
     // The press was recorded on mobile and is queued for NativeUser, unsent.
-    final greenEvents = await setup.mobile.backend.findAllEvents(
-      entryType: 'green_button_pressed',
-    );
+    final greenEvents = await setup.mobile.datastore.eventStore.reader
+        .findAllEvents(entryType: 'green_button_pressed');
     expect(greenEvents, hasLength(1));
-    final nativeHead = await setup.mobile.backend.readFifoHead('NativeUser');
+    final nativeHead = await setup.mobile.datastore.eventStore.reader
+        .readFifoHead('NativeUser');
     expect(nativeHead, isNotNull);
     expect(nativeHead!.eventIds, contains(greenEvents.single.eventId));
     expect(nativeHead.sentAt, isNull);

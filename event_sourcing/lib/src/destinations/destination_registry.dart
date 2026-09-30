@@ -18,7 +18,7 @@
 // every destination audit the registry
 //   appends carries the event type of its kind.
 // Implements: EVS-PRD-destinations/P+Q+R
-// wedgeHeadInTxn marks the head wedged,
+// _wedgeHeadInTxn marks the head wedged,
 //   appends the wedge event recording the cause and writes the wedge record in
 //   the caller's transaction; the event carries structured fields only, never
 //   text from an attempt's outcome.
@@ -39,26 +39,11 @@
 //   an unknown destination, while one is open, or while the head is wedged,
 //   and a cancellation with none open; deletion closes the open request and
 //   names it; the halt operations act on persisted state from any registry.
-import 'dart:async';
 
-import 'package:event_sourcing/src/destinations/destination.dart';
-import 'package:event_sourcing/src/destinations/destination_schedule.dart';
-import 'package:event_sourcing/src/destinations/halt_purpose.dart';
-import 'package:event_sourcing/src/destinations/wedge_cause.dart';
-import 'package:event_sourcing/src/event_store.dart';
-import 'package:event_sourcing/src/logging.dart';
-import 'package:event_sourcing/src/security/system_entry_types.dart';
-import 'package:event_sourcing/src/storage/drain_records.dart';
-import 'package:event_sourcing/src/storage/final_status.dart';
-import 'package:event_sourcing/src/storage/initiator.dart';
-import 'package:event_sourcing/src/storage/queue_records.dart';
-import 'package:event_sourcing/src/storage/storage_backend.dart';
-import 'package:event_sourcing/src/storage/stored_event.dart';
-import 'package:event_sourcing/src/storage/transaction.dart';
-import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
-import 'package:meta/meta.dart' show internal;
+part of '../event_store.dart';
 
 /// Service name of the initiator of the wedge events the drainer appends.
+
 const String _drainService = 'event_sourcing.drain';
 
 /// Initiator of the wedge events the drainer appends for a permanent refusal
@@ -151,7 +136,7 @@ class DestinationRegistry {
 
   /// Backend holding the destinations' schedules and queues: the event
   /// store's backend.
-  StorageBackend get backend => _eventStore.backend;
+  StorageBackend get _backend => _eventStore._backend;
 
   /// Event store used to stamp config-change audit events inside the
   /// same transaction as the underlying mutation. The store's own
@@ -188,7 +173,7 @@ class DestinationRegistry {
       case _Done<T>(:final value):
         onCommitted?.call(value);
         // The drainer acts on what the operation committed at its next pass.
-        _eventStore.wakeDeliveryCycle();
+        _eventStore._wakeDeliveryCycle();
         return value;
       case _Refused<T>(:final error):
         throw error;
@@ -223,7 +208,7 @@ class DestinationRegistry {
     required String check,
     required _Outcome<T> outcome,
   }) async {
-    await backend.writeRegistryCheckTxn(
+    await _backend.writeRegistryCheckTxn(
       txn,
       RegistryCheck(
         op: op,
@@ -269,6 +254,14 @@ class DestinationRegistry {
   /// that registration (the destination was deleted, and perhaps registered
   /// again, elsewhere), this registry's entry is stale and is replaced.
   ///
+  /// For a destination that serializes natively, a new registration also
+  /// writes its sender channel record ([SenderChannelRecord.initial]); a
+  /// registration the database already has keeps the record it finds.
+  ///
+  /// Throws `ArgumentError` before anything is written, the registry check
+  /// record included, when [destination] serializes natively and implements
+  /// no pull ([Destination.channelPull] is null).
+  ///
   /// A destination deleted and registered again under the same id starts a
   /// new registration. Its refill may send again events that the prior
   /// registration's `sent` items already delivered: delivery is
@@ -283,6 +276,17 @@ class DestinationRegistry {
     final wireFormat = destination.wireFormat;
     final allowHardDelete = destination.allowHardDelete;
     final serializesNatively = destination.serializesNatively;
+    // Implements: EVS-DEV-delivery-channel/B
+    // a destination that serializes natively and implements no pull is
+    //   refused before anything is written.
+    if (serializesNatively && destination.channelPull == null) {
+      throw ArgumentError.value(
+        id,
+        'destination',
+        'destination $id serializes natively and implements no pull; a '
+            'delivery channel needs its pull',
+      );
+    }
     final filterEntryTypes = destination.filter.entryTypes?.toList();
     final filterEventTypes = destination.filter.eventTypes?.toList();
     // Reserved before the first await, so two registrations of one id in
@@ -310,7 +314,7 @@ class DestinationRegistry {
               ),
             );
           }
-          final persisted = await backend.readScheduleTxn(txn, id);
+          final persisted = await _backend.readScheduleTxn(txn, id);
           final local = _destinations[id];
           if (!reserved ||
               (local != null &&
@@ -350,7 +354,19 @@ class DestinationRegistry {
             initiator: initiator,
           );
           final registration = persisted?.registrationId ?? event.eventId;
-          await backend.writeScheduleTxn(
+          // Implements: EVS-DEV-delivery-channel/D
+          // a new registration of a destination that serializes natively
+          //   writes its sender channel record, generation 1, number 0, a
+          //   null hash and no receiver identity, in the registration's
+          //   transaction.
+          if (serializesNatively && persisted == null) {
+            await _backend.writeSenderChannelRecordTxn(
+              txn,
+              id,
+              SenderChannelRecord.initial,
+            );
+          }
+          await _backend.writeScheduleTxn(
             txn,
             id,
             DestinationSchedule(
@@ -391,7 +407,7 @@ class DestinationRegistry {
   /// Read the persisted `DestinationSchedule` for [id]. Throws
   /// `ArgumentError` when the database holds no schedule for [id].
   Future<DestinationSchedule> scheduleOf(String id) async {
-    final persisted = await backend.readSchedule(id);
+    final persisted = await _backend.readSchedule(id);
     if (persisted != null) return persisted;
     throw ArgumentError.value(
       id,
@@ -433,7 +449,7 @@ class DestinationRegistry {
     required Initiator initiator,
   }) => _run<void>('setStartDate', (txn, collector) async {
     const op = 'setStartDate';
-    final current = await backend.readScheduleTxn(txn, id);
+    final current = await _backend.readScheduleTxn(txn, id);
     if (current == null) return _refuseUnknown<void>(txn, op, id);
     final priorStartDate = current.startDate;
     if (priorStartDate != null) {
@@ -461,7 +477,7 @@ class DestinationRegistry {
           ),
         );
       }
-      final head = await backend.readFifoHeadTxn(txn, id);
+      final head = await _backend.readFifoHeadTxn(txn, id);
       if (head?.finalStatus == FinalStatus.wedged) {
         return _decideWithoutChange<void>(
           txn,
@@ -478,7 +494,7 @@ class DestinationRegistry {
         );
       }
     }
-    await backend.writeScheduleTxn(
+    await _backend.writeScheduleTxn(
       txn,
       id,
       DestinationSchedule(
@@ -488,7 +504,7 @@ class DestinationRegistry {
         allowHardDelete: current.allowHardDelete,
       ),
     );
-    final existing = await backend.readReplayRequestTxn(txn, id);
+    final existing = await _backend.readReplayRequestTxn(txn, id);
     final request = priorStartDate == null
         ? ReplayRequest(firstActivation: true, gapUpper: existing?.gapUpper)
         : ReplayRequest(
@@ -497,7 +513,7 @@ class DestinationRegistry {
                 existing?.gapUpper ??
                 ((existing?.firstActivation ?? false) ? null : priorStartDate),
           );
-    await backend.writeReplayRequestTxn(txn, id, request);
+    await _backend.writeReplayRequestTxn(txn, id, request);
     await _emitDestinationAuditInTxn(
       txn,
       collector,
@@ -531,7 +547,7 @@ class DestinationRegistry {
     DateTime endDate, {
     required Initiator initiator,
   }) => _run<SetEndDateResult>('setEndDate', (txn, collector) async {
-    final current = await backend.readScheduleTxn(txn, id);
+    final current = await _backend.readScheduleTxn(txn, id);
     if (current == null) {
       return _refuseUnknown<SetEndDateResult>(txn, 'setEndDate', id);
     }
@@ -562,7 +578,7 @@ class DestinationRegistry {
       result = SetEndDateResult.applied;
     }
 
-    await backend.writeScheduleTxn(txn, id, updated);
+    await _backend.writeScheduleTxn(txn, id, updated);
     await _emitDestinationAuditInTxn(
       txn,
       collector,
@@ -602,7 +618,8 @@ class DestinationRegistry {
   ///
   /// The deletion tombstones a wedged head, deletes the pending items behind
   /// it, removes the destination's schedule, fill position, replay request,
-  /// wedge record, halt request and send fence, and keeps every item that
+  /// wedge record, halt request, send fence, refill guard and sender channel
+  /// record, and keeps every item that
   /// was delivered, wedged or recovered (the delivery record) and the queue's
   /// sequence counter. A `system.destination_deleted` audit event records
   /// the tombstoned item, the number of pending items deleted, the opt-in it
@@ -621,7 +638,7 @@ class DestinationRegistry {
   }) async {
     const op = 'deleteDestination';
     await _run<void>(op, (txn, collector) async {
-      final schedule = await backend.readScheduleTxn(txn, id);
+      final schedule = await _backend.readScheduleTxn(txn, id);
       if (schedule == null) return _refuseUnknown<void>(txn, op, id);
       if (!schedule.allowHardDelete) {
         return _decideWithoutChange<void>(
@@ -638,8 +655,8 @@ class DestinationRegistry {
           ),
         );
       }
-      final head = await backend.readFifoHeadTxn(txn, id);
-      final halt = await backend.readHaltRequestTxn(txn, id);
+      final head = await _backend.readFifoHeadTxn(txn, id);
+      final halt = await _backend.readHaltRequestTxn(txn, id);
       if (head != null && head.finalStatus == null) {
         return _decideWithoutChange<void>(
           txn,
@@ -667,13 +684,17 @@ class DestinationRegistry {
           ),
         );
       }
-      final retirement = await backend.retireQueueTxn(txn, id);
-      await backend.deleteScheduleTxn(txn, id);
-      await backend.clearReplayRequestTxn(txn, id);
-      await backend.clearWedgeRecordTxn(txn, id);
-      await backend.clearHaltRequestTxn(txn, id);
-      await backend.clearSendFenceTxn(txn, id);
-      await backend.clearRefillGuardTxn(txn, id);
+      final retirement = await _backend.retireQueueTxn(txn, id);
+      await _backend.deleteScheduleTxn(txn, id);
+      await _backend.clearReplayRequestTxn(txn, id);
+      await _backend.clearWedgeRecordTxn(txn, id);
+      // Implements: EVS-DEV-destination-drain/A
+      // deletion removes the destination's transform failure record.
+      await _backend.clearTransformFailureRecordTxn(txn, id);
+      await _backend.clearHaltRequestTxn(txn, id);
+      await _backend.clearSendFenceTxn(txn, id);
+      await _backend.clearRefillGuardTxn(txn, id);
+      await _backend.clearSenderChannelRecordTxn(txn, id);
       // Implements: EVS-PRD-destinations/T
       // a deletion appends a deletion event naming the wedged item it retires,
       //   if any.
@@ -751,8 +772,9 @@ class DestinationRegistry {
   /// configuration again), restart the drainer with a changed
   /// `configurationVersion`, so its fill proceeds and removes the guard, or
   /// delete the destination. `DestinationRegistry.readDeliveryStatus` shows
-  /// the guard. A wedge with no halt purpose, or purpose
-  /// [HaltPurpose.pause], is recoverable at any time.
+  /// the guard. A wedge with no halt purpose, with purpose
+  /// [HaltPurpose.pause], or with a purpose this build does not know, is
+  /// recoverable at any time.
   ///
   /// The recovery event records the drain epoch, the configuration the
   /// lock holder declares for the destination and its fingerprint (null
@@ -778,11 +800,11 @@ class DestinationRegistry {
     collector,
   ) async {
     const op = 'tombstoneAndRefill';
-    final schedule = await backend.readScheduleTxn(txn, destinationId);
+    final schedule = await _backend.readScheduleTxn(txn, destinationId);
     if (schedule == null) {
       return _refuseUnknown<TombstoneAndRefillResult>(txn, op, destinationId);
     }
-    final head = await backend.readFifoHeadTxn(txn, destinationId);
+    final head = await _backend.readFifoHeadTxn(txn, destinationId);
     if (head == null || head.entryId != fifoRowId) {
       return _decideWithoutChange<TombstoneAndRefillResult>(
         txn,
@@ -800,7 +822,7 @@ class DestinationRegistry {
       );
     }
     if (head.finalStatus != FinalStatus.wedged) {
-      final halt = await backend.readHaltRequestTxn(txn, destinationId);
+      final halt = await _backend.readHaltRequestTxn(txn, destinationId);
       return _decideWithoutChange<TombstoneAndRefillResult>(
         txn,
         op: op,
@@ -829,10 +851,12 @@ class DestinationRegistry {
     // recovery of a reconfigure halt is refused while the drain-lock holder
     //   declares the configuration recorded when the halt was honoured, or
     //   has declared none since the lock changed hands; an accepted one
-    //   leaves a refill guard, recorded in the recovery event.
-    final wedge = await backend.readWedgeRecordTxn(txn, destinationId);
-    final epoch = await backend.readDrainEpochTxn(txn);
-    final stored = await backend.readDrainerDeclarationTxn(txn);
+    //   leaves a refill guard, recorded in the recovery event. A wedge whose
+    //   halt purpose is any other, one this build does not know included,
+    //   is recovered with no configuration check.
+    final wedge = await _backend.readWedgeRecordTxn(txn, destinationId);
+    final epoch = await _backend.readDrainEpochTxn(txn);
+    final stored = await _backend.readDrainerDeclarationTxn(txn);
     final holder = stored != null && stored.epoch == epoch ? stored : null;
     final holderFingerprint = holder?.fingerprints[destinationId];
     final holderConfiguration = holder?.configurations[destinationId];
@@ -885,14 +909,14 @@ class DestinationRegistry {
     }
     final targetFirstSeq = head.sequenceRange.firstSeq;
     final targetLastSeq = head.sequenceRange.lastSeq;
-    final cursorBefore = await backend.readFillCursorTxn(txn, destinationId);
-    await backend.setFinalStatusTxn(
+    final cursorBefore = await _backend.readFillCursorTxn(txn, destinationId);
+    await _backend.setFinalStatusTxn(
       txn,
       destinationId,
       fifoRowId,
       FinalStatus.tombstoned,
     );
-    final sweep = await backend.deleteNullRowsAfterSequenceInQueueTxn(
+    final sweep = await _backend.deleteNullRowsAfterSequenceInQueueTxn(
       txn,
       destinationId,
       head.sequenceInQueue,
@@ -902,8 +926,12 @@ class DestinationRegistry {
         ? swept
         : targetFirstSeq;
     final rewoundTo = lowest - 1;
-    await backend.writeFillCursorTxn(txn, destinationId, rewoundTo);
-    await backend.clearWedgeRecordTxn(txn, destinationId);
+    await _backend.writeFillCursorTxn(txn, destinationId, rewoundTo);
+    await _backend.clearWedgeRecordTxn(txn, destinationId);
+    // Implements: EVS-DEV-destination-drain/F
+    // recovery removes the destination's transform failure record along
+    //   with the wedge record.
+    await _backend.clearTransformFailureRecordTxn(txn, destinationId);
     // Implements: EVS-PRD-destinations/T
     // an operator recovery of a wedged queue appends a recovery event in the
     //   transaction that retires the wedged head.
@@ -927,7 +955,7 @@ class DestinationRegistry {
       initiator: initiator,
     );
     if (guardFingerprint != null) {
-      await backend.writeRefillGuardTxn(
+      await _backend.writeRefillGuardTxn(
         txn,
         destinationId,
         RefillGuard(
@@ -973,20 +1001,20 @@ class DestinationRegistry {
   //   request, wedge record, refill guard and unserved reason, and the
   //   current drainer's declaration, read from any process.
   Future<DeliveryStatus> readDeliveryStatus() =>
-      backend.transaction((txn) async {
-        final epoch = await backend.readDrainEpochTxn(txn);
-        final stored = await backend.readDrainerDeclarationTxn(txn);
+      _backend.transaction((txn) async {
+        final epoch = await _backend.readDrainEpochTxn(txn);
+        final stored = await _backend.readDrainerDeclarationTxn(txn);
         final drainer = stored != null && stored.epoch == epoch ? stored : null;
-        final heartbeat = await backend.readDrainHeartbeatTxn(txn);
-        final schedules = await backend.listSchedulesTxn(txn);
+        final heartbeat = await _backend.readDrainHeartbeatTxn(txn);
+        final schedules = await _backend.listSchedulesTxn(txn);
         final destinations = <String, DestinationDeliveryStatus>{};
         for (final entry in schedules.entries) {
           final id = entry.key;
           destinations[id] = DestinationDeliveryStatus(
             schedule: entry.value,
-            openHaltRequest: await backend.readHaltRequestTxn(txn, id),
-            wedge: await backend.readWedgeRecordTxn(txn, id),
-            refillGuard: await backend.readRefillGuardTxn(txn, id),
+            openHaltRequest: await _backend.readHaltRequestTxn(txn, id),
+            wedge: await _backend.readWedgeRecordTxn(txn, id),
+            refillGuard: await _backend.readRefillGuardTxn(txn, id),
             unserved: drainer?.unserved[id],
           );
         }
@@ -1015,8 +1043,9 @@ class DestinationRegistry {
   /// wedge consumes the open request, whatever its cause, and records it.
   ///
   /// Refused, with nothing written but the registry check record:
-  /// - `ArgumentError` when the database holds no schedule for
-  ///   [destinationId];
+  /// - `ArgumentError` when [purpose] is not one this build requests a halt
+  ///   with ([HaltPurpose.values]), or when the database holds no schedule
+  ///   for [destinationId];
   /// - `StateError` while a request is open for the destination, or while
   ///   its queue head is wedged (the halt is already in effect).
   ///
@@ -1035,9 +1064,28 @@ class DestinationRegistry {
     required HaltPurpose purpose,
   }) => _run<String>('requestHalt', (txn, collector) async {
     const op = 'requestHalt';
-    final schedule = await backend.readScheduleTxn(txn, destinationId);
+    // Implements: EVS-DEV-destination-drain/Q
+    // a halt request event records the purpose pause or reconfigure; a
+    //   purpose this build does not know is read, never requested.
+    if (!purpose.isKnown) {
+      return _decideWithoutChange<String>(
+        txn,
+        op: op,
+        destinationId: destinationId,
+        check: 'refused_unknown_purpose',
+        outcome: _Refused<String>(
+          ArgumentError.value(
+            purpose.wire,
+            'purpose',
+            'is not a halt purpose this library requests '
+                '(${HaltPurpose.values.map((p) => p.wire).join(', ')})',
+          ),
+        ),
+      );
+    }
+    final schedule = await _backend.readScheduleTxn(txn, destinationId);
     if (schedule == null) return _refuseUnknown<String>(txn, op, destinationId);
-    final open = await backend.readHaltRequestTxn(txn, destinationId);
+    final open = await _backend.readHaltRequestTxn(txn, destinationId);
     if (open != null) {
       return _decideWithoutChange<String>(
         txn,
@@ -1053,7 +1101,7 @@ class DestinationRegistry {
         ),
       );
     }
-    final head = await backend.readFifoHeadTxn(txn, destinationId);
+    final head = await _backend.readFifoHeadTxn(txn, destinationId);
     if (head?.finalStatus == FinalStatus.wedged) {
       return _decideWithoutChange<String>(
         txn,
@@ -1076,7 +1124,7 @@ class DestinationRegistry {
       data: <String, Object?>{'id': destinationId, 'purpose': purpose.wire},
       initiator: initiator,
     );
-    await backend.writeHaltRequestTxn(
+    await _backend.writeHaltRequestTxn(
       txn,
       destinationId,
       HaltRequest(
@@ -1110,9 +1158,9 @@ class DestinationRegistry {
     required Initiator initiator,
   }) => _run<void>('cancelHalt', (txn, collector) async {
     const op = 'cancelHalt';
-    final schedule = await backend.readScheduleTxn(txn, destinationId);
+    final schedule = await _backend.readScheduleTxn(txn, destinationId);
     if (schedule == null) return _refuseUnknown<void>(txn, op, destinationId);
-    final open = await backend.readHaltRequestTxn(txn, destinationId);
+    final open = await _backend.readHaltRequestTxn(txn, destinationId);
     if (open == null) {
       return _decideWithoutChange<void>(
         txn,
@@ -1127,7 +1175,7 @@ class DestinationRegistry {
         ),
       );
     }
-    await backend.clearHaltRequestTxn(txn, destinationId);
+    await _backend.clearHaltRequestTxn(txn, destinationId);
     await _emitDestinationAuditInTxn(
       txn,
       collector,
@@ -1156,40 +1204,42 @@ class DestinationRegistry {
   ///   the stored request, wedges nothing and returns
   ///   [HaltHonour.unverified]: the log is authoritative;
   /// - otherwise wedges the head with cause [WedgeCause.operatorHalt]
-  ///   through [wedgeHeadInTxn], which consumes the request, and returns
-  ///   [HaltHonour.honoured]. [maxAttempts] is the retry budget in effect,
-  ///   or null when the draining process does not register the destination.
-  ///   [drainerEpoch], [configuration] and [configurationFingerprint] are
-  ///   recorded as [wedgeHeadInTxn] records them.
-  @internal
-  Future<HaltHonour> honourHaltInTxn(
+  ///   through [_wedgeHeadInTxn], which consumes the request, and returns
+  ///   [HaltHonour.honoured]. [maxAttempts] and [maxRetryMs] are the retry
+  ///   budget in effect, or null when the draining process does not
+  ///   register the destination. [drainerEpoch], [configuration] and
+  ///   [configurationFingerprint] are recorded as [_wedgeHeadInTxn] records
+  ///   them.
+  Future<HaltHonour> _honourHaltInTxn(
     Transaction txn,
     PublishCollector collector, {
     required String destinationId,
     required String requestEventId,
     required int? maxAttempts,
+    required int? maxRetryMs,
     required int drainerEpoch,
     required Map<String, Object?>? configuration,
     required String? configurationFingerprint,
   }) async {
-    final request = await backend.readHaltRequestTxn(txn, destinationId);
+    final request = await _backend.readHaltRequestTxn(txn, destinationId);
     if (request == null || request.requestEventId != requestEventId) {
       return HaltHonour.changed;
     }
     final verified = await _verifiedHaltTxn(txn, destinationId, request);
     if (verified == null) {
-      await backend.clearHaltRequestTxn(txn, destinationId);
+      await _backend.clearHaltRequestTxn(txn, destinationId);
       return HaltHonour.unverified;
     }
-    final head = await backend.readFifoHeadTxn(txn, destinationId);
+    final head = await _backend.readFifoHeadTxn(txn, destinationId);
     if (head == null || head.finalStatus != null) return HaltHonour.changed;
-    await wedgeHeadInTxn(
+    await _wedgeHeadInTxn(
       txn,
       collector,
       destinationId: destinationId,
       rowId: head.entryId,
       cause: WedgeCause.operatorHalt,
       maxAttempts: maxAttempts,
+      maxRetryMs: maxRetryMs,
       drainerEpoch: drainerEpoch,
       configuration: configuration,
       configurationFingerprint: configurationFingerprint,
@@ -1199,14 +1249,18 @@ class DestinationRegistry {
 
   /// [request] with its request event, when the log holds a
   /// `system.destination_halt_requested` event with its identifier that
-  /// names [destinationId] and this registry's database and records a known
-  /// purpose; null otherwise.
+  /// names [destinationId] and this registry's database and records a
+  /// purpose; null otherwise. A purpose this build does not know is carried
+  /// verbatim, and the request is honoured as a halt.
   Future<_VerifiedHalt?> _verifiedHaltTxn(
     Transaction txn,
     String destinationId,
     HaltRequest request,
   ) async {
-    final event = await backend.findEventByIdInTxn(txn, request.requestEventId);
+    final event = await _backend.findEventByIdInTxn(
+      txn,
+      request.requestEventId,
+    );
     if (event == null ||
         event.entryType != kDestinationHaltRequestedEntryType ||
         event.data['id'] != destinationId ||
@@ -1215,11 +1269,7 @@ class DestinationRegistry {
     }
     final purpose = event.data['purpose'];
     if (purpose is! String) return null;
-    try {
-      return _VerifiedHalt(request, event, HaltPurpose.fromWire(purpose));
-    } on FormatException {
-      return null;
-    }
+    return _VerifiedHalt(request, event, HaltPurpose.fromWire(purpose));
   }
 
   /// Wedge [destinationId]'s pending queue head [rowId] inside [txn]: mark
@@ -1236,11 +1286,14 @@ class DestinationRegistry {
   /// record exists (a pending head means no wedge is open), or when the
   /// evidence does not support [cause]: a [WedgeCause.permanentRefusal]
   /// needs a last attempt that reported a permanent failure, a
-  /// [WedgeCause.retryBudgetExhausted] an attempt count at or above
-  /// [maxAttempts], and a [WedgeCause.operatorHalt] an open halt request
+  /// [WedgeCause.retryBudgetExhausted] at least one recorded attempt and,
+  /// where no time bound ([maxRetryMs]) is in effect to justify it, a
+  /// count at or above [maxAttempts], and a [WedgeCause.operatorHalt] an
+  /// open halt request
   /// whose request event the log holds for this destination and database,
   /// on a head whose last attempt did not report a permanent failure (that
-  /// head is wedged for the refusal). Throws [ArgumentError] when
+  /// head is wedged for the refusal), and a [WedgeCause.transformFailed]
+  /// an item marked `transformFailed`. Throws [ArgumentError] when
   /// [maxAttempts] is below one, or null for
   /// [WedgeCause.retryBudgetExhausted].
   ///
@@ -1254,11 +1307,16 @@ class DestinationRegistry {
   /// fields (`attempt_count`, `last_outcome`, `http_status`) are read from
   /// the item's attempts as they stand in [txn], the final attempt included
   /// when the caller recorded it earlier in [txn]; an operator halt records
-  /// them as null. `max_attempts` is [maxAttempts], the retry budget in
-  /// effect, null when the draining process does not register the
-  /// destination (no budget is in effect for it there). No text from an attempt's outcome
-  /// enters the event. The wedge event of an operator halt names the request
-  /// event as its initiator's triggering event.
+  /// them as null. A [WedgeCause.transformFailed] wedge records
+  /// `attempt_count` as the item's `transformFailures` (the item was never
+  /// sent) and `last_outcome`/`http_status` as null. `max_attempts` and
+  /// `max_retry_ms` are [maxAttempts] and
+  /// [maxRetryMs], the retry budget's attempt bound and time bound (in
+  /// milliseconds) in effect, each null when the draining process does not
+  /// register the destination (no budget is in effect for it there). No
+  /// text from an attempt's outcome enters the event. The wedge event of an
+  /// operator halt names the request event as its initiator's triggering
+  /// event.
   ///
   /// [drainerEpoch] is the drain epoch of the lock the drainer holds, and
   /// [configuration] and [configurationFingerprint] the configuration the
@@ -1267,15 +1325,15 @@ class DestinationRegistry {
   /// them as `drainer_epoch`, `configuration` and
   /// `configuration_fingerprint`, and the wedge record keeps the epoch and
   /// the fingerprint.
-  @internal
   Future<({StoredEvent wedgeEvent, String? discardedHaltRequestEventId})>
-  wedgeHeadInTxn(
+  _wedgeHeadInTxn(
     Transaction txn,
     PublishCollector collector, {
     required String destinationId,
     required String rowId,
     required WedgeCause cause,
     required int? maxAttempts,
+    required int? maxRetryMs,
     required int drainerEpoch,
     required Map<String, Object?>? configuration,
     required String? configurationFingerprint,
@@ -1295,7 +1353,7 @@ class DestinationRegistry {
         'the retry budget must be at least one attempt',
       );
     }
-    final head = await backend.readFifoHeadTxn(txn, destinationId);
+    final head = await _backend.readFifoHeadTxn(txn, destinationId);
     if (head == null || head.entryId != rowId) {
       throw StateError(
         'wedgeHeadInTxn($destinationId, $rowId): the item is not the queue '
@@ -1308,7 +1366,7 @@ class DestinationRegistry {
         '${head.finalStatus!.toJson()}, not pending.',
       );
     }
-    final open = await backend.readWedgeRecordTxn(txn, destinationId);
+    final open = await _backend.readWedgeRecordTxn(txn, destinationId);
     if (open != null) {
       throw StateError(
         'wedgeHeadInTxn($destinationId, $rowId): the head is pending but a '
@@ -1324,8 +1382,17 @@ class DestinationRegistry {
         'the last recorded attempt reported ${last?.outcome ?? 'nothing'}.',
       );
     }
+    // Defence in depth: with no recorded attempt the cause is always
+    // refused, whatever budget is in effect (the time bound is never
+    // reached with no recorded attempt; see budgetSpent). Otherwise, a
+    // caller may derive the cause from the time bound
+    // (EVS-DEV-destination-retry-budget/A), which this method cannot
+    // recompute without the retry curve, so an attempt count below
+    // maxAttempts is refused only when no time bound (maxRetryMs) is in
+    // effect to justify it.
     if (cause == WedgeCause.retryBudgetExhausted &&
-        attempts.length < maxAttempts!) {
+        (attempts.isEmpty ||
+            (attempts.length < maxAttempts! && maxRetryMs == null))) {
       throw StateError(
         'wedgeHeadInTxn($destinationId, $rowId): cause ${cause.wire} but '
         'the item records ${attempts.length} attempts, below the budget '
@@ -1339,7 +1406,13 @@ class DestinationRegistry {
         'is wedged for that refusal.',
       );
     }
-    final stored = await backend.readHaltRequestTxn(txn, destinationId);
+    if (cause == WedgeCause.transformFailed && !head.transformFailed) {
+      throw StateError(
+        'wedgeHeadInTxn($destinationId, $rowId): cause ${cause.wire} but '
+        'the item is not marked transform-failed.',
+      );
+    }
+    final stored = await _backend.readHaltRequestTxn(txn, destinationId);
     final halt = stored == null
         ? null
         : await _verifiedHaltTxn(txn, destinationId, stored);
@@ -1349,7 +1422,7 @@ class DestinationRegistry {
         'halt request the log holds is open for the destination.',
       );
     }
-    await backend.setFinalStatusTxn(
+    await _backend.setFinalStatusTxn(
       txn,
       destinationId,
       rowId,
@@ -1359,9 +1432,10 @@ class DestinationRegistry {
     // a wedge of any cause consumes the open halt request and records its
     //   identifier, requester and purpose.
     if (stored != null) {
-      await backend.clearHaltRequestTxn(txn, destinationId);
+      await _backend.clearHaltRequestTxn(txn, destinationId);
     }
     final halted = cause == WedgeCause.operatorHalt;
+    final transformFailedWedge = cause == WedgeCause.transformFailed;
     // The append is where an injected wedge-event failure takes effect.
     _consultAuditAppendSeam(kDestinationWedgedEntryType);
     final wedgeEvent = await _emitDestinationAuditInTxn(
@@ -1378,10 +1452,21 @@ class DestinationRegistry {
         'last_seq': head.sequenceRange.lastSeq,
         'sequence_in_queue': head.sequenceInQueue,
         'cause': cause.wire,
-        'attempt_count': halted ? null : attempts.length,
+        // Implements: EVS-DEV-destination-drain/I
+        // attempt_count for a wedge of cause transform_failed is the
+        //   transform failures the fill recorded on the item, not the
+        //   count of send attempts (which is zero: the item was never
+        //   sent).
+        'attempt_count': halted
+            ? null
+            : transformFailedWedge
+            ? head.transformFailures
+            : attempts.length,
         'max_attempts': maxAttempts,
-        'last_outcome': halted ? null : last?.outcome,
-        'http_status': !halted && last?.outcome == 'transient'
+        'max_retry_ms': maxRetryMs,
+        'last_outcome': halted || transformFailedWedge ? null : last?.outcome,
+        'http_status':
+            !halted && !transformFailedWedge && last?.outcome == 'transient'
             ? last?.httpStatus
             : null,
         'wire_format': head.wireFormat,
@@ -1399,8 +1484,12 @@ class DestinationRegistry {
               triggeringEventId: halt!.event.eventId,
             )
           : _drainInitiator,
+      // Implements: EVS-DEV-view-convergence/E
+      // the wedge event is a record the drainer appends in the drain's
+      //   own transaction, an always-stored event.
+      mode: ApplyEventMode.alwaysStored,
     );
-    await backend.writeWedgeRecordTxn(
+    await _backend.writeWedgeRecordTxn(
       txn,
       destinationId,
       WedgeRecord(
@@ -1456,6 +1545,11 @@ class DestinationRegistry {
   // Implements: EVS-DEV-destination-drain/K
   // every destination audit event the library appends carries the identity
   //   of the database that appends it.
+  // [mode] decides whether this audit's own fold failures are passed over
+  // and recorded (a record the drainer appends in the drain's own
+  // transaction) or fail the append to its caller (a public operation an
+  // app or operator calls directly, outside a drain transaction), per
+  // `EVS-DEV-view-convergence` Terms, "always-stored event".
   Future<StoredEvent> _emitDestinationAuditInTxn(
     Transaction txn,
     PublishCollector collector, {
@@ -1463,8 +1557,9 @@ class DestinationRegistry {
     required String eventType,
     required Map<String, Object?> data,
     required Initiator initiator,
+    ApplyEventMode mode = ApplyEventMode.local,
   }) async {
-    final event = await _eventStore.appendReservedInTxn(
+    final event = await _eventStore._appendReservedInTxn(
       txn,
       collector,
       entryType: entryType,
@@ -1473,8 +1568,59 @@ class DestinationRegistry {
       eventType: eventType,
       data: <String, Object?>{...data, 'database_id': _eventStore.databaseId},
       initiator: initiator,
+      mode: mode,
     );
     // dedupeByContent is off, so the append always stores an event.
     return event!;
   }
+}
+
+/// The registry's wedge of a destination's queue head inside [txn], as the
+/// drainer runs it, for the library's own tests of the wedge's refusals:
+/// the wedge is private to the event store's Dart library, and the
+/// drainer, which shares that library, is its only production caller. In
+/// a build with assertions disabled it throws [StateError] before it
+/// touches [txn].
+// Implements: EVS-PRD-storage-barrier/J
+// the test-only entry point to the wedge refuses in a build with assertions
+//   disabled, so it changes nothing the library writes there.
+@internal
+@visibleForTesting
+Future<({StoredEvent wedgeEvent, String? discardedHaltRequestEventId})>
+wedgeHeadInTxnForTest(
+  DestinationRegistry registry,
+  Transaction txn,
+  PublishCollector collector, {
+  required String destinationId,
+  required String rowId,
+  required WedgeCause cause,
+  required int? maxAttempts,
+  required int? maxRetryMs,
+  required int drainerEpoch,
+  required Map<String, Object?>? configuration,
+  required String? configurationFingerprint,
+}) async {
+  var assertionsEnabled = false;
+  assert(() {
+    assertionsEnabled = true;
+    return true;
+  }(), 'records that assertions are enabled');
+  if (!assertionsEnabled) {
+    throw StateError(
+      'wedgeHeadInTxnForTest is test-only and refuses in a build with '
+      'assertions disabled',
+    );
+  }
+  return registry._wedgeHeadInTxn(
+    txn,
+    collector,
+    destinationId: destinationId,
+    rowId: rowId,
+    cause: cause,
+    maxAttempts: maxAttempts,
+    maxRetryMs: maxRetryMs,
+    drainerEpoch: drainerEpoch,
+    configuration: configuration,
+    configurationFingerprint: configurationFingerprint,
+  );
 }

@@ -120,3 +120,41 @@ class TagChip extends StatelessWidget {
     );
   }
 }
+
+/// A centered one-line notice for a view that has no rows to show: a
+/// converging view ([isTransient], with a small spinner), or a
+/// subscription that was rejected or errored.
+class ViewNotice extends StatelessWidget {
+  const ViewNotice(this.message, {super.key, this.isTransient = false});
+
+  final String message;
+  final bool isTransient;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final color = isTransient ? scheme.onSurfaceVariant : scheme.error;
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            if (isTransient)
+              SizedBox(
+                width: 14,
+                height: 14,
+                child: CircularProgressIndicator(strokeWidth: 2, color: color),
+              )
+            else
+              Icon(Icons.block, size: 16, color: color),
+            const SizedBox(width: 8),
+            Flexible(
+              child: Text(message, style: TextStyle(color: color)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}

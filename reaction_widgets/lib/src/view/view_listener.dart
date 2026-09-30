@@ -32,6 +32,7 @@ class ViewListener<T> extends StatefulWidget {
     required this.child,
     this.filter,
     this.aggregates,
+    this.onError,
   });
 
   /// Registered `ProjectionSpec.viewName` to subscribe to.
@@ -52,6 +53,19 @@ class ViewListener<T> extends StatefulWidget {
   /// Receives the current [BuildContext] so the callback can navigate,
   /// show a snackbar, etc.
   final void Function(BuildContext context, Update<T> update) onUpdate;
+
+  /// Fired on every error the underlying subscription reports (a
+  /// `ViewConvergingRefusal`, which the view source recovers from on its
+  /// own; a `SubscriptionDenied`; or any other error), with its stack
+  /// trace. When absent, a `ViewConvergingRefusal` is dropped and any
+  /// other error is reported to [FlutterError.reportError], so no
+  /// subscription error is left uncaught.
+  final void Function(
+    BuildContext context,
+    Object error,
+    StackTrace stackTrace,
+  )?
+  onError;
 
   /// The subtree to render. [ViewListener] does not rebuild [child] in
   /// response to view updates — that is the entire point of the
@@ -80,7 +94,28 @@ class _ViewListenerState<T> extends State<ViewListener<T>> {
         .listen((u) {
           if (!mounted) return;
           widget.onUpdate(context, u);
-        });
+        }, onError: _onError);
+  }
+
+  // Implements: EVS-PRD-reaction-widget-contract/O
+  void _onError(Object error, StackTrace stackTrace) {
+    if (!mounted) return;
+    final onError = widget.onError;
+    if (onError != null) {
+      onError(context, error, stackTrace);
+      return;
+    }
+    if (error is ViewConvergingRefusal) return;
+    FlutterError.reportError(
+      FlutterErrorDetails(
+        exception: error,
+        stack: stackTrace,
+        library: 'reaction_widgets',
+        context: ErrorDescription(
+          'while ViewListener watched view "${widget.viewName}"',
+        ),
+      ),
+    );
   }
 
   @override

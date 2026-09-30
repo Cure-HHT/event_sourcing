@@ -8,21 +8,10 @@ library;
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing/src/lifecycle/lib_version.dart'
     show LibVersionEvents;
-import 'package:postgres/postgres.dart';
 import 'package:test/test.dart';
 
 import '../../test_support/lib_version_seed.dart';
 import 'test_postgres_url.dart';
-
-Future<void> _resetSchema(String url) async {
-  final tmp = await Connection.open(
-    PostgresBackend.endpointFromUrl(url),
-    settings: const ConnectionSettings(sslMode: SslMode.disable),
-  );
-  await tmp.execute('DROP SCHEMA public CASCADE');
-  await tmp.execute('CREATE SCHEMA public');
-  await tmp.close();
-}
 
 Future<EventStore> _open(PostgresBackend backend, String identifier) {
   final registry = EntryTypeRegistry();
@@ -30,36 +19,33 @@ Future<EventStore> _open(PostgresBackend backend, String identifier) {
     registry.register(definition);
   }
   return EventStore.open(
-    storage: backend,
+    storage: ApplicationSuppliedStorage(
+      backend,
+      PostgresSecurityContextStore(backend: backend),
+    ),
     entryTypes: registry,
     source: Source(
       hopId: 'identity-hop',
       identifier: identifier,
       softwareVersion: 'identity-test',
     ),
-    securityContexts: PostgresSecurityContextStore(backend: backend),
   );
 }
 
 void main() {
-  final url = testPostgresUrl();
+  final db = PostgresTestDatabase.fromEnvironment();
+  if (db != null) tearDownAll(db.drop);
   final backends = <PostgresBackend>[];
 
   setUp(() async {
-    if (url == null) {
+    if (db == null) {
       markTestSkipped('PG_TEST_URL unset');
       return;
     }
-    await _resetSchema(url);
+    await db.reset();
     // Opened one after the other, so the schema DDL runs once.
     for (var i = 0; i < 2; i++) {
-      backends.add(
-        await PostgresBackend.open(
-          url: url,
-          sslMode: SslMode.disable,
-          provisionSchema: true,
-        ),
-      );
+      backends.add(await db.open(provision: true));
     }
   });
 
@@ -74,7 +60,7 @@ void main() {
   // Verifies: EVS-DEV-event-store-open/F
   test('two concurrent first opens record one identity in exactly one '
       'initialization', () async {
-    if (url == null) return;
+    if (db == null) return;
     final stores = await Future.wait(<Future<EventStore>>[
       _open(backends[0], 'install-a'),
       _open(backends[1], 'install-b'),
@@ -95,7 +81,7 @@ void main() {
   // Verifies: EVS-DEV-event-store-open/E
   test('two concurrent opens of a build that changes the recorded version '
       'append exactly one change', () async {
-    if (url == null) return;
+    if (db == null) return;
     await seedLibVersionEventForTest(
       backends[0],
       version: '0.4.9',

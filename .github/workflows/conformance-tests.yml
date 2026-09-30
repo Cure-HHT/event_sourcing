@@ -1,7 +1,7 @@
 # Conformance tests — runs the sembast and Postgres conformance + integration
 # test suites on every PR and push to main.
 #
-# Three jobs:
+# Four jobs:
 #   sembast  — SembastBackend conformance + in-memory IdempotencyStore
 #              conformance. No external services required.
 #   postgres_storage, postgres_delivery — every Postgres-gated test file,
@@ -13,6 +13,12 @@
 #              container; the files are gated on PG_TEST_URL.
 #              event_sourcing/test/ci/postgres_ci_listing_test.dart fails when
 #              a gated file is not run here.
+#   postgres_throughput_guard — the throughput guard
+#              (test/storage/postgres/postgres_throughput_guard_test.dart):
+#              checks out the baseline commit into a temporary worktree and
+#              compares its measured throughput with the current tree's, so
+#              it needs the full git history (fetch-depth 0) and an explicit
+#              opt-in variable besides PG_TEST_URL.
 #
 # The Flutter SDK is pinned (flutter-version) in every workflow so a new stable
 # release or lint set cannot change a run's outcome; bump it deliberately.
@@ -137,6 +143,9 @@ jobs:
       - name: Drain wedge event scenarios on Postgres
         run: flutter test test/storage/postgres/postgres_drain_wedge_event_test.dart
         working-directory: event_sourcing
+      - name: Transform failure scenarios on Postgres
+        run: flutter test test/storage/postgres/postgres_transform_failure_test.dart
+        working-directory: event_sourcing
       - name: Operator halt scenarios on Postgres
         run: flutter test test/storage/postgres/postgres_operator_halt_test.dart
         working-directory: event_sourcing
@@ -151,12 +160,6 @@ jobs:
         working-directory: event_sourcing
       - name: Concurrent first opens and database identity on Postgres
         run: flutter test test/storage/postgres/postgres_database_identity_test.dart
-        working-directory: event_sourcing
-      - name: Boot under a serving revision's load on Postgres
-        run: flutter test test/storage/postgres/postgres_boot_under_load_test.dart
-        working-directory: event_sourcing
-      - name: Boot pause beside a serving revision on Postgres
-        run: flutter test test/storage/postgres/postgres_boot_pause_test.dart
         working-directory: event_sourcing
       - name: Boot progress reports on Postgres
         run: flutter test test/storage/postgres/postgres_boot_progress_test.dart
@@ -226,6 +229,18 @@ jobs:
       - name: Incompatible-generation guard and lock session on Postgres
         run: flutter test test/storage/postgres/postgres_generation_guard_test.dart
         working-directory: event_sourcing
+      - name: View catch-up ordering, copy locks and live registration on Postgres
+        run: flutter test test/storage/postgres/postgres_view_catch_up_test.dart
+        working-directory: event_sourcing
+      - name: Measured view-convergence scenarios on Postgres
+        run: flutter test test/storage/postgres/postgres_view_convergence_measured_test.dart
+        working-directory: event_sourcing
+      - name: Boot fairness under load on Postgres
+        run: flutter test test/storage/postgres/postgres_boot_under_load_test.dart
+        working-directory: event_sourcing
+      - name: Redelivery read ordering against a concurrent append on Postgres
+        run: flutter test test/storage/postgres/postgres_redelivery_ordering_test.dart
+        working-directory: event_sourcing
       - name: Delivery cycle and drain lock scenarios on Postgres
         run: flutter test test/storage/postgres/postgres_delivery_cycle_test.dart
         working-directory: event_sourcing
@@ -243,6 +258,63 @@ jobs:
         working-directory: event_sourcing
       - name: Runtime role privileges on Postgres
         run: flutter test test/storage/postgres/postgres_runtime_role_test.dart
+        working-directory: event_sourcing
+      - name: Search path pinned in every Postgres transaction
+        run: flutter test test/storage/postgres/postgres_search_path_test.dart
+        working-directory: event_sourcing
+      - name: Declared library roles and foreign-privilege refusals on Postgres
+        run: flutter test test/storage/postgres/postgres_library_roles_test.dart
+        working-directory: event_sourcing
+      - name: Storage descriptions opened and closed by the library on Postgres
+        run: flutter test test/storage/postgres/postgres_storage_description_test.dart
+        working-directory: event_sourcing
+      - name: Storage reader and issuer-bound transaction handles on Postgres
+        run: flutter test test/storage/postgres/postgres_storage_reader_test.dart
+        working-directory: event_sourcing
+      - name: Provenance stamping and chain links on Postgres
+        run: flutter test test/storage/postgres/postgres_provenance_stamping_test.dart
+        working-directory: event_sourcing
+      - name: Causal stamping on Postgres
+        run: flutter test test/storage/postgres/postgres_causal_stamping_test.dart
+        working-directory: event_sourcing
+      - name: U+0000 append refusal on Postgres
+        run: flutter test test/storage/postgres/postgres_event_record_nul_test.dart
+        working-directory: event_sourcing
+      - name: Security findings and forward-compatible reserved events on Postgres
+        run: flutter test test/storage/postgres/postgres_security_finding_test.dart
+        working-directory: event_sourcing
+      - name: Ingest findings about the received record on Postgres
+        run: flutter test test/storage/postgres/postgres_ingest_record_findings_test.dart
+        working-directory: event_sourcing
+      - name: Receiver accept path of the delivery channel on Postgres
+        run: flutter test test/storage/postgres/delivery_receiver_postgres_test.dart
+        working-directory: event_sourcing
+      - name: Receiver pull and channel listing on Postgres
+        run: flutter test test/storage/postgres/delivery_pull_postgres_test.dart
+        working-directory: event_sourcing
+      - name: Sender drain of the delivery channel on Postgres
+        run: flutter test test/storage/postgres/delivery_channel_drain_postgres_test.dart
+        working-directory: event_sourcing
+      - name: Ingest findings about chain structure on Postgres
+        run: flutter test test/storage/postgres/postgres_ingest_chain_findings_test.dart
+        working-directory: event_sourcing
+      - name: Chain verification on Postgres
+        run: flutter test test/storage/postgres/postgres_chain_verification_test.dart
+        working-directory: event_sourcing
+      - name: Outstanding-finding mark of the default views on Postgres
+        run: flutter test test/storage/postgres/postgres_outstanding_finding_mark_test.dart
+        working-directory: event_sourcing
+      - name: Succession restore on Postgres
+        run: flutter test test/storage/postgres/postgres_succession_restore_test.dart
+        working-directory: event_sourcing
+      - name: Sender succession and double regression, end to end, on Postgres
+        run: flutter test test/storage/postgres/postgres_succession_end_to_end_test.dart
+        working-directory: event_sourcing
+      - name: Storage reader transactions run read-only on Postgres
+        run: flutter test test/storage/postgres/postgres_reader_read_only_test.dart
+        working-directory: event_sourcing
+      - name: Run-time storage barrier on Postgres
+        run: flutter test test/storage/postgres/postgres_run_time_barrier_test.dart
         working-directory: event_sourcing
       - name: Demo bootstrap on Postgres
         run: flutter test test/bootstrap_postgres_test.dart
@@ -268,3 +340,47 @@ jobs:
       - name: action_permissions_demo server process boot probes and hand-over
         run: flutter test test/server_process_postgres_test.dart
         working-directory: event_sourcing/example_action_permissions
+
+  postgres_throughput_guard:
+    name: Postgres throughput guard against the baseline build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: evs
+          POSTGRES_PASSWORD: evs
+          POSTGRES_DB: evs_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U evs -d evs_test"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 30
+    env:
+      PG_TEST_URL: postgres://evs:evs@localhost:5432/evs_test
+      EVS_THROUGHPUT_TEST: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The baseline worktree checks out a commit from the tree's own
+          # history, so the full history must be present.
+          fetch-depth: 0
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.44.7
+      - name: Resolve deps (canonical_json_jcs)
+        run: flutter pub get
+        working-directory: canonical_json_jcs
+      - name: Resolve deps (provenance)
+        run: flutter pub get
+        working-directory: provenance
+      - name: Resolve deps (event_sourcing)
+        run: flutter pub get
+        working-directory: event_sourcing
+      - name: Throughput guard against the baseline build
+        run: flutter test test/storage/postgres/postgres_throughput_guard_test.dart
+        working-directory: event_sourcing

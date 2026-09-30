@@ -89,13 +89,12 @@ void runReconfigureScenarios(
       String? configurationVersion,
       SyncPolicy? policy,
     }) async {
-      final cycle = await w.start(
+      return w.start(
         on: p.registry,
         configurationVersion: configurationVersion,
         policy: policy ?? _budget(5),
+        handDriven: true,
       );
-      p.store.deliveryTrigger = null;
-      return cycle;
     }
 
     Future<StoredEvent> recoveryEvent() async => (await w.backend.findAllEvents(
@@ -598,6 +597,44 @@ void runReconfigureScenarios(
       final pa = await processWith(c1('x'));
       final ca = await cycleOver(pa);
       final head = await haltedHead(pa, ca, 'x', purpose: HaltPurpose.pause);
+      await w.registry.tombstoneAndRefill('x', head, initiator: _operator);
+      expect(await guard('x'), isNull);
+      expect((await recoveryEvent()).data['refill_guard_fingerprint'], isNull);
+    });
+
+    // Verifies: EVS-DEV-destination-drain/F
+    // a wedge that consumed a halt request of a purpose this build does not
+    //   know recovers without the configuration check of reconfigure, under
+    //   the configuration in effect when the wedge was made.
+    // Verifies: EVS-DEV-destination-drain/L
+    // a wedge record whose halt purpose this build does not know is read
+    //   with the value verbatim.
+    test('a wedge of an unknown halt purpose recovers without the '
+        'configuration check', () async {
+      if (!available) return;
+      final pa = await processWith(c1('x'));
+      final ca = await cycleOver(pa);
+      final head = await haltedHead(pa, ca, 'x');
+      final made = (await w.backend.transaction(
+        (txn) => w.backend.readWedgeRecordTxn(txn, 'x'),
+      ))!;
+      final future = WedgeRecord(
+        rowId: made.rowId,
+        wedgeEventId: made.wedgeEventId,
+        cause: made.cause,
+        haltPurpose: HaltPurpose.fromWire('future_purpose'),
+        drainerEpoch: made.drainerEpoch,
+        configurationFingerprint: made.configurationFingerprint,
+      );
+      await w.backend.transaction(
+        (txn) => w.backend.writeWedgeRecordTxn(txn, 'x', future),
+      );
+      expect(
+        await w.backend.transaction(
+          (txn) => w.backend.readWedgeRecordTxn(txn, 'x'),
+        ),
+        future,
+      );
       await w.registry.tombstoneAndRefill('x', head, initiator: _operator);
       expect(await guard('x'), isNull);
       expect((await recoveryEvent()).data['refill_guard_fingerprint'], isNull);

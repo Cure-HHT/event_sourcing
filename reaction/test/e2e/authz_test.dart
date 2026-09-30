@@ -80,16 +80,25 @@ void main() {
         mapper: (m) => m,
       );
 
-      // The subscription handler should emit a subscription_denied
-      // envelope, which RemoteConnection._onMessage translates into a
-      // stream error of the form 'subscription_denied: <reason>'.
+      // The subscription handler emits a subscription_denied envelope,
+      // which RemoteConnection surfaces as a typed SubscriptionDenied
+      // naming the view and the reason.
       Object? caught;
       try {
         await stream.first.timeout(const Duration(seconds: 2));
       } catch (e) {
         caught = e;
       }
-      expect(caught, isNotNull);
+      expect(
+        caught,
+        isA<SubscriptionDenied>()
+            .having((e) => e.viewName, 'viewName', 'notes_today')
+            .having(
+              (e) => e.reason,
+              'reason',
+              SubscriptionDenyReason.viewPermissionDenied,
+            ),
+      );
       expect(caught.toString(), contains('subscription_denied'));
       expect(caught.toString(), contains('view_permission_denied'));
     },

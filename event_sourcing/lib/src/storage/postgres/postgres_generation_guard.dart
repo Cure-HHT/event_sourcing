@@ -17,23 +17,21 @@
 // Implements: EVS-DEV-postgres-backend/J
 // a lost lock session is closed; before anything is registered again, the
 //   old server session is ended if it still holds a library lock.
-import 'dart:async';
 
-import 'package:event_sourcing/src/logging.dart';
-import 'package:event_sourcing/src/storage/generation.dart';
-import 'package:event_sourcing/src/storage/postgres/postgres_exceptions.dart';
-import 'package:event_sourcing/src/storage/postgres/postgres_lock_session.dart';
-import 'package:event_sourcing/src/storage/postgres/postgres_txn.dart';
-import 'package:event_sourcing/src/storage/transaction.dart';
-import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
-import 'package:meta/meta.dart' show internal;
-import 'package:postgres/postgres.dart';
+part of 'postgres_backend.dart';
 
 /// Prefix of the exclusive boot-lock key.
+
 const String _bootPrefix = 'event_sourcing.boot';
 
 /// Prefix of the generation component keys.
 const String _generationPrefix = 'event_sourcing.generation';
+
+/// Prefix of a catch-up transaction's per-copy advisory lock key
+/// (EVS-DEV-view-convergence/M), distinct from [_generationPrefix] and
+/// [_bootPrefix] so a copy lock cannot collide with a component or boot
+/// lock.
+const String _viewCatchUpPrefix = 'event_sourcing.view_catch_up';
 
 /// `backend_state` key prefix of the records that map a component key back
 /// to its component.
@@ -153,7 +151,7 @@ Future<List<({String kind, String id, int value})>> readLiveComponents(
 /// [GenerationGuardConfigurationException].
 @internal
 Future<int> takePostgresBootLock(
-  Connection connection,
+  Session connection,
   PostgresScope scope,
   Duration wait,
 ) async {
@@ -188,7 +186,7 @@ Future<int> takePostgresBootLock(
 
 /// Releases the boot lock [key] on [connection].
 @internal
-Future<void> releasePostgresBootLock(Connection connection, int key) async {
+Future<void> releasePostgresBootLock(Session connection, int key) async {
   await connection.execute(
     Sql.named('SELECT pg_advisory_unlock(@k)'),
     parameters: <String, Object?>{'k': key},
@@ -286,13 +284,14 @@ final class _AsyncMutex {
 /// loss.
 @internal
 final class PostgresGenerationGuard {
-  PostgresGenerationGuard({
+  PostgresGenerationGuard._({
     required this.lockEndpoint,
     required this.sslMode,
     required this.lockQueryTimeout,
     required this.lockHeartbeat,
     required this.bootLockWait,
     required this.scope,
+    required this.schema,
     required this.schemaVersion,
     required Pool<void> pool,
     required PostgresLockSession session,
@@ -307,6 +306,9 @@ final class PostgresGenerationGuard {
   final Duration lockHeartbeat;
   final Duration bootLockWait;
   final PostgresScope scope;
+
+  /// The schema every library transaction puts first on its search path.
+  final String schema;
 
   /// The schema version of the build (its `schema:<n>` component).
   final int schemaVersion;
@@ -386,19 +388,19 @@ final class PostgresGenerationGuard {
   /// queue: a failure or a timeout declares it lost and is rethrown.
   Future<void> probeSession(PostgresLockSession session) async {
     try {
-      await session.run((c) => c.execute('SELECT 1'));
+      await session.run((tx) => tx.execute('SELECT 1'));
     } on Object catch (e) {
       session.declareLost(e);
       rethrow;
     }
   }
 
-  /// Runs [op] on the current lock session. While a lost session is being
-  /// replaced the current session is the lost one, and [op] fails: a
-  /// replacement session becomes current only once every generation is
-  /// registered on it again.
+  /// Runs [op] in a library transaction on the current lock session. While
+  /// a lost session is being replaced the current session is the lost one,
+  /// and [op] fails: a replacement session becomes current only once every
+  /// generation is registered on it again.
   @internal
-  Future<T> runOnSession<T>(Future<T> Function(Connection c) op) =>
+  Future<T> runOnSession<T>(Future<T> Function(Session session) op) =>
       _session.run(op);
 
   /// Starts the probe.
@@ -481,6 +483,18 @@ final class PostgresGenerationGuard {
       add('entry_type', id, descriptor.entryTypes[id]!.major);
     }
     add('schema', '', schemaVersion);
+    // Implements: EVS-DEV-view-convergence/C
+    // a view fingerprint is registered with the generation guard's live
+    //   components, from before the boot transaction until the event
+    //   store closes, alongside the data-format and entry-type components.
+    final fingerprints = descriptor.viewFingerprints.toList()..sort();
+    for (final fingerprint in fingerprints) {
+      // The advisory key is derived exactly as readLiveComponents
+      // reconstructs it from the stored component record (kind, id,
+      // value), so a live registration's lock is found under the same key
+      // another instance's boot looks it up by.
+      add('view_fingerprint', fingerprint, 0);
+    }
     return out;
   }
 
@@ -494,7 +508,7 @@ final class PostgresGenerationGuard {
   /// lock.
   Future<void> _registerAll(
     PostgresLockSession session,
-    Connection c,
+    Session c,
     List<PostgresGenerationRegistration> registrations, {
     required PostgresGenerationRegistration? booting,
     required bool checkRecord,
@@ -506,6 +520,17 @@ final class PostgresGenerationGuard {
     try {
       refuseUnsupportedSchema(await readStoredSchemaPair(c), schemaVersion);
       final live = await readLiveComponents(c, scope);
+      if (booting != null) {
+        // Implements: EVS-DEV-view-convergence/D (live registrations)
+        // a snapshot, taken once before the boot transaction, of every
+        //   view fingerprint a live registration other than this one names
+        //   -- read by the boot to spare a copy no build reopening now
+        //   registers but another live instance still does.
+        booting._liveViewFingerprints = <String>{
+          for (final component in live)
+            if (component.kind == 'view_fingerprint') component.id,
+        };
+      }
       for (final r in registrations) {
         final conflicts = _conflictsOf(live, r.descriptor);
         if (conflicts.isNotEmpty) {
@@ -798,6 +823,7 @@ final class PostgresGenerationGuard {
     try {
       next = await PostgresLockSession.open(
         endpoint: lockEndpoint,
+        schema: schema,
         sslMode: sslMode,
         queryTimeout: lockQueryTimeout,
         expectedScope: scope,
@@ -814,7 +840,7 @@ final class PostgresGenerationGuard {
     }
     var adopted = false;
     try {
-      await verifyLockSessionServer(_pool, next);
+      await verifyLockSessionServer(_pool, schema, next);
       final old = _oldIdentity;
       if (old != null) {
         final ended = await _endOldSession(next, old);
@@ -1012,16 +1038,20 @@ final class PostgresGenerationRegistration extends GenerationRegistration {
   int _epoch = 0;
   bool _lost = false;
   bool _released = false;
+  Set<String> _liveViewFingerprints = const {};
 
   @override
   bool get isLost => _lost || _epoch != _guard._epoch;
 
   @override
+  Set<String> get liveViewFingerprints => _liveViewFingerprints;
+
+  @override
   @internal
   Future<void> recordInTxn(Transaction txn) async {
-    final pgTxn = txn as PostgresTxn;
-    final session = pgTxn.session;
-    pgTxn.wroteBackendState = true;
+    final pgTxn = txn as _PostgresTxn;
+    final session = pgTxn._session;
+    pgTxn._wroteBackendState = true;
     for (final c in _components) {
       final hex = c.key.toUnsigned(64).toRadixString(16).padLeft(16, '0');
       await session.execute(

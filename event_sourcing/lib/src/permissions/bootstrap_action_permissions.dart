@@ -35,6 +35,10 @@ import 'package:event_sourcing/event_sourcing.dart';
 /// (_) => null)`); this is the default. Apps with scoped permissions
 /// construct the registry alongside their projection set and pass it here
 /// so the bootstrapped policy can resolve containment hops.
+///
+/// [timeout] bounds how long the seed application waits for
+/// `role_permission_grants` to become current for the instance before
+/// reading it (EVS-DEV-converging-view-reads/I).
 Future<AuthorizationBootstrapResult> bootstrapActionPermissions({
   required EventStore eventStore,
   required Set<Permission> declaredPermissions,
@@ -44,6 +48,7 @@ Future<AuthorizationBootstrapResult> bootstrapActionPermissions({
   Initiator seedInitiator = const AutomationInitiator(
     service: 'event_sourcing_permissions_seed',
   ),
+  Duration timeout = const Duration(seconds: 30),
 }) async {
   if ((yamlPath == null) == (yamlSource == null)) {
     throw ArgumentError(
@@ -74,17 +79,18 @@ Future<AuthorizationBootstrapResult> bootstrapActionPermissions({
     eventStore: eventStore,
     seedInitiator: seedInitiator,
   );
-  await applier.apply(seed, declaredPermissions);
+  await applier.apply(seed, declaredPermissions, timeout: timeout);
 
   // 4. Wrap in TableBackedAuthorizationPolicy reading
   //    role_permission_grants and user_role_scopes directly.
   final registry =
       scopeClassRegistry ??
       ScopeClassRegistry(classes: const [], projectionLookup: (_) => null);
+  // Implements: EVS-DEV-storage-capability/I
+  // the bootstrapped policy reads through the event store's storage reader.
   final policy = TableBackedAuthorizationPolicy(
-    backend: eventStore.backend,
+    reader: eventStore.reader,
     scopeClassRegistry: registry,
-    transactionProvider: <T>(fn) => eventStore.backend.transaction<T>(fn),
   );
   return PolicyReady(policy);
 }

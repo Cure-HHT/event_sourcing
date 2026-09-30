@@ -4,8 +4,9 @@
 // enqueues every matching event in FIFO order (C), committing the items, the
 // advanced position and the cleared request together so batches survive
 // restart without duplication (D).
-import 'package:event_sourcing/src/destinations/destination_registry.dart';
 import 'package:event_sourcing/src/destinations/subscription_filter.dart';
+import 'package:event_sourcing/src/event_store.dart';
+import 'package:event_sourcing/src/lifecycle/lib_version.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/sembast_backend.dart';
 import 'package:event_sourcing/src/storage/send_result.dart';
@@ -19,6 +20,7 @@ import 'package:sembast/sembast_memory.dart';
 import '../test_support/fake_destination.dart';
 import '../test_support/native_destination.dart';
 import '../test_support/queue_test_support.dart';
+import '../test_support/record_fixtures.dart';
 import '../test_support/registry_with_audit.dart';
 
 const Initiator _testInit = AutomationInitiator(service: 'test-bootstrap');
@@ -46,7 +48,8 @@ Future<StoredEvent> _appendEvent(
   String entryType = 'epistaxis_event',
   String eventType = 'finalized',
   String aggregateId = 'agg-1',
-}) {
+}) async {
+  final databaseId = await harnessDatabaseIdForTest(backend);
   return backend.transaction((txn) async {
     final seq = await backend.nextSequenceNumber(txn);
     final event = StoredEvent(
@@ -56,14 +59,22 @@ Future<StoredEvent> _appendEvent(
       aggregateType: 'note',
       entryType: entryType,
       entryTypeVersion: const EntryTypeVersion(1, 0),
-      libFormatVersion: const DataFormatVersion(2, 0),
+      libFormatVersion: LibVersion.dataFormat,
       eventType: eventType,
       sequenceNumber: seq,
       data: const <String, dynamic>{},
-      metadata: const <String, dynamic>{},
+      metadata: <String, dynamic>{
+        'provenance': <Map<String, Object?>>[
+          <String, Object?>{
+            'database_id': databaseId,
+            'library_version': '0.0.0',
+          },
+        ],
+      },
       initiator: const UserInitiator('u'),
       clientTimestamp: clientTimestamp,
       eventHash: 'hash-$eventId',
+      causal: kRootVersionCausal,
     );
     await backend.appendEvent(txn, event);
     return event;

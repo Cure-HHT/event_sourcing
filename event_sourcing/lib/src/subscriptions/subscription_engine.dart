@@ -23,12 +23,21 @@ class SubscriptionEngine {
       StreamController<StoredEvent>.broadcast();
   final StreamController<AggregateFoldChange> _rowBus =
       StreamController<AggregateFoldChange>.broadcast();
+  final StreamController<String> _caughtUpBus =
+      StreamController<String>.broadcast();
 
   @internal
   void publishEvent(StoredEvent event) => _eventBus.add(event);
 
   @internal
   void publishRowChange(AggregateFoldChange change) => _rowBus.add(change);
+
+  /// Published, after commit, once a view's copy is found current at the
+  /// end of a catch-up transaction (EVS-DEV-converging-view-reads/G): a
+  /// signal for a live `AggregateMode` subscription on [viewName] to
+  /// re-read the view and redeliver, never a claim about the rows.
+  @internal
+  void publishViewCaughtUp(String viewName) => _caughtUpBus.add(viewName);
 
   Stream<Update<StoredEvent>> events(SubscriptionFilter filter) {
     return _eventBus.stream
@@ -45,8 +54,15 @@ class SubscriptionEngine {
   Stream<AggregateFoldChange> rowChanges(String viewName) =>
       _rowBus.stream.where((c) => c.viewName == viewName);
 
+  /// Fires each time [viewName]'s copy is found current at the end of a
+  /// catch-up transaction, while this listener is attached.
+  @internal
+  Stream<String> viewCaughtUp(String viewName) =>
+      _caughtUpBus.stream.where((v) => v == viewName);
+
   Future<void> close() async {
     await _eventBus.close();
     await _rowBus.close();
+    await _caughtUpBus.close();
   }
 }

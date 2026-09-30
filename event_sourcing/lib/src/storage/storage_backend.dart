@@ -2,6 +2,8 @@ import 'package:event_sourcing/src/destinations/batch_envelope_metadata.dart';
 import 'package:event_sourcing/src/destinations/destination_schedule.dart';
 import 'package:event_sourcing/src/destinations/wire_payload.dart';
 import 'package:event_sourcing/src/security/security_context_store.dart';
+import 'package:event_sourcing/src/security/system_entry_types.dart'
+    show kDestinationSenderSucceededEntryType;
 import 'package:event_sourcing/src/storage/append_result.dart';
 import 'package:event_sourcing/src/storage/attempt_result.dart';
 import 'package:event_sourcing/src/storage/boot_check.dart';
@@ -14,8 +16,8 @@ import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/queue_records.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
 import 'package:event_sourcing/src/storage/transaction.dart';
+import 'package:event_sourcing/src/storage/view_copy.dart';
 import 'package:event_sourcing/src/storage/wedged_fifo_summary.dart';
-import 'package:event_sourcing/src/versions.dart';
 import 'package:meta/meta.dart' show internal;
 
 /// Abstract persistence contract for the event-sourcing substrate.
@@ -58,20 +60,23 @@ import 'package:meta/meta.dart' show internal;
 /// diagnostic). A backend declared in the application's own package is
 /// covered by the precondition below alone.
 ///
-/// Precondition of this trust boundary: the library's delivery guarantees,
-/// its views and its security-context records hold only while its
-/// persisted state (destination queues, the views it materializes, the
-/// records it keeps beside them, such as fill positions, schedules, replay
-/// requests, wedge records, halt requests, send fences, refill guards, the
-/// registry check record, the database identity, the generation records,
-/// the view catch-up marks, the fencing epoch and the declared
-/// configuration, and the security context it stores beside each event)
-/// changes only through the library's operations, and reserved system
-/// events are appended only by the library's own operations. The internal
-/// marking, here and on the event store's reserved append operations, is an
-/// analyzer guard, not a barrier: the consumer holds the backend (and, on
-/// Sembast, the database it opened), and a direct write is invisible to the
-/// library.
+/// Precondition of this trust boundary: the library's delivery guarantees, its
+/// views and its security-context records hold only while its persisted state
+/// (destination queues, the views it materializes, the records it keeps beside
+/// them, such as fill positions, schedules, replay requests, transform failure
+/// records, wedge records, halt requests, send fences, refill guards, the
+/// sender channel records of its delivery channels, on Sembast the record of
+/// the latest sequence the database authored and the record of whether it holds
+/// a security finding, the registry check record, the database identity, the
+/// generation records, the declared library roles, the view copies' identities,
+/// definition fingerprints, fold watermarks and deletion marks, the fencing
+/// epoch and the declared configuration, and the security context it stores
+/// beside each event) changes only through the library's operations, and
+/// reserved system events are appended only by the library's own operations.
+/// The internal marking, here and on the event store's reserved append
+/// operations, is an analyzer guard, not a barrier: the consumer holds the
+/// backend (and, on Sembast, the database it opened), and a direct write is
+/// invisible to the library.
 // Implements: EVS-PRD-destinations/K
 // every member that writes a queue, a view,
 //   the persisted delivery state, the event sequence or the schema version
@@ -119,6 +124,38 @@ abstract class StorageBackend {
   /// breaks the delivery guarantees.
   Future<T> transaction<T>(Future<T> Function(Transaction txn) body);
 
+  /// Execute [body] inside a single transaction for reads only: the
+  /// transaction the storage reader runs. It follows the [transaction]
+  /// contract, re-runs included, and a backend whose engine can run a
+  /// transaction read-only runs it so, making the engine refuse any write
+  /// in it. This default runs [transaction]; `PostgresBackend` runs a
+  /// `READ ONLY` transaction outside its generation fence.
+  @internal
+  Future<T> readOnlyTransaction<T>(Future<T> Function(Transaction txn) body) =>
+      transaction(body);
+
+  /// Runs [body] over reads of the log that hold nothing an append waits
+  /// for, and returns its result: the reads of the chain verification.
+  ///
+  /// The handle [body] receives is accepted, while [body] runs, by
+  /// [readDatabaseIdTxn], [findAllEventsInTxn], [readEventsReverseInTxn],
+  /// [findEventByIdInTxn], [findEventsForAggregateInTxn] and the chain
+  /// lookups ([findEventsBySealedHashInTxn], [findEventsByPredecessorInTxn],
+  /// [findEventsByOriginPositionInTxn]); every write refuses it. The reads
+  /// see only committed events. A backend whose engine offers a snapshot
+  /// that writers do not wait for reads in one (`PostgresBackend` runs one
+  /// `REPEATABLE READ READ ONLY` transaction on a pool session of its own);
+  /// one whose transactions exclude each other reads outside any
+  /// transaction (`SembastBackend` reads through the database), so a later
+  /// read may see an event committed after an earlier one, and the caller
+  /// bounds what it reads by the local sequence numbers it fixed first.
+  /// [body] runs once.
+  // Implements: EVS-DEV-chain-verification/S
+  // the chain verification reads through a primitive that holds no
+  //   transaction an append waits for.
+  @internal
+  Future<T> nonBlockingRead<T>(Future<T> Function(Transaction reads) body);
+
   // -------- Events --------
 
   /// Append [event] to the event log inside [txn]. Returns an
@@ -134,8 +171,14 @@ abstract class StorageBackend {
   /// [event] is stored as [StoredEvent.toMap] writes it, every key that
   /// record carries included, and reads back the same. An event whose
   /// client timestamp, or a provenance entry's `received_at`, is not one a
-  /// record may carry ([StoredEvent.requireRecordTimestamps]) throws
+  /// record may carry ([StoredEvent.requireWellFormedRecord]) throws
   /// [FormatException] and nothing is written.
+  ///
+  /// Once [appendEvent] returns, the chain lookups
+  /// ([readLatestHeldAsAuthoredInTxn], [findEventsBySealedHashInTxn],
+  /// [findEventsByPredecessorInTxn], [findEventsByOriginPositionInTxn],
+  /// [readLatestEligibleVersionInTxn]) read inside [txn] see [event], and a
+  /// rolled-back append leaves them as they were.
   // Implements: EVS-PRD-event-log/A
   // append to the append-only, immutable log.
   // Implements: EVS-DEV-event-record/A+B+C
@@ -145,6 +188,43 @@ abstract class StorageBackend {
   // stable total order via sequence counter.
   @internal
   Future<AppendResult> appendEvent(Transaction txn, StoredEvent event);
+
+  /// Runs [body] as an inner unit of work nested inside [txn], isolating a
+  /// server-side error [body] raises from the rest of [txn].
+  ///
+  /// On Postgres this issues `SAVEPOINT` on the transaction's session
+  /// before running [body]; on [body]'s normal return it issues `RELEASE
+  /// SAVEPOINT`, and on any throw it issues `ROLLBACK TO SAVEPOINT` before
+  /// rethrowing the original error unchanged, so a server-side error inside
+  /// [body] (a constraint violation, for example) leaves [txn] usable for
+  /// further reads and writes rather than aborting it. On Sembast, which
+  /// runs one transaction with no partial-rollback primitive, [body] simply
+  /// runs as given: the fold-failure ordering that always precedes a call
+  /// here (compute before write) means [body] never writes ahead of a
+  /// failure it then throws on that backend. [body] is a fold, or a catch-up
+  /// transaction's batched flush of the rows it folded, whose rejected
+  /// write ends that transaction unwritten.
+  ///
+  /// A value [body] returns commits with the rest of [txn]. A throw from
+  /// [body] propagates to the caller, wrapped as [RowWriteRejected] when a
+  /// backend recognizes the error as a rejection of a row write's value
+  /// (`EVS-DEV-view-convergence` Terms): on Postgres, a `ServerException`
+  /// whose SQLSTATE is class 22, 23 or 54. Every other backend, and every
+  /// other error, is rethrown as [body] raised it.
+  // Implements: EVS-DEV-view-convergence/E
+  // on Postgres, an always-stored event's fold into a copy runs in a
+  //   savepoint, so a fold failure's server-side error does not abort the
+  //   storing transaction.
+  @internal
+  Future<T> runInSavepointInTxn<T>(Transaction txn, Future<T> Function() body);
+
+  /// Whether [runInSavepointInTxn] undoes every write its body made when
+  /// the body throws, so several folds may share one savepoint and a
+  /// failure in any of them leaves none of their writes. False by default
+  /// (a body that throws keeps what it wrote before the throw), so each
+  /// fold runs in a savepoint of its own; `PostgresBackend` is true.
+  @internal
+  bool get savepointRollsBackWrites => false;
 
   /// Events for one aggregate, sorted by `sequence_number` ascending.
   // Implements: EVS-PRD-event-log/C
@@ -203,11 +283,11 @@ abstract class StorageBackend {
   /// or null when the event log is empty. Read inside [txn] so the value
   /// reflects writes already staged in the same transaction body.
   ///
-  /// Provided so that callers computing the hash-chain input for the next
-  /// event (i.e., `previous_event_hash`) can read the tail under the same
-  /// transaction that will append the new event. Reading the tail outside
-  /// the transaction would make the chain vulnerable to a concurrent writer
-  /// stamping a different previous-hash between the read and the commit.
+  /// Provided so that a caller recording the storage-chain link of the next
+  /// stored event (its last provenance entry's `previous_ingest_hash`) can
+  /// read the tail under the same transaction that will store the new
+  /// event. Reading the tail outside the transaction would let a concurrent
+  /// writer store another event between the read and the commit.
   Future<String?> readLatestEventHash(Transaction txn);
 
   /// Events in sequence_number order, read within [txn] so the result
@@ -266,45 +346,45 @@ abstract class StorageBackend {
   // -------- Generic view storage --------
   //
   // Projection fold interpreters read and write view rows via these
-  // methods. The view namespace is flat — addressed by `(viewName,
+  // methods. The view namespace is flat — addressed by `(copyId,
   // rowKey)` from the caller's perspective; the on-disk layout is a
   // per-backend implementation detail (sembast uses one store per
-  // viewName; postgres uses a single `view_rows` table keyed by
-  // `(view_name, row_key)`). The backend does not own schema for the
+  // copyId; postgres uses a single `view_rows` table keyed by
+  // `(copy_id, row_key)`). The backend does not own schema for the
   // row payload; the fold interpreter and its readers interpret the
   // row map. Reserved view name: `security_context` (reserved for the
   // sidecar store).
 
-  /// Read one row from [viewName] by [key] inside [txn], or null when
+  /// Read one row from [copyId] by [key] inside [txn], or null when
   /// the row is absent.
   Future<Map<String, dynamic>?> readViewRowInTxn(
     Transaction txn,
-    String viewName,
+    String copyId,
     String key,
   );
 
-  /// Whole-row upsert into [viewName] at [key] inside [txn].
+  /// Whole-row upsert into [copyId] at [key] inside [txn].
   @internal
   Future<void> upsertViewRowInTxn(
     Transaction txn,
-    String viewName,
+    String copyId,
     String key,
     Map<String, dynamic> row,
   );
 
-  /// Delete the row at [key] in [viewName] inside [txn].
+  /// Delete the row at [key] in [copyId] inside [txn].
   @internal
-  Future<void> deleteViewRowInTxn(Transaction txn, String viewName, String key);
+  Future<void> deleteViewRowInTxn(Transaction txn, String copyId, String key);
 
-  /// Iterate rows in [viewName] with optional `limit` / `offset`.
+  /// Iterate rows in [copyId] with optional `limit` / `offset`.
   /// Non-transactional.
   Future<List<Map<String, dynamic>>> findViewRows(
-    String viewName, {
+    String copyId, {
     int? limit,
     int? offset,
   });
 
-  /// Read the rows of [viewName] whose row key is in [keys], in a SINGLE
+  /// Read the rows of [copyId] whose row key is in [keys], in a SINGLE
   /// bulk query, returned as a map from row key to row payload. Keys with no
   /// row are omitted from the result; an empty [keys] yields an empty map
   /// (no query). Non-transactional, mirroring [findViewRows].
@@ -320,11 +400,21 @@ abstract class StorageBackend {
   // a filtered (row-scoped) materialized-
   //   state snapshot reads its allow-list in one batched call, not per id.
   Future<Map<String, Map<String, dynamic>>> readViewRowsByKeys(
-    String viewName,
+    String copyId,
     Set<String> keys,
   );
 
-  /// Iterate rows in [viewName] inside [txn] optionally filtered by
+  /// [readViewRowsByKeys] inside [txn]: the transactional counterpart used
+  /// where the row fetch must share the same storage transaction as a
+  /// preceding state read (EVS-DEV-converging-view-reads/A), so no commit
+  /// that lands between the two is visible to the row fetch.
+  Future<Map<String, Map<String, dynamic>>> readViewRowsByKeysInTxn(
+    Transaction txn,
+    String copyId,
+    Set<String> keys,
+  );
+
+  /// Iterate rows in [copyId] inside [txn] optionally filtered by
   /// column equality. `where` is interpreted as "every key/value pair
   /// must match the row's column of that name." A null or empty
   /// [where] applies no filtering. Returns rows in unspecified order;
@@ -345,87 +435,183 @@ abstract class StorageBackend {
   //   execute path requires a transactional multi-row view-read primitive.
   Future<List<Map<String, dynamic>>> findViewRowsInTxn(
     Transaction txn,
-    String viewName, {
+    String copyId, {
     Map<String, Object?>? where,
     int? limit,
     int? offset,
   });
 
-  /// Empty all rows in [viewName] inside [txn]. Other views are untouched.
+  /// Empty all rows in [copyId] inside [txn]. Other views are untouched.
   @internal
-  Future<void> clearViewInTxn(Transaction txn, String viewName);
+  Future<void> clearViewInTxn(Transaction txn, String copyId);
 
-  // -------- View target versions --------
-
-  /// Read the persisted target version for [viewName]/[entryType], or `null`
-  /// if no entry has been registered. Used by `rebuildView`
-  Future<EntryTypeVersion?> readViewTargetVersionInTxn(
-    Transaction txn,
-    String viewName,
-    String entryType,
-  );
-
-  /// Persist [targetVersion] for the [viewName]/[entryType] pair.
-  /// Idempotent on repeat writes of the same value. A pair's catch-up mark
-  /// (see [markViewTargetBehindInTxn]) is left as it is.
+  /// Whole-row upsert into a `TableProjectionSpec` view copy [copyId] at
+  /// [key], as [upsertViewRowInTxn], additionally stamping [row]'s producer
+  /// -- the aggregate id of the event whose insert wrote it -- into a
+  /// backend-owned index from [sourceAggregateId] to the row keys it
+  /// produced in [copyId]. [findTableRowsBySourceAggregateInTxn] serves the
+  /// outstanding-finding refresh (`EVS-PRD-materializer/E`, `/G`) from this
+  /// index, by key, rather than a scan of the whole copy; nothing else
+  /// compares the index. A key already indexed under a different source
+  /// aggregate (a table row whose key an aggregate other than
+  /// [sourceAggregateId] produces on a later insert) moves to the new one.
+  /// [deleteViewRowInTxn], [clearViewInTxn], [deleteViewCopyRowsInTxn] and
+  /// [deleteViewCopyRecordInTxn] retire a key's entry from the index
+  /// together with the row itself, so the index never names a key whose
+  /// row is gone.
+  // Implements: EVS-PRD-materializer/E
+  // a TableProjectionSpec row's producer is stamped into a backend-owned
+  //   index, keyed for lookup by source aggregate.
   @internal
-  Future<void> writeViewTargetVersionInTxn(
+  Future<void> upsertTableViewRowInTxn(
     Transaction txn,
-    String viewName,
-    String entryType,
-    EntryTypeVersion targetVersion,
-  );
+    String copyId,
+    String key,
+    Map<String, dynamic> row, {
+    required String sourceAggregateId,
+  });
 
-  /// Read all entry-type → target-version entries for [viewName].
-  /// Used by `rebuildView`'s strict-superset check.
-  Future<Map<String, EntryTypeVersion>> readAllViewTargetVersionsInTxn(
-    Transaction txn,
-    String viewName,
-  );
-
-  /// Remove every target-version entry for [viewName], catch-up marks
-  /// included. Used by `rebuildView` before re-recording, and by view drop
-  /// helpers.
+  /// The rows of a `TableProjectionSpec` view copy [copyId] produced by
+  /// [sourceAggregateId] -- those [upsertTableViewRowInTxn] last indexed
+  /// under it and that are still present -- read by the backend's own
+  /// index inside [txn], never a scan of the whole copy.
+  // Implements: EVS-PRD-materializer/E
+  // the outstanding-finding refresh reads a source aggregate's rows from
+  //   this index rather than scanning the view copy.
   @internal
-  Future<void> clearViewTargetVersionsInTxn(Transaction txn, String viewName);
-
-  /// Read every stored target of [entryType], keyed by view name.
-  Future<Map<String, EntryTypeVersion>> readViewTargetsForEntryTypeInTxn(
+  Future<List<Map<String, dynamic>>> findTableRowsBySourceAggregateInTxn(
     Transaction txn,
-    String entryType,
+    String copyId,
+    String sourceAggregateId,
   );
 
-  /// Mark the stored [viewName]/[entryType] pair as behind the log: an
-  /// event of [entryType] was stored without being folded into [viewName].
-  /// No-op when the pair has no stored target. The mark stays until
-  /// [clearViewTargetBehindInTxn] or [clearViewTargetVersionsInTxn]
-  /// removes it; writing the pair's target version keeps it.
-  // Implements: EVS-DEV-version-compatibility/L
-  // the catch-up mark is a flag on the stored target, separate from its
-  //   version, which a lowered version could not express.
+  /// Writes every row of [rows] into [copyId] inside [txn], each exactly as
+  /// [upsertViewRowInTxn] writes it at its key: the batched counterpart a
+  /// catch-up transaction flushes its folded rows through. The default
+  /// makes one [upsertViewRowInTxn] call per row; a backend may override it
+  /// with fewer statements to the same effect.
   @internal
-  Future<void> markViewTargetBehindInTxn(
+  Future<void> upsertViewRowsInTxn(
     Transaction txn,
-    String viewName,
-    String entryType,
-  );
+    String copyId,
+    Map<String, Map<String, dynamic>> rows,
+  ) async {
+    for (final MapEntry(:key, value: row) in rows.entries) {
+      await upsertViewRowInTxn(txn, copyId, key, row);
+    }
+  }
 
-  /// True when the stored [viewName]/[entryType] pair carries a catch-up
-  /// mark; false when it carries none or has no stored target.
-  Future<bool> readViewTargetBehindInTxn(
-    Transaction txn,
-    String viewName,
-    String entryType,
-  );
-
-  /// Remove the catch-up mark of the [viewName]/[entryType] pair. No-op
-  /// when it carries none.
+  /// Writes every row of [rows] into the table view copy [copyId] inside
+  /// [txn], each with the producer its entry names: a non-null `source`
+  /// exactly as [upsertTableViewRowInTxn] writes it, a null one as a row
+  /// no producer indexes (as [deleteViewRowInTxn] followed by
+  /// [upsertViewRowInTxn] leaves it). The default makes those calls per
+  /// row; a backend may override it with fewer statements to the same
+  /// effect.
   @internal
-  Future<void> clearViewTargetBehindInTxn(
+  Future<void> upsertTableViewRowsInTxn(
+    Transaction txn,
+    String copyId,
+    Map<String, ({Map<String, dynamic> row, String? source})> rows,
+  ) async {
+    for (final MapEntry(:key, value: entry) in rows.entries) {
+      final source = entry.source;
+      if (source == null) {
+        await deleteViewRowInTxn(txn, copyId, key);
+        await upsertViewRowInTxn(txn, copyId, key, entry.row);
+      } else {
+        await upsertTableViewRowInTxn(
+          txn,
+          copyId,
+          key,
+          entry.row,
+          sourceAggregateId: source,
+        );
+      }
+    }
+  }
+
+  /// Deletes the rows of [keys] from [copyId] inside [txn], each exactly as
+  /// [deleteViewRowInTxn] deletes it. The default makes one
+  /// [deleteViewRowInTxn] call per key; a backend may override it with
+  /// fewer statements to the same effect.
+  @internal
+  Future<void> deleteViewRowsInTxn(
+    Transaction txn,
+    String copyId,
+    List<String> keys,
+  ) async {
+    for (final key in keys) {
+      await deleteViewRowInTxn(txn, copyId, key);
+    }
+  }
+
+  // -------- View copies --------
+  //
+  // Records the stored copies of registered views: one row per copy,
+  // identified by a fresh [ViewCopy.copyId] and keyed for lookup by its
+  // [ViewCopy.fingerprint] — the digest of the view's definition
+  // (EVS-DEV-view-convergence). At most one copy of a fingerprint is not
+  // marked for deletion at a time. Rows of a copy live in the generic view
+  // store above, addressed by the copy's id in place of a view name.
+
+  /// Create a new copy of [viewName] under [fingerprint], with initial
+  /// [watermark], and return its freshly assigned copy id. Implementations
+  /// SHALL refuse a second unmarked copy of one [fingerprint]: a create
+  /// while an unmarked copy of that fingerprint already exists throws
+  /// [StateError] and creates nothing.
+  // Implements: EVS-DEV-view-convergence/A
+  // at most one copy of a fingerprint that is not marked for deletion.
+  @internal
+  Future<String> createViewCopyInTxn(
     Transaction txn,
     String viewName,
-    String entryType,
+    String fingerprint,
+    int watermark,
   );
+
+  /// Read every stored copy, of every view and every fingerprint, inside
+  /// [txn]. Used to decide which copies no live registration names.
+  Future<List<ViewCopy>> readViewCopiesInTxn(Transaction txn);
+
+  /// Read the copy of [fingerprint] that is not marked for deletion, or
+  /// null when none is stored.
+  // Implements: EVS-DEV-view-convergence/A
+  // at most one copy of a fingerprint that is not marked for deletion.
+  Future<ViewCopy?> readUnmarkedViewCopyInTxn(
+    Transaction txn,
+    String fingerprint,
+  );
+
+  /// Persist [watermark] as the log position [copyId] has folded through.
+  /// No-op when [copyId] names no stored copy.
+  @internal
+  Future<void> setViewCopyWatermarkInTxn(
+    Transaction txn,
+    String copyId,
+    int watermark,
+  );
+
+  /// Mark [copyId] for deletion. Idempotent: a repeat mark, or a mark of a
+  /// copy id that names no stored copy, is a no-op.
+  @internal
+  Future<void> markViewCopyForDeletionInTxn(Transaction txn, String copyId);
+
+  /// Delete up to [limit] rows of [copyId] from the generic view store,
+  /// returning the number of rows deleted. A return below [limit] means
+  /// the copy held no more rows to delete.
+  @internal
+  Future<int> deleteViewCopyRowsInTxn(
+    Transaction txn,
+    String copyId, {
+    required int limit,
+  });
+
+  /// Delete [copyId]'s own record from the view-copies store. Idempotent:
+  /// a copy id that names no stored copy is a no-op. Does not touch the
+  /// copy's rows — callers delete them first via [deleteViewCopyRowsInTxn].
+  @internal
+  Future<void> deleteViewCopyRecordInTxn(Transaction txn, String copyId);
 
   // -------- FIFO (per destination) --------
 
@@ -449,13 +635,14 @@ abstract class StorageBackend {
   ///   `wire_payload`, with `wire_format = wirePayload.contentType` and
   ///   `envelope_metadata = null`. Drain hands the bytes back to
   ///   `Destination.send` verbatim.
-  /// - [nativeEnvelope] (native `esd/batch@2` path) — caller (typically
-  ///   `fillBatch`) built the envelope identity from the local
-  ///   `Source`. The metadata is persisted under `envelope_metadata`,
-  ///   with `wire_payload = null` and `wire_format = "esd/batch@2"`.
-  ///   Drain reconstructs wire bytes deterministically (RFC 8785 JCS)
-  ///   from `envelope_metadata` + `event_ids`-resolved events on each
-  ///   send attempt.
+  /// - [nativeEnvelope] (native path) — caller (the fill, or a resume
+  ///   copying a retained delivery's) built the envelope identity from the
+  ///   local `Source`. The metadata is persisted under `envelope_metadata`,
+  ///   with `wire_payload = null` and `wire_format` the metadata's
+  ///   ([BatchEnvelopeMetadata.wireFormat]: `esd/batch@3` for an item of a
+  ///   delivery channel). Drain reconstructs wire bytes deterministically
+  ///   (RFC 8785 JCS) from `envelope_metadata` + `event_ids`-resolved
+  ///   events on each send attempt.
   ///
   /// Implementations SHALL extract `event_ids` from
   /// `batch.map((e) => e.eventId)` and `event_id_range` from
@@ -470,6 +657,27 @@ abstract class StorageBackend {
   /// nativeEnvelope)` pair with `ArgumentError`, and SHALL register the
   /// destination on first use so `hasFifoWedged`/`wedgedFifos` can
   /// iterate all known FIFOs.
+  ///
+  /// A transform-failed flavour, for the fill's enqueue of a batch whose
+  /// transform kept failing until the destination's retry budget was
+  /// exhausted (`EVS-PRD-destinations/X`): [transformFailed] true, both
+  /// [wirePayload] and [nativeEnvelope] null, [transformFailures] the
+  /// count of transform failures the fill recorded for the batch (a
+  /// positive int), and [wireFormat] (with, optionally, [transformVersion])
+  /// the destination's configured wire format (since no payload or
+  /// envelope supplies one). The returned row carries `wire_payload =
+  /// null`, `envelope_metadata = null`, `transform_failed = true` and
+  /// `transform_failures` the given count; its `final_status` is `null`
+  /// (pending), so the drainer wedges it on its next read, without a
+  /// send. Implementations SHALL reject [transformFailed] true together
+  /// with a non-null [wirePayload] or [nativeEnvelope], a null
+  /// [wireFormat], or a [transformFailures] below one, with
+  /// `ArgumentError`.
+  /// [resendsDeliveryNumber], when given, marks the enqueued row as a
+  /// resend item for a receiver-behind resume
+  /// (`EVS-DEV-delivery-resume/M`): the delivery number it resends, held
+  /// immutable thereafter. Null (the default) for an ordinary item the
+  /// fill enqueues.
   @internal
   Future<FifoEntry> enqueueFifoTxn(
     Transaction txn,
@@ -477,6 +685,11 @@ abstract class StorageBackend {
     List<StoredEvent> batch, {
     WirePayload? wirePayload,
     BatchEnvelopeMetadata? nativeEnvelope,
+    bool transformFailed = false,
+    int? transformFailures,
+    String? wireFormat,
+    String? transformVersion,
+    int? resendsDeliveryNumber,
   });
 
   /// Return the head row of [destinationId]'s FIFO — the first row in
@@ -522,6 +735,18 @@ abstract class StorageBackend {
     int? afterSequenceInQueue,
     int? limit,
   });
+
+  /// [listFifoEntries] of every item of [destinationId]'s queue, in
+  /// `sequence_in_queue` order, read inside [txn], so the result reflects
+  /// writes staged in the same transaction. The drainer reads it when it
+  /// reads a receiver record: to find the deliveries it attempted on the
+  /// registration and the pending items a resume or a new generation
+  /// retires.
+  @internal
+  Future<List<FifoEntry>> listFifoEntriesTxn(
+    Transaction txn,
+    String destinationId,
+  );
 
   /// Append [attempt] to the `attempts[]` list of the entry identified by
   /// `(destinationId, entryId)` inside [txn]. Does not change
@@ -735,6 +960,39 @@ abstract class StorageBackend {
   @internal
   Future<void> clearWedgeRecordTxn(Transaction txn, String destinationId);
 
+  // -------- Transform failure records --------
+
+  /// Read [destinationId]'s transform failure record inside [txn], or null
+  /// when its transform is not currently failing.
+  ///
+  /// Persisted under `backend_state` key `transform_failure_<destinationId>`.
+  @internal
+  Future<TransformFailureRecord?> readTransformFailureRecordTxn(
+    Transaction txn,
+    String destinationId,
+  );
+
+  /// Write [record] as [destinationId]'s transform failure record inside
+  /// [txn], replacing any earlier one. Only the fill writes one, in a
+  /// transaction of its own that changes no other queue state.
+  @internal
+  Future<void> writeTransformFailureRecordTxn(
+    Transaction txn,
+    String destinationId,
+    TransformFailureRecord record,
+  );
+
+  /// Delete [destinationId]'s transform failure record inside [txn]. No-op
+  /// when none exists. The fill deletes it when the failing batch enqueues
+  /// as a transform-failed item; deletion, an operator recovery, a
+  /// receiver-behind resume and a new channel generation each delete it too,
+  /// since each rewinds the fill position below the batch it names.
+  @internal
+  Future<void> clearTransformFailureRecordTxn(
+    Transaction txn,
+    String destinationId,
+  );
+
   // -------- Halt requests --------
 
   /// Read [destinationId]'s open halt request inside [txn], or null when
@@ -787,6 +1045,46 @@ abstract class StorageBackend {
   /// exists. A deletion deletes it.
   @internal
   Future<void> clearSendFenceTxn(Transaction txn, String destinationId);
+
+  // -------- Sender channel records --------
+
+  /// Read [destinationId]'s sender channel record inside [txn], or null when
+  /// the destination has none (it serializes natively and is registered
+  /// exactly while it has one).
+  ///
+  /// Persisted under `backend_state` key `sender_channel_<destinationId>`.
+  // Implements: EVS-PRD-destinations/L
+  // the sender channel record is persisted state the storage precondition
+  //   names: it changes only through the library's operations.
+  @internal
+  Future<SenderChannelRecord?> readSenderChannelRecordTxn(
+    Transaction txn,
+    String destinationId,
+  );
+
+  /// Write [record] as [destinationId]'s sender channel record inside
+  /// [txn], replacing the previous one. The registration writes
+  /// [SenderChannelRecord.initial]; afterwards only the drainer writes one,
+  /// in the transaction that commits a send outcome, a resume or a new
+  /// generation.
+  // Implements: EVS-DEV-delivery-channel/E
+  // the sender channel record changes only with the registration that
+  //   writes it and, afterwards, a send outcome, a resume or a new
+  //   generation; no other registry operation writes it.
+  @internal
+  Future<void> writeSenderChannelRecordTxn(
+    Transaction txn,
+    String destinationId,
+    SenderChannelRecord record,
+  );
+
+  /// Delete [destinationId]'s sender channel record inside [txn]. No-op
+  /// when none exists. A deletion deletes it.
+  @internal
+  Future<void> clearSenderChannelRecordTxn(
+    Transaction txn,
+    String destinationId,
+  );
 
   // -------- Registry check record --------
 
@@ -845,6 +1143,28 @@ abstract class StorageBackend {
   /// storage trust boundary.
   @internal
   Future<T> bootTransaction<T>(Future<T> Function(Transaction txn) body);
+
+  /// Runs [body] as a bounded catch-up transaction for the view copy keyed
+  /// by [copyKey] (its copy id, or its fingerprint before a copy is first
+  /// created), trying that copy's lock without waiting, and returns its
+  /// result; returns null, writing nothing, when the lock is not granted.
+  ///
+  /// A backend shared by several processes or tabs admits at most one
+  /// catch-up transaction per copy at a time across every instance: on
+  /// Postgres a transaction-scoped advisory try-lock ordered after a
+  /// `SHARE` lock on `backend_state` (so the transaction's snapshot, taken
+  /// by its first query after both locks, includes every append in
+  /// flight), on the web a Web Lock requested with `ifAvailable`. A backend
+  /// used by one process (Sembast outside the browser) uses an
+  /// isolate-local lock, since only one instance can ever reach the
+  /// database.
+  // Implements: EVS-DEV-view-convergence/L
+  // Implements: EVS-DEV-view-convergence/M
+  @internal
+  Future<T?> catchUpTransaction<T>(
+    String copyKey,
+    Future<T> Function(Transaction txn) body,
+  );
 
   // -------- Data generation --------
 
@@ -991,10 +1311,14 @@ abstract class StorageBackend {
   /// Set the row's `final_status` to [status] inside [txn]. The legal
   /// transitions are exactly:
   ///
-  /// - `null -> sent` — the drainer delivered the pending head.
+  /// - `null -> sent` — the drainer delivered the pending head of a
+  ///   destination that is no delivery channel ([markSentTxn] marks a
+  ///   delivery sent).
   /// - `null -> wedged` — the drainer wedged the pending head.
   /// - `wedged -> tombstoned` — an operator recovery or a deletion retired
   ///   a wedged head.
+  /// - `null -> tombstoned`, only for an item that carries attempts — a
+  ///   resume or a new generation of the delivery channel retired it.
   ///
   /// Implementations SHALL throw [StateError] and change nothing on every
   /// other pair, on a repeated status, and when the target row is absent.
@@ -1002,7 +1326,7 @@ abstract class StorageBackend {
   /// On `null -> sent` the implementation SHALL stamp
   /// `sent_at = DateTime.now().toUtc()`. On every other transition
   /// `attempts[]` and `sent_at` SHALL be left untouched, so a tombstoned
-  /// row keeps the attempts of the wedge it retired.
+  /// row keeps the attempts of the wedge or the sends it retired.
   @internal
   Future<void> setFinalStatusTxn(
     Transaction txn,
@@ -1010,6 +1334,61 @@ abstract class StorageBackend {
     String entryId,
     FinalStatus status,
   );
+
+  /// Mark the pending item [entryId] of [destinationId] sent inside [txn],
+  /// recording the delivery it was acknowledged under: the channel's
+  /// [generation], the [deliveryNumber] and the [deliveryHash]. Stamps
+  /// `sent_at = DateTime.now().toUtc()` and leaves `attempts[]` untouched.
+  ///
+  /// This is the only change that writes the three delivery fields.
+  /// Implementations SHALL throw [StateError] and change nothing when the
+  /// item is absent or not pending.
+  // Implements: EVS-DEV-delivery-channel/J
+  // the change that marks a queue item sent records the generation,
+  //   delivery number and delivery hash it was acknowledged under.
+  @internal
+  Future<void> markSentTxn(
+    Transaction txn,
+    String destinationId,
+    String entryId, {
+    required int generation,
+    required int deliveryNumber,
+    required String deliveryHash,
+  });
+
+  /// Delete the pending item [entryId] of [destinationId] inside [txn]: a
+  /// resume or a new generation of the delivery channel retires a pending
+  /// item that carries no attempt this way.
+  ///
+  /// Implementations SHALL throw [StateError] and change nothing when the
+  /// item is absent, terminal, or carries attempts: an item that was sent
+  /// is retired by tombstoning it, and a terminal item is the delivery
+  /// record.
+  @internal
+  Future<void> deleteFifoEntryTxn(
+    Transaction txn,
+    String destinationId,
+    String entryId,
+  );
+
+  /// Read inside [txn] the retained delivery of [destinationId] at
+  /// [deliveryNumber] under [generation]: among the items marked sent with
+  /// that generation and number, the one marked last (the highest
+  /// `sequence_in_queue`), or null when there is none.
+  ///
+  /// An item sent at that number under another generation, and an item
+  /// that is not sent, is never the retained delivery.
+  // Implements: EVS-DEV-delivery-resume/W
+  // the retained delivery at a number is the delivery the queue last
+  //   marked sent at that number under the given generation; none where
+  //   there is none.
+  @internal
+  Future<FifoEntry?> readRetainedDeliveryTxn(
+    Transaction txn,
+    String destinationId, {
+    required int generation,
+    required int deliveryNumber,
+  });
 
   /// Delete every FIFO row on [destinationId] whose `sequence_in_queue`
   /// is strictly greater than [afterSequenceInQueue] AND whose
@@ -1055,6 +1434,281 @@ abstract class StorageBackend {
     Set<String>? eventTypes,
   });
 
+  // -------- Chain lookups --------
+  //
+  // Reads over the log, inside a transaction, so each sees the events
+  // stored earlier in it and none a rolled-back transaction stored. The
+  // library keeps no index of its own for them: a backend serves them from
+  // its storage's indexes or by scanning the log. No lookup refuses a
+  // second match: the log holds forks and reused origin positions as
+  // received. The coordinates they match on are those a stored copy yields
+  // (the originating database of its first provenance entry; its sealed
+  // hash and origin position, from the copy itself when its provenance
+  // holds one entry and from the second entry otherwise).
+
+  /// The event with the highest local sequence number among the events
+  /// this database holds as authored (copies whose provenance holds exactly
+  /// one entry, naming this database), or null when it holds none or
+  /// [databaseId] is not this database's identity. Read inside [txn].
+  // Implements: EVS-DEV-chain-verification/B
+  // the latest event the appending database holds as authored, read inside
+  //   the append's transaction.
+  @internal
+  Future<StoredEvent?> readLatestHeldAsAuthoredInTxn(
+    Transaction txn,
+    String databaseId,
+  );
+
+  /// The event of the aggregate [aggregateId] with the highest local
+  /// sequence number among the events this database holds as authored
+  /// (copies whose provenance holds exactly one entry, naming
+  /// [databaseId], this database's identity), or null when it holds none.
+  /// Read inside [txn], so it sees the events stored earlier in it.
+  // Implements: EVS-DEV-delivery-receiver/I
+  // the receiver's record of a channel is read from the latest
+  //   accepted-delivery audit of the channel's audit aggregate that the
+  //   receiver authored; audits another database authored never match.
+  @internal
+  Future<StoredEvent?> readLatestAuthoredOfAggregateInTxn(
+    Transaction txn, {
+    required String databaseId,
+    required String aggregateId,
+  });
+
+  /// The `ingest.delivery_accepted` audits of the aggregate [aggregateId]
+  /// that this database holds as authored (copies whose provenance holds
+  /// exactly one entry, naming [databaseId]) and whose data's
+  /// `delivery_number` is a number from [fromDeliveryNumber] to
+  /// [toDeliveryNumber] inclusive, in ascending local sequence number.
+  /// Read inside [txn].
+  // Implements: EVS-DEV-delivery-receiver/O
+  // the pull reads each delivery of a range from the accepted-delivery
+  //   audit of the channel that the receiver authored for it.
+  @internal
+  Future<List<StoredEvent>> findAuthoredDeliveryAuditsInTxn(
+    Transaction txn, {
+    required String databaseId,
+    required String aggregateId,
+    required int fromDeliveryNumber,
+    required int toDeliveryNumber,
+  });
+
+  /// For each aggregate holding an `ingest.delivery_accepted` audit that
+  /// this database holds as authored and whose data's `channel` names a
+  /// sending database in [senderDatabaseIds], the one such audit with the
+  /// highest local sequence number. Read inside [txn]; in no particular
+  /// order.
+  // Implements: EVS-DEV-delivery-receiver/R
+  // the channel listing reads, from the accepted-delivery audits the
+  //   receiver authored, every channel of every generation it accepted a
+  //   delivery on from the named senders.
+  @internal
+  Future<List<StoredEvent>> findLatestAuthoredDeliveryAuditsInTxn(
+    Transaction txn, {
+    required String databaseId,
+    required Set<String> senderDatabaseIds,
+  });
+
+  /// The held events sealed under [sealedHash], in ascending local
+  /// sequence number. Read inside [txn].
+  // Implements: EVS-DEV-chain-verification/A
+  // held events are found by sealed hash, never by a holder's re-stamped
+  //   event_hash.
+  @internal
+  Future<List<StoredEvent>> findEventsBySealedHashInTxn(
+    Transaction txn,
+    String sealedHash,
+  );
+
+  /// The held events of [originatingDatabaseId] whose `previous_event_hash`
+  /// is [previousEventHash] (null matching the events that name no
+  /// predecessor), in ascending local sequence number. Read inside [txn].
+  @internal
+  Future<List<StoredEvent>> findEventsByPredecessorInTxn(
+    Transaction txn, {
+    required String originatingDatabaseId,
+    required String? previousEventHash,
+  });
+
+  /// The held events of [originatingDatabaseId] at origin position
+  /// [originPosition], in ascending local sequence number. Read inside
+  /// [txn].
+  // Implements: EVS-DEV-chain-verification/A
+  // held events are found by the origin position their copy records, never
+  //   by the holder's local sequence number.
+  @internal
+  Future<List<StoredEvent>> findEventsByOriginPositionInTxn(
+    Transaction txn, {
+    required String originatingDatabaseId,
+    required int originPosition,
+  });
+
+  /// The held events the chain-structure checks of one stored event read,
+  /// inside [txn], each list in ascending local sequence number:
+  /// `predecessors` as [findEventsBySealedHashInTxn] returns for
+  /// [previousEventHash] (empty when it is null), `atPosition` as
+  /// [findEventsByOriginPositionInTxn] returns for [originatingDatabaseId]
+  /// and [originPosition], and `successors` as
+  /// [findEventsByPredecessorInTxn] returns for [originatingDatabaseId] and
+  /// [previousEventHash]. An event may sit in more than one list. The
+  /// default composes those three lookups; a backend may read the three in
+  /// one statement.
+  @internal
+  Future<
+    ({
+      List<StoredEvent> predecessors,
+      List<StoredEvent> atPosition,
+      List<StoredEvent> successors,
+    })
+  >
+  findChainNeighboursInTxn(
+    Transaction txn, {
+    required String originatingDatabaseId,
+    required String? previousEventHash,
+    required int originPosition,
+  }) async {
+    final previous = previousEventHash;
+    return (
+      predecessors: previous == null
+          ? const <StoredEvent>[]
+          : await findEventsBySealedHashInTxn(txn, previous),
+      atPosition: await findEventsByOriginPositionInTxn(
+        txn,
+        originatingDatabaseId: originatingDatabaseId,
+        originPosition: originPosition,
+      ),
+      successors: await findEventsByPredecessorInTxn(
+        txn,
+        originatingDatabaseId: originatingDatabaseId,
+        previousEventHash: previous,
+      ),
+    );
+  }
+
+  /// The held events of [originatingDatabaseId] at origin position
+  /// [fromPosition] or above, in ascending local sequence number. Read
+  /// inside [txn].
+  // Implements: EVS-PRD-materializer/E
+  // the events of a database at or above a reused or forked origin
+  //   position, whose aggregates the default views mark.
+  @internal
+  Future<List<StoredEvent>> findEventsFromOriginPositionInTxn(
+    Transaction txn, {
+    required String originatingDatabaseId,
+    required int fromPosition,
+  });
+
+  /// The held security findings (events of the security-finding entry type
+  /// and its one event type), authored and received, in ascending local
+  /// sequence number. Read inside [txn], so it sees the findings stored
+  /// earlier in it.
+  // Implements: EVS-PRD-materializer/G
+  // the findings every view folds into its outstanding-finding marks,
+  //   whatever the view's interest.
+  @internal
+  Future<List<StoredEvent>> findSecurityFindingsInTxn(Transaction txn);
+
+  /// Whether this database holds any security finding, authored or
+  /// received: whether [findSecurityFindingsInTxn] would return an event.
+  /// Read inside [txn], so it sees the findings stored earlier in it. The
+  /// marks read it, through [readMarksHolderInTxn], on every transaction,
+  /// so it reads no finding event.
+  // Implements: EVS-PRD-materializer/G
+  // every view's marks start from whether any finding is held, read inside
+  //   the folding transaction.
+  @internal
+  Future<bool> holdsSecurityFindingInTxn(Transaction txn);
+
+  /// The database identity ([readDatabaseIdTxn]) and whether this database
+  /// holds any security finding ([holdsSecurityFindingInTxn]), both read
+  /// inside [txn]: what the marks read once per transaction before they
+  /// read any finding. The default composes those two reads; a backend may
+  /// read both in one statement.
+  @internal
+  Future<({String? databaseId, bool holdsFinding})> readMarksHolderInTxn(
+    Transaction txn,
+  ) async => (
+    databaseId: await readDatabaseIdTxn(txn),
+    holdsFinding: await holdsSecurityFindingInTxn(txn),
+  );
+
+  /// Whether this database holds as authored a security finding whose
+  /// `finding_id` is [findingId]: an event of the security-finding entry
+  /// type carrying that identity whose provenance holds exactly one entry,
+  /// naming [databaseId], this database's identity. A finding another
+  /// database originated never matches, whatever detector it names. Read
+  /// inside [txn], so it sees the findings stored earlier in it.
+  // Implements: EVS-DEV-security-findings/E
+  // the once-per-detector lookup reads, inside the appending transaction,
+  //   only the findings the detecting database holds as authored.
+  @internal
+  Future<bool> holdsAuthoredSecurityFindingInTxn(
+    Transaction txn, {
+    required String databaseId,
+    required String findingId,
+  });
+
+  /// The latest eligible version of the aggregate [aggregateId] this
+  /// database holds: the held event of that aggregate with the highest
+  /// local sequence number whose recorded `causal` says an eligible
+  /// version and whose copy yields a sealed hash, or null when it holds
+  /// none. Read inside [txn], so it sees the
+  /// events stored earlier in it.
+  // Implements: EVS-DEV-causal-parents/H
+  // the latest eligible version of an aggregate is the held event of that
+  //   aggregate with the highest local sequence number whose recorded causal
+  //   says an eligible version, read from the log.
+  @internal
+  Future<StoredEvent?> readLatestEligibleVersionInTxn(
+    Transaction txn,
+    String aggregateId,
+  );
+
+  /// Who authored the held events of [aggregateId]: for each originating
+  /// database with at least one held event of it, the highest origin
+  /// position among those events, or null when none of them carries one.
+  /// Read inside [txn], so it sees the events stored earlier in it.
+  // Implements: EVS-PRD-materializer/E
+  // the marks fold reads who authored an aggregate's held events from this
+  //   lookup rather than the aggregate's events themselves, so an append
+  //   evaluating a held finding does not read every held event of the
+  //   aggregates it marks.
+  @internal
+  Future<Map<String, int?>> readAggregateAuthorshipInTxn(
+    Transaction txn,
+    String aggregateId,
+  );
+
+  /// The held `system.destination_sender_succeeded` events, authored and
+  /// received, that the succession-lineage lookup a received chain finding's
+  /// marks resolve from: served from a backend index keyed by this entry
+  /// type, never a scan proportional to the whole event store. Read inside
+  /// [txn], so it sees the events stored earlier in it. The default body
+  /// serves a backend with no index of its own, at the cost of the scan the
+  /// index exists to avoid.
+  // Implements: EVS-PRD-materializer/E
+  // the succession-lineage read a received chain finding's marks resolve
+  //   from is served by a backend index over this entry type, not a scan
+  //   proportional to the whole event store.
+  @internal
+  Future<List<StoredEvent>> findSenderSuccessionEventsInTxn(Transaction txn) =>
+      findAllEventsInTxn(txn, entryType: kDestinationSenderSucceededEntryType);
+
+  /// The lowest origin position among the held events of
+  /// [originatingDatabaseId] whose `previous_event_hash` is
+  /// [previousEventHash] (null included), or null when none carries one.
+  /// Read inside [txn], so it sees the events stored earlier in it.
+  // Implements: EVS-PRD-materializer/E
+  // a fork finding's threshold is this lookup's answer rather than a scan
+  //   of the database's events sharing its predecessor, so an append
+  //   evaluating a held fork finding does not read every such event.
+  @internal
+  Future<int?> readLowestOriginPositionByPredecessorInTxn(
+    Transaction txn, {
+    required String originatingDatabaseId,
+    required String? previousEventHash,
+  });
+
   // -------- Audit query --------
 
   /// Cross-store audit query joining the event log with the security-
@@ -1098,4 +1752,29 @@ abstract class StorageBackend {
   /// connection). Not safe to call concurrently with an in-flight transaction.
   /// Callers MUST await all outstanding operations before calling close.
   Future<void> close();
+}
+
+/// Thrown from [StorageBackend.runInSavepointInTxn]'s body, in place of the
+/// original error, by a backend that classifies it as a rejection of a row
+/// write's value rather than a storage failure (`EVS-DEV-view-convergence`
+/// Terms: on Postgres, a `ServerException` whose SQLSTATE is class 22, 23
+/// or 54). [cause] and [causeStackTrace] preserve the original error and
+/// its stack trace for a catcher that logs or reports it; the fold_failed
+/// finding the interpreter records carries only the failure reason
+/// (`EVS-DEV-security-findings/R`), not the cause. No backend throws this
+/// outside a savepoint's body: a `runInSavepointInTxn` caller is the only
+/// intended catcher.
+@internal
+class RowWriteRejected implements Exception {
+  @internal
+  const RowWriteRejected(this.cause, this.causeStackTrace);
+
+  /// The original error the backend classified.
+  final Object cause;
+
+  /// [cause]'s stack trace.
+  final StackTrace causeStackTrace;
+
+  @override
+  String toString() => 'RowWriteRejected: $cause';
 }

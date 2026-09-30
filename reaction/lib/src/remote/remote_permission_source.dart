@@ -22,6 +22,9 @@ import 'package:reaction/src/interfaces/auth_session.dart';
 import 'package:reaction/src/interfaces/permission_source.dart';
 import 'package:reaction/src/remote/remote_connection.dart';
 import 'package:reaction/src/wire/effective_authorization_codec.dart';
+import 'package:reaction/src/wire/view_converging_codec.dart';
+
+export 'package:reaction/src/remote/remote_connection.dart' show RetryScheduler;
 
 /// PermissionSource over HTTP. Fetches an [EffectiveAuthorization]
 /// from the server's `/permissions/snapshot` route on every Authenticated
@@ -39,11 +42,21 @@ import 'package:reaction/src/wire/effective_authorization_codec.dart';
 /// gating that wraps `stream` therefore updates live as the user's
 /// permissions broaden, in addition to the initial fetch on
 /// Authenticated.
+///
+/// A 503 `view_converging` response from the snapshot route — on the
+/// Authenticated-transition fetch or a [refresh] call — schedules a
+/// capped-backoff retry, with no bound on the number of attempts
+/// (honouring a `Retry-After` header when the server sends one), and
+/// surfaces the typed, transient refusal through [converging] and
+/// [convergingStream] meanwhile, cleared on the next `200`. The retry
+/// is cancelled by a newer auth transition, a [refresh] call, or
+/// [dispose] (`EVS-PRD-cross-process-event-transport/L`).
 class RemotePermissionSource implements PermissionSource {
   RemotePermissionSource({
     required this.connection,
     required this.authSession,
-  }) {
+    RetryScheduler? scheduleRetry,
+  }) : _scheduleRetry = scheduleRetry ?? Timer.new {
     _authSub = authSession.stream.listen(_onAuth);
     if (authSession.current is Authenticated) {
       unawaited(_fetchSnapshot());
@@ -52,6 +65,16 @@ class RemotePermissionSource implements PermissionSource {
 
   final RemoteConnection connection;
   final AuthSession authSession;
+  final RetryScheduler _scheduleRetry;
+
+  /// Backoff base and cap used when the server sends no `Retry-After`
+  /// header: doubles from [_retryBaseDelay] up to [_retryMaxDelay].
+  static const Duration _retryBaseDelay = Duration(milliseconds: 200);
+  static const Duration _retryMaxDelay = Duration(seconds: 5);
+
+  /// The longest delay a server's `Retry-After` header can set, so a
+  /// misconfigured or hostile server cannot park the retry indefinitely.
+  static const Duration _retryAfterCeiling = Duration(seconds: 30);
 
   EffectiveAuthorization? _current;
   final StreamController<EffectiveAuthorization?> _controller =
@@ -59,14 +82,32 @@ class RemotePermissionSource implements PermissionSource {
   late final StreamSubscription<AuthStatus> _authSub;
   bool _isDisposed = false;
 
+  ViewConvergingRefusal? _converging;
+  final StreamController<ViewConvergingRefusal?> _convergingController =
+      StreamController<ViewConvergingRefusal?>.broadcast();
+  Timer? _retryTimer;
+
   /// Monotonic generation counter, bumped on every auth-status change.
   /// In-flight `_fetchSnapshot` responses are discarded if a newer
   /// auth transition has fired in the meantime — same last-writer-wins
-  /// pattern as `RemoteAuthSession._credentialGen`.
+  /// pattern as `RemoteAuthSession._credentialGen`. Also the retry
+  /// seam's cancellation key: a scheduled retry checks it stayed
+  /// current before re-fetching.
   int _fetchGen = 0;
 
   @override
   EffectiveAuthorization? get current => _current;
+
+  /// The typed, transient refusal from the most recent 503
+  /// `view_converging` response still awaiting a retry, or `null` when
+  /// the last fetch succeeded (or none has failed that way yet).
+  ViewConvergingRefusal? get converging => _converging;
+
+  /// Emits [converging] on every change: non-null when a 503
+  /// `view_converging` response is retried in the background, `null`
+  /// once a fetch succeeds.
+  Stream<ViewConvergingRefusal?> get convergingStream =>
+      _convergingController.stream;
 
   @override
   Stream<EffectiveAuthorization?> get stream {
@@ -87,12 +128,25 @@ class RemotePermissionSource implements PermissionSource {
 
   void _onAuth(AuthStatus status) {
     _fetchGen++;
+    _cancelRetry();
     if (status is Authenticated) {
       unawaited(_fetchSnapshot());
     } else {
       _current = null;
       if (!_controller.isClosed) _controller.add(null);
+      _setConverging(null);
     }
+  }
+
+  void _cancelRetry() {
+    _retryTimer?.cancel();
+    _retryTimer = null;
+  }
+
+  void _setConverging(ViewConvergingRefusal? refusal) {
+    if (_converging == refusal) return;
+    _converging = refusal;
+    if (!_convergingController.isClosed) _convergingController.add(refusal);
   }
 
   /// Re-fetch the snapshot if currently authenticated. No-op otherwise
@@ -103,18 +157,42 @@ class RemotePermissionSource implements PermissionSource {
   /// the UI without waiting for the next Authenticated transition.
   ///
   /// Bumps the generation counter so any in-flight Authenticated-
-  /// triggered fetch is superseded; the last writer wins. Quiet on
-  /// transport errors (same shape as the Authenticated-transition
-  /// path).
+  /// triggered fetch, and any retry pending from a prior 503, is
+  /// superseded; the last writer wins. Quiet on a transport error, but
+  /// propagates a typed [ViewConvergingRefusal]
+  /// (`EVS-PRD-cross-process-event-transport/K`) from a 503
+  /// view_converging response: an explicit caller-awaited refresh is
+  /// the one path where the refusal is worth surfacing to its caller
+  /// rather than only backing off silently. The refusal also schedules
+  /// its own capped-backoff retry, with no attempt limit
+  /// (`EVS-PRD-cross-process-event-transport/L`), same as the
+  /// Authenticated-transition path, so a caller that does not await
+  /// (or that ignores the throw) still converges on a snapshot once
+  /// the view catches up.
   @override
   Future<void> refresh() async {
     if (_isDisposed) return;
     if (authSession.current is! Authenticated) return;
     _fetchGen++;
-    await _fetchSnapshot();
+    _cancelRetry();
+    await _fetchSnapshot(rethrowConverging: true);
   }
 
-  Future<void> _fetchSnapshot() async {
+  // Implements: EVS-PRD-cross-process-event-transport/K
+  // decodes a 503 view_converging response into a typed
+  //   ViewConvergingRefusal; rethrowConverging distinguishes the
+  //   caller-awaited refresh() path (propagates it) from the
+  //   fire-and-forget Authenticated-transition fetch (stays quiet,
+  //   since nothing awaits it to react).
+  // Implements: EVS-PRD-cross-process-event-transport/L
+  // either path schedules a capped-backoff retry, with no attempt
+  //   limit, and surfaces the refusal via `converging` until a later
+  //   fetch succeeds, so the permission-snapshot caller recovers from
+  //   its single request without being asked again.
+  Future<void> _fetchSnapshot({
+    bool rethrowConverging = false,
+    int attempt = 0,
+  }) async {
     if (_isDisposed) return;
     final gen = _fetchGen;
     final url = connection.baseUrl.replace(path: '/permissions/snapshot');
@@ -133,6 +211,8 @@ class RemotePermissionSource implements PermissionSource {
     // or we've been disposed.
     if (gen != _fetchGen || _isDisposed) return;
     if (res.statusCode == 200) {
+      _cancelRetry();
+      _setConverging(null);
       final effective = EffectiveAuthorizationCodec.decode(
         jsonDecode(res.body) as Map<String, Object?>,
       );
@@ -149,14 +229,74 @@ class RemotePermissionSource implements PermissionSource {
       }
       _current = effective;
       if (!_controller.isClosed) _controller.add(effective);
+      return;
     }
-    // Non-200: leave current state untouched.
+    if (res.statusCode == 503) {
+      final refusal = decodeViewConvergingBody(res.body);
+      if (refusal != null) {
+        _setConverging(refusal);
+        _scheduleSnapshotRetry(gen: gen, response: res, attempt: attempt);
+        if (rethrowConverging) throw refusal;
+        return;
+      }
+    }
+    // Non-200, or a 503 whose body isn't view_converging: leave current
+    // state untouched.
+  }
+
+  /// Schedules a retry of [_fetchSnapshot] after a 503 view_converging
+  /// response, honouring a `Retry-After` header when the server sends
+  /// one. No attempt bound
+  /// (`EVS-PRD-cross-process-event-transport/L` requires recovery, not
+  /// give-up): the retry keeps going, at [_retryMaxDelay]-capped
+  /// intervals, until a fetch succeeds or [gen] is superseded by the
+  /// time the timer fires (a newer auth transition, an explicit
+  /// [refresh], or [dispose] — each cancels the previous timer
+  /// outright, so this is a second, belt-and-suspenders check).
+  void _scheduleSnapshotRetry({
+    required int gen,
+    required http.Response response,
+    required int attempt,
+  }) {
+    final delay = _retryAfterHeader(response) ?? _backoffDelay(attempt);
+    _cancelRetry();
+    _retryTimer = _scheduleRetry(delay, () {
+      if (gen != _fetchGen || _isDisposed) return;
+      unawaited(_fetchSnapshot(attempt: attempt + 1));
+    });
+  }
+
+  /// Exponential backoff from [_retryBaseDelay], capped at
+  /// [_retryMaxDelay], used when the server sends no `Retry-After`.
+  static Duration _backoffDelay(int attempt) {
+    final scaled = _retryBaseDelay * (1 << attempt.clamp(0, 20));
+    return scaled > _retryMaxDelay ? _retryMaxDelay : scaled;
+  }
+
+  /// Parses a `Retry-After` response header (seconds, per RFC 9110) if
+  /// present and a non-negative integer, capped at [_retryAfterCeiling];
+  /// `null` otherwise, so the caller falls back to [_backoffDelay].
+  static Duration? _retryAfterHeader(http.Response response) {
+    String? raw;
+    for (final entry in response.headers.entries) {
+      if (entry.key.toLowerCase() == 'retry-after') {
+        raw = entry.value;
+        break;
+      }
+    }
+    if (raw == null) return null;
+    final seconds = int.tryParse(raw.trim());
+    if (seconds == null || seconds < 0) return null;
+    final delay = Duration(seconds: seconds);
+    return delay > _retryAfterCeiling ? _retryAfterCeiling : delay;
   }
 
   @override
   Future<void> dispose() async {
     _isDisposed = true;
+    _cancelRetry();
     await _authSub.cancel();
     if (!_controller.isClosed) await _controller.close();
+    if (!_convergingController.isClosed) await _convergingController.close();
   }
 }

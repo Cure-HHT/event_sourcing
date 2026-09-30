@@ -3,7 +3,10 @@
 //   EVS-DEV-postgres-backend/D — exercises the PostgresBackend +
 //     PostgresIdempotencyStore end-to-end when run with
 //     `--backend=postgres`. Sembast remains the default. `--provision`
-//     provisions the Postgres schema and exits; serving never runs DDL.
+//     runs the deployment step as the owner (creates the schema, provisions
+//     it declaring the runtime and lock roles, grants them their
+//     privileges) and exits; serving never runs DDL, and serves as a
+//     declared runtime role.
 //
 // The server listens before it opens the event store: `/livez` answers 200
 // once it listens, and `/health` answers 503 with the boot's progress until
@@ -21,11 +24,10 @@ import 'package:action_permissions_demo/server/demo_idempotency_store.dart';
 import 'package:action_permissions_demo/server/demo_routes.dart';
 import 'package:action_permissions_demo/server/demo_server_host.dart';
 import 'package:action_permissions_demo/server/demo_state_projection.dart';
+import 'package:action_permissions_demo/server/postgres_setup.dart';
 import 'package:args/args.dart';
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:path/path.dart' as p;
-import 'package:sembast/sembast_io.dart';
-import 'package:sembast/sembast_memory.dart';
 
 Future<void> main(List<String> args) async {
   final parser = ArgParser()
@@ -39,8 +41,31 @@ Future<void> main(List<String> args) async {
     ..addOption(
       'postgres-url',
       help:
-          'Postgres URL (required when --backend=postgres). '
-          'Example: postgres://evs:evs@localhost:5432/evs_demo',
+          'Postgres URL (required when --backend=postgres): the owner\'s '
+          'with --provision (postgres://evs:evs@localhost:5432/evs_demo), a '
+          'declared runtime role\'s when serving '
+          '(postgres://evs_runtime:evs@localhost:5432/evs_demo).',
+    )
+    ..addOption(
+      'postgres-schema',
+      defaultsTo: demoPostgresSchema,
+      help:
+          'The Postgres schema holding the library tables (default: '
+          '$demoPostgresSchema). Every library transaction puts it first on '
+          'its search path; --provision creates it.',
+    )
+    ..addMultiOption(
+      'postgres-runtime-role',
+      help:
+          'With --provision: a role the servers connect as (their '
+          '--postgres-url role). Repeat for several; at least one.',
+    )
+    ..addMultiOption(
+      'postgres-lock-role',
+      help:
+          'With --provision: a role the servers hold their lock connection '
+          'as (their --postgres-lock-url role, or their --postgres-url role '
+          'when they give none). Repeat for several; at least one.',
     )
     ..addOption(
       'postgres-lock-url',
@@ -54,9 +79,12 @@ Future<void> main(List<String> args) async {
       'provision',
       defaultsTo: false,
       help:
-          'Provision the Postgres schema (create or migrate the tables) '
-          'and exit without serving. Run once per deployment, before the '
-          'servers start. Requires --backend=postgres.',
+          'Run the deployment step and exit without serving: as the '
+          '--postgres-url role, which owns the schema, create the schema, '
+          'provision it (create or migrate the tables) declaring '
+          '--postgres-runtime-role and --postgres-lock-role, and grant '
+          'those roles their privileges. Run once per deployment, before '
+          'the servers start. Requires --backend=postgres.',
     )
     ..addOption(
       'postgres-ssl-mode',
@@ -112,6 +140,7 @@ Future<void> main(List<String> args) async {
   final port = int.parse(parsed['port'] as String);
   final backendKind = parsed['backend'] as String;
   final postgresUrl = parsed['postgres-url'] as String?;
+  final postgresSchema = parsed['postgres-schema'] as String;
   final postgresSslMode = switch (parsed['postgres-ssl-mode'] as String) {
     'disable' => SslMode.disable,
     'require' => SslMode.require,
@@ -137,9 +166,25 @@ Future<void> main(List<String> args) async {
       exitCode = 64; // EX_USAGE
       return;
     }
+    final runtimeRoles = <String>{
+      ...parsed['postgres-runtime-role'] as List<String>,
+    };
+    final lockRoles = <String>{...parsed['postgres-lock-role'] as List<String>};
+    if (runtimeRoles.isEmpty || lockRoles.isEmpty) {
+      stderr.writeln(
+        'error: --provision requires --postgres-runtime-role and '
+        '--postgres-lock-role: the servers are refused unless they connect '
+        'as a declared role',
+      );
+      exitCode = 64; // EX_USAGE
+      return;
+    }
     try {
-      await PostgresBackend.provision(
-        postgresUrl!,
+      await runDemoPostgresDeploymentStep(
+        url: postgresUrl!,
+        schema: postgresSchema,
+        runtimeRoles: runtimeRoles,
+        lockRoles: lockRoles,
         lockUrl: postgresLockUrl,
         sslMode: postgresSslMode,
       );
@@ -191,40 +236,27 @@ Future<void> main(List<String> args) async {
     exitCode = 1;
   }
 
-  final StorageBackend backend;
-  final IdempotencyStore idempotencyStore;
+  // The storage the server runs on, as a description the library opens: it
+  // holds the connections or the database file, and closes them when the
+  // event store closes or when the open fails.
+  final StorageDescription storage;
+  final IdempotencyStore? idempotencyStore;
   final String backendDescription;
 
   if (backendKind == 'postgres') {
-    final PostgresBackend pg;
-    try {
-      pg = await PostgresBackend.open(
-        url: postgresUrl!,
-        lockUrl: postgresLockUrl,
-        sslMode: postgresSslMode,
-      );
-    } on PostgresSchemaIncompatibleException catch (e) {
-      stderr.writeln(
-        'error: $e\n'
-        'Provision the database first: dart run bin/server.dart '
-        '--backend=postgres --postgres-url=<url> --provision',
-      );
-      await failStartup(e);
-      return;
-    } on LockSessionConfigurationException catch (e) {
-      stderr.writeln('error: $e');
-      await failStartup(e);
-      return;
-    }
-    backend = pg;
-    idempotencyStore = PostgresIdempotencyStore.forBackend(pg);
+    storage = PostgresStorage(
+      url: postgresUrl!,
+      schema: postgresSchema,
+      lockUrl: postgresLockUrl,
+      sslMode: postgresSslMode,
+    );
+    idempotencyStore = null;
     backendDescription = 'postgres ($postgresUrl, ssl=${postgresSslMode.name})';
   } else {
     final dbPath = p.join(dataDir.path, 'demo.db');
-    final Database db = ephemeral
-        ? await databaseFactoryMemory.openDatabase('demo')
-        : await databaseFactoryIo.openDatabase(dbPath);
-    backend = SembastBackend(database: db);
+    storage = ephemeral
+        ? const SembastStorage.memory('demo')
+        : SembastStorage.file(dbPath);
     idempotencyStore = DemoIdempotencyStore();
     backendDescription = 'sembast ($dbPath, ephemeral=$ephemeral)';
   }
@@ -232,7 +264,7 @@ Future<void> main(List<String> args) async {
   final DemoServerComponents components;
   try {
     components = await bootstrapDemoServer(
-      backend: backend,
+      storage: storage,
       idempotencyStore: idempotencyStore,
       permissionsYaml: permissionsYaml,
       usersYaml: usersYaml,
@@ -241,15 +273,25 @@ Future<void> main(List<String> args) async {
       onBootProgress: host.health.record,
     );
   } on Object catch (e) {
-    // The library refused to open the database: a server of another major
-    // is running against it (a major bump is deployed stop-then-start), the
-    // database records a newer generation, or it must be reset.
+    // The library refused to open the database: its schema is not
+    // provisioned at this build's version, a role may do more than the
+    // library allows, the lock session is misconfigured, a server of another
+    // major is running against it (a major bump is deployed
+    // stop-then-start), the database records a newer generation, or it must
+    // be reset.
     if (!_isRefusal(e)) {
       await host.close();
       rethrow;
     }
     stderr.writeln('error: the event store refused to open: $e');
-    await backend.close();
+    if (e is PostgresSchemaIncompatibleException ||
+        e is PostgresSchemaMismatchException) {
+      stderr.writeln(
+        'Provision the database first: dart run bin/server.dart '
+        '--backend=postgres --postgres-url=<owner url> --provision '
+        '--postgres-runtime-role=<role> --postgres-lock-role=<role>',
+      );
+    }
     await failStartup(e);
     return;
   }
@@ -404,6 +446,8 @@ bool _isRefusal(Object e) =>
     e is GenerationGuardConfigurationException ||
     e is GenerationFencedException ||
     e is PostgresSchemaIncompatibleException ||
+    e is PostgresSchemaMismatchException ||
+    e is PostgresRoleRefusedException ||
     e is LockSessionConfigurationException ||
     e is DataFormatIncompatibleError ||
     e is EntryTypeVersionDowngradeError ||

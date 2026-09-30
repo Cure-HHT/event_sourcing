@@ -23,7 +23,6 @@
 library;
 
 import 'dart:async';
-import 'dart:io' show pid;
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing/src/logging.dart';
@@ -42,117 +41,38 @@ import '../../test_support/operator_halt_conformance.dart';
 import '../../test_support/queue_registry_conformance.dart';
 import '../../test_support/queue_test_support.dart';
 import '../../test_support/reconfigure_conformance.dart';
+import '../../test_support/test_backends.dart';
 import '../../test_support/version_compatibility_conformance.dart';
 import '../idempotency_store_conformance.dart';
 import '../storage_backend_conformance.dart';
 import 'test_postgres_url.dart';
 
-final String _schema = 'evs_runtime_role_$pid';
-final String _owner = 'evs_schema_owner_$pid';
-final String _runtime = 'evs_runtime_$pid';
-
-/// A role that holds only what a lock session needs: USAGE on the schema
-/// and the runtime role's privileges on `backend_state`.
-final String _lock = 'evs_lock_$pid';
-
-Future<Connection> _connect(String url) => Connection.open(
-  PostgresBackend.endpointFromUrl(url),
-  settings: const ConnectionSettings(sslMode: SslMode.disable),
-);
-
-String _asRole(String url, String role) =>
-    Uri.parse(url).replace(userInfo: '$role:evs').toString();
-
-/// The owner and runtime roles and the schema they share.
-class _Roles {
-  _Roles(this.url);
+/// The owner, runtime and lock roles and the schema they share, with the
+/// operations the scenarios here run as each. The lock role holds only what
+/// a lock session needs: USAGE on the schema and the runtime role's
+/// privileges on `backend_state`.
+class _Roles extends PostgresTestDatabase {
+  _Roles(super.adminUrl) : super(tag: 'rr');
 
   /// The administrative URL (PG_TEST_URL), whose role creates the roles.
-  final String url;
+  String get url => adminUrl;
 
-  String get ownerUrl => _asRole(url, _owner);
-  String get runtimeUrl => _asRole(url, _runtime);
-  String get lockUrl => _asRole(url, _lock);
+  Future<void> create() => createRoles();
 
-  Future<void> _dropAll(Connection admin) async {
-    await admin.execute('DROP SCHEMA IF EXISTS $_schema CASCADE');
-    for (final role in <String>[_lock, _runtime, _owner]) {
-      final exists = await admin.execute(
-        Sql.named('SELECT 1 FROM pg_roles WHERE rolname = @r'),
-        parameters: <String, Object?>{'r': role},
-      );
-      if (exists.isEmpty) continue;
-      await admin.execute('DROP OWNED BY $role');
-      await admin.execute('DROP ROLE $role');
-    }
-  }
-
-  /// Creates both roles afresh; each connects with the schema alone on its
-  /// search path.
-  Future<void> create() async {
-    final admin = await _connect(url);
-    try {
-      await _dropAll(admin);
-      for (final role in <String>[_owner, _runtime, _lock]) {
-        await admin.execute(
-          "CREATE ROLE $role LOGIN PASSWORD 'evs' "
-          'NOSUPERUSER NOCREATEDB NOCREATEROLE',
-        );
-        await admin.execute('ALTER ROLE $role SET search_path = $_schema');
-      }
-    } finally {
-      await admin.close();
-    }
-  }
-
-  Future<void> drop() async {
-    final admin = await _connect(url);
-    try {
-      await _dropAll(admin);
-    } finally {
-      await admin.close();
-    }
-  }
-
-  /// Recreates the schema as the owner's, revokes CREATE on it from
-  /// PUBLIC, grants the runtime and lock roles USAGE on it, provisions it
-  /// as the owner (unless [provision] is false) and grants the runtime role
-  /// [grants] and the lock role the `backend_state` privileges.
+  /// Recreates the schema and, unless [provision] is false, provisions it
+  /// and grants the runtime role [grants].
+  @override
   Future<void> reset({
     bool provision = true,
     Map<String, Set<String>> grants = postgresRuntimeRoleGrants,
-  }) async {
-    final admin = await _connect(url);
-    try {
-      await admin.execute('DROP SCHEMA IF EXISTS $_schema CASCADE');
-      await admin.execute('CREATE SCHEMA $_schema AUTHORIZATION $_owner');
-      await admin.execute('REVOKE CREATE ON SCHEMA $_schema FROM PUBLIC');
-      await admin.execute('GRANT USAGE ON SCHEMA $_schema TO $_runtime');
-      await admin.execute('GRANT USAGE ON SCHEMA $_schema TO $_lock');
-    } finally {
-      await admin.close();
-    }
-    if (!provision) return;
-    await PostgresBackend.provision(ownerUrl, sslMode: SslMode.disable);
-    await asOwner((c) async {
-      for (final MapEntry(key: table, value: privileges) in grants.entries) {
-        if (privileges.isEmpty) continue;
-        await c.execute(
-          'GRANT ${privileges.join(', ')} ON $table TO $_runtime',
-        );
-      }
-      await c.execute(
-        'GRANT ${postgresRuntimeRoleGrants['backend_state']!.join(', ')} '
-        'ON backend_state TO $_lock',
-      );
-    });
-  }
+  }) => super.reset(provision: provision, grants: grants);
 
-  Future<void> revoke(String table, String privilege) =>
-      asOwner((c) => c.execute('REVOKE $privilege ON $table FROM $_runtime'));
+  Future<void> revoke(String table, String privilege) => asOwner(
+    (c) => c.execute('REVOKE $privilege ON $table FROM ${quoteIdent(runtime)}'),
+  );
 
   Future<T> asOwner<T>(Future<T> Function(Connection c) body) async {
-    final c = await _connect(ownerUrl);
+    final c = await connectOwner();
     try {
       return await body(c);
     } finally {
@@ -161,7 +81,7 @@ class _Roles {
   }
 
   Future<T> asRuntime<T>(Future<T> Function(Connection c) body) async {
-    final c = await _connect(runtimeUrl);
+    final c = await connectRuntime();
     try {
       return await body(c);
     } finally {
@@ -170,29 +90,22 @@ class _Roles {
   }
 
   /// The tables in the schema.
-  Future<Set<String>> tables() async {
-    final admin = await _connect(url);
-    try {
-      final r = await admin.execute(
-        Sql.named(
-          'SELECT table_name FROM information_schema.tables '
-          'WHERE table_schema = @s',
-        ),
-        parameters: <String, Object?>{'s': _schema},
-      );
-      return <String>{for (final row in r) row[0]! as String};
-    } finally {
-      await admin.close();
-    }
-  }
+  Future<Set<String>> tables() => asAdmin((admin) async {
+    final r = await admin.execute(
+      Sql.named(
+        'SELECT table_name FROM information_schema.tables '
+        'WHERE table_schema = @s',
+      ),
+      parameters: <String, Object?>{'s': schema},
+    );
+    return <String>{for (final row in r) row[0]! as String};
+  });
 
   Future<PostgresBackend> openRuntimeBackend({
     Duration lockQueryTimeout = const Duration(seconds: 5),
     bool separateLockRole = false,
-  }) => PostgresBackend.open(
-    url: runtimeUrl,
+  }) => open(
     lockUrl: separateLockRole ? lockUrl : null,
-    sslMode: SslMode.disable,
     lockQueryTimeout: lockQueryTimeout,
   );
 }
@@ -218,9 +131,9 @@ class _RuntimeDatabase implements QueueTestDatabase, VersionTestDatabase {
 
   @override
   Future<Set<String>> backendStateKeys() async {
-    final conn = await _connect(_roles.url);
+    final conn = await _roles.connectAdmin();
     try {
-      final rows = await conn.execute('SELECT key FROM $_schema.backend_state');
+      final rows = await conn.execute('SELECT key FROM backend_state');
       return <String>{for (final r in rows) r[0]! as String};
     } finally {
       await conn.close();
@@ -251,15 +164,16 @@ const Source _source = Source(
 /// aggregate view over [_noteType], a destination registry and the
 /// idempotency store.
 class _World {
-  _World._(this.backend, this.store);
+  _World._(this.backend, this.store) {
+    trackTestBackend(store, backend);
+  }
 
   final PostgresBackend backend;
   final EventStore store;
   late final DestinationRegistry registry = DestinationRegistry(
     eventStore: store,
   );
-  late final PostgresIdempotencyStore idempotency =
-      PostgresIdempotencyStore.forBackend(backend);
+  late final IdempotencyStore idempotency = store.idempotencyStore!;
 
   /// The clock the event store stamps security contexts with.
   static DateTime now = DateTime.utc(2026, 3, 1);
@@ -285,10 +199,12 @@ class _World {
         ),
       );
     final store = await EventStore.open(
-      storage: backend,
+      storage: ApplicationSuppliedStorage(
+        backend,
+        PostgresSecurityContextStore(backend: backend),
+      ),
       entryTypes: entryTypes,
       source: _source,
-      securityContexts: PostgresSecurityContextStore(backend: backend),
       projections: projections,
       clock: () => now,
     );
@@ -344,6 +260,16 @@ Future<Object?> _nothing(_Roles roles) async => null;
 Future<Object?> _world(_Roles roles) async =>
     _World.open(await roles.openRuntimeBackend());
 
+/// A runtime-role backend with one view copy already created, for the
+/// view-copies cases that need an existing row to read, update or delete.
+Future<Object?> _viewCopyWorld(_Roles roles) async {
+  final backend = await roles.openRuntimeBackend();
+  final copyId = await backend.transaction(
+    (txn) => backend.createViewCopyInTxn(txn, 'rt_view', 'rt_fp', 0),
+  );
+  return (backend, copyId);
+}
+
 /// A world with destination `x` activated and two notes filled into its
 /// queue.
 Future<Object?> _filledWorld(_Roles roles) async {
@@ -376,18 +302,69 @@ final Map<String, _Case> _cases = <String, _Case>{
     (roles, w) => (w! as _World).note('a1', withSecurity: true),
   ),
   'read a view': _Case(_world, (roles, w) async {
-    await (w! as _World).backend.findViewRows(_noteView);
+    final world = w! as _World;
+    await world.backend.findViewRows(world.store.copyIdOf(_noteView));
   }),
   'rebuild a view': _Case(_world, (roles, w) async {
     final world = w! as _World;
     await world.note('r1');
+    final oldCopyId = world.store.copyIdOf(_noteView);
     await rebuildView(
       store: world.store,
       viewName: _noteView,
-      targetVersionByEntryType: const <String, EntryTypeVersion>{
-        _noteType: EntryTypeVersion(1, 0),
-      },
+      deadline: DateTime.now().toUtc().add(const Duration(seconds: 20)),
     );
+    // rebuildView itself never deletes a row: the old copy's rows are
+    // deleted by catch-up afterward, on the driver's own loop, which this
+    // synchronous case cannot observe (its failures log through a hooks
+    // zone the driver's loop was never scheduled inside). The deletion
+    // step is exercised directly here instead, so a denied DELETE fails
+    // this case rather than going unnoticed in the background.
+    await world.backend.transaction(
+      (txn) =>
+          world.backend.deleteViewCopyRowsInTxn(txn, oldCopyId, limit: 500),
+    );
+  }),
+  'create a view copy': _Case((roles) => roles.openRuntimeBackend(), (
+    roles,
+    backend,
+  ) async {
+    final b = backend! as PostgresBackend;
+    try {
+      await b.transaction(
+        (txn) => b.createViewCopyInTxn(txn, 'rt_view', 'rt_fp_create', 0),
+      );
+    } finally {
+      await b.close();
+    }
+  }),
+  'list view copies': _Case(_viewCopyWorld, (roles, arranged) async {
+    final (backend, _) = arranged! as (PostgresBackend, String);
+    try {
+      await backend.transaction(backend.readViewCopiesInTxn);
+    } finally {
+      await backend.close();
+    }
+  }),
+  'set a view copy watermark': _Case(_viewCopyWorld, (roles, arranged) async {
+    final (backend, copyId) = arranged! as (PostgresBackend, String);
+    try {
+      await backend.transaction(
+        (txn) => backend.setViewCopyWatermarkInTxn(txn, copyId, 7),
+      );
+    } finally {
+      await backend.close();
+    }
+  }),
+  'delete a view copy record': _Case(_viewCopyWorld, (roles, arranged) async {
+    final (backend, copyId) = arranged! as (PostgresBackend, String);
+    try {
+      await backend.transaction(
+        (txn) => backend.deleteViewCopyRecordInTxn(txn, copyId),
+      );
+    } finally {
+      await backend.close();
+    }
   }),
   'read a security context': _Case(_world, (roles, w) async {
     final world = w! as _World;
@@ -499,10 +476,10 @@ const Map<(String, String), String> _neededBy = <(String, String), String>{
   ('view_rows', 'INSERT'): 'append an event with a security context',
   ('view_rows', 'UPDATE'): 'append an event with a security context',
   ('view_rows', 'DELETE'): 'rebuild a view',
-  ('view_target_versions', 'SELECT'): 'boot an event store',
-  ('view_target_versions', 'INSERT'): 'boot an event store',
-  ('view_target_versions', 'UPDATE'): 'boot an event store',
-  ('view_target_versions', 'DELETE'): 'rebuild a view',
+  ('view_copies', 'SELECT'): 'list view copies',
+  ('view_copies', 'INSERT'): 'create a view copy',
+  ('view_copies', 'UPDATE'): 'set a view copy watermark',
+  ('view_copies', 'DELETE'): 'delete a view copy record',
   ('fifo_entries', 'SELECT'): 'read a queue head',
   ('fifo_entries', 'INSERT'): 'fill a destination',
   ('fifo_entries', 'UPDATE'): 'deliver a queue item',
@@ -519,6 +496,7 @@ const Map<(String, String), String> _neededBy = <(String, String), String>{
   ('idempotency', 'INSERT'): 'record an idempotency entry',
   ('idempotency', 'UPDATE'): 'record an idempotency entry',
   ('idempotency', 'DELETE'): 'sweep expired idempotency entries',
+  ('library_roles', 'SELECT'): 'open the backend',
 };
 
 /// Whether [error], or a log line the library wrote, reports a permission
@@ -576,7 +554,7 @@ void main() {
     await roles.reset();
     final backend = await roles.openRuntimeBackend();
     idempotencyBackends.add(backend);
-    return PostgresIdempotencyStore.forBackend(backend);
+    return idempotencyStoreOver(backend);
   }, label: 'postgres, runtime role');
 
   // Recovery, deletion (sent, wedged and pending items), registry
@@ -630,7 +608,13 @@ void main() {
       () async {
         await roles.reset(provision: false);
         await expectLater(
-          PostgresBackend.provision(roles.runtimeUrl, sslMode: SslMode.disable),
+          PostgresBackend.provision(
+            roles.runtimeUrl,
+            schema: roles.schema,
+            runtimeRoles: <String>{roles.runtime},
+            lockRoles: <String>{roles.runtime},
+            sslMode: SslMode.disable,
+          ),
           throwsA(
             isA<ServerException>().having((e) => e.code, 'code', '42501'),
           ),
@@ -652,12 +636,12 @@ void main() {
           Sql.named(
             'SELECT DISTINCT tableowner FROM pg_tables WHERE schemaname = @s',
           ),
-          parameters: <String, Object?>{'s': _schema},
+          parameters: <String, Object?>{'s': roles.schema},
         ),
       );
       expect(
         <String>{for (final r in owners) r[0]! as String},
-        <String>{_owner},
+        <String>{roles.owner},
       );
       expect(await roles.tables(), postgresLibraryTables.toSet());
     });
@@ -756,16 +740,16 @@ void main() {
       expect(await security.read(purged.eventId), isNull);
       expect(await security.read(redacted.eventId), isNull);
       expect(await security.read(compacted.eventId), isNotNull);
-      final before = await w.backend.findViewRows(_noteView);
+      final before = await w.backend.findViewRows(w.store.copyIdOf(_noteView));
       expect(before, hasLength(3));
       await rebuildView(
         store: w.store,
         viewName: _noteView,
-        targetVersionByEntryType: const <String, EntryTypeVersion>{
-          _noteType: EntryTypeVersion(1, 0),
-        },
+        deadline: DateTime.now().toUtc().add(const Duration(seconds: 20)),
       );
-      expect(await w.backend.findViewRows(_noteView), before);
+      // The rebuild replaces the copy: the replayed rows are read through
+      // the instance's new copy id, not the one taken before the rebuild.
+      expect(await w.backend.findViewRows(w.store.copyIdOf(_noteView)), before);
     });
 
     // Verifies: EVS-DEV-postgres-backend/K
@@ -872,7 +856,7 @@ void main() {
           parameters: <String, Object?>{'p': lockPid},
         ),
       );
-      expect(user.first[0], _lock);
+      expect(user.first[0], roles.lock);
       final d = FakeDestination(id: 'x');
       await w.activate(d);
       final cycle = await SyncCycle.start(

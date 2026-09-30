@@ -98,7 +98,7 @@ export 'src/interfaces/auth_session.dart'
 export 'src/interfaces/permission_source.dart' show PermissionSource;
 export 'src/interfaces/principal_auth_validator.dart'
     show AuthenticationDenied, PrincipalAuthValidator;
-export 'src/interfaces/view_source.dart' show ViewSource;
+export 'src/interfaces/view_source.dart' show SubscriptionDenied, ViewSource;
 // Local impls
 export 'src/local/local_action_submitter.dart' show LocalActionSubmitter;
 export 'src/local/local_auth_session.dart' show LocalAuthSession;
@@ -132,6 +132,8 @@ export 'src/state/action_state.dart'
     show ActionState, Denied, Failed, Idle, Submitting, Success;
 export 'src/state/idempotency_key_generator.dart'
     show IdempotencyKeyGenerator, UuidIdempotencyKeyGenerator;
+// Wire vocabulary a consumer branches on
+export 'src/wire/subscription_messages.dart' show SubscriptionDenyReason;
 
 // AuthorizationWatcher is package-private; consumers interact via
 // ReactionHandlers.watchContainment(...).

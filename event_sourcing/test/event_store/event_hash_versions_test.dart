@@ -5,8 +5,12 @@ import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
 import 'package:event_sourcing/event_sourcing.dart';
+import 'package:event_sourcing/src/verification/chain_walk.dart'
+    show hashMismatchEvidence;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
+
+import '../test_support/deliveries.dart';
 
 const _kType = 'hashed_note';
 var _dbCounter = 0;
@@ -81,7 +85,7 @@ void main() {
       final origin = await _openStore('origin');
       final event = await _appendAt(origin);
       expect(_recomputedHash(event), event.eventHash);
-      final readBack = await origin.backend.findEventById(event.eventId);
+      final readBack = await origin.reader.findEventById(event.eventId);
       expect(_recomputedHash(readBack!), event.eventHash);
     });
 
@@ -97,7 +101,7 @@ void main() {
       );
       final rewrittenFormat = _withVersions(
         event,
-        dataFormat: const DataFormatVersion(2, 1),
+        dataFormat: LibVersion.dataFormat.nextMinor,
       );
       expect(_recomputedHash(rewrittenEntryType), isNot(event.eventHash));
       expect(_recomputedHash(rewrittenFormat), isNot(event.eventHash));
@@ -105,14 +109,16 @@ void main() {
 
     // Verifies: EVS-DEV-version-compatibility/J
     // Verifies: EVS-PRD-hash-chain-integrity/A
+    // Verifies: EVS-DEV-chain-verification/P
     test('a forwarder that rewrites a version breaks the chain at the next '
-        'hop, and the next hop refuses the event', () async {
+        'hop, and the next hop stores the event with a hash_mismatch '
+        'finding', () async {
       final origin = await _openStore('origin');
       final relay = await _openStore('relay');
       final receiver = await _openStore('receiver');
       final event = await _appendAt(origin);
-      await relay.ingestEvent(event);
-      final forwarded = (await relay.backend.findEventById(event.eventId))!;
+      await ingestEventForTest(relay, event);
+      final forwarded = (await relay.reader.findEventById(event.eventId))!;
 
       final tampered = <String, StoredEvent>{
         'entry type version': _withVersions(
@@ -121,37 +127,45 @@ void main() {
         ),
         'data-format version': _withVersions(
           forwarded,
-          dataFormat: const DataFormatVersion(2, 3),
+          dataFormat: DataFormatVersion(LibVersion.dataFormat.major, 3),
         ),
       };
       for (final entry in tampered.entries) {
-        final verdict = await receiver.verifyEventChain(entry.value);
-        expect(verdict.isValid, isFalse, reason: entry.key);
-        final eventsBefore = (await receiver.backend.findAllEvents()).length;
-        await expectLater(
-          receiver.ingestEvent(entry.value),
-          throwsA(isA<IngestChainBroken>()),
+        final mismatches = hashMismatchEvidence(entry.value);
+        expect(mismatches, isNotEmpty, reason: entry.key);
+        final next = await _openStore(
+          'receiver-${entry.key.replaceAll(' ', '-')}',
+        );
+        final outcome = await ingestEventForTest(next, entry.value);
+        expect(
+          outcome.outcome,
+          IngestOutcome.ingestedWithFinding,
           reason: entry.key,
         );
+        final findings = await next.reader.findAllEvents(
+          entryType: kSecurityFindingEntryType,
+        );
         expect(
-          (await receiver.backend.findAllEvents()).length,
-          eventsBefore,
-          reason: entry.key,
+          findings.map((f) => f.data['kind']),
+          <String>[for (final _ in mismatches) 'hash_mismatch'],
+          reason: '${entry.key}: one finding per hash that does not recompute',
         );
       }
 
       // The untampered copy verifies and ingests.
-      expect((await receiver.verifyEventChain(forwarded)).isValid, isTrue);
-      await receiver.ingestEvent(forwarded);
-      final stored = await receiver.backend.findEventById(event.eventId);
+      expect(hashMismatchEvidence(forwarded), isEmpty);
+      await ingestEventForTest(receiver, forwarded);
+      final stored = await receiver.reader.findEventById(event.eventId);
       expect(stored!.entryTypeVersion, const EntryTypeVersion(1, 2));
       expect(_recomputedHash(stored), stored.eventHash);
     });
   });
 
-  group('the event hash of data format 2.0', () {
+  group('the event hash', () {
     // Verifies: EVS-DEV-version-compatibility/J
     // Verifies: EVS-PRD-hash-chain-integrity/A
+    // Verifies: EVS-PRD-hash-chain-integrity/D
+    // Verifies: EVS-DEV-event-record/K
     test('is the SHA-256 of the JCS form of the hashed fields, pinned by a '
         'fixed vector', () {
       final record = <String, Object?>{
@@ -168,6 +182,13 @@ void main() {
         'flow_token': null,
         'client_timestamp': '2026-09-01T12:00:00.000Z',
         'previous_event_hash': null,
+        'causal': <String, Object?>{
+          'kind': 'version',
+          'eligible': true,
+          'parents': <Object?>[
+            <String, Object?>{'event_id': 'p-1', 'event_hash': 'h-1'},
+          ],
+        },
         'metadata': <String, Object?>{'provenance': <Object?>[]},
         'event_hash': 'ignored',
       };
@@ -175,6 +196,8 @@ void main() {
       // event_hash are not hashed.
       const canonical =
           '{"aggregate_id":"agg-g",'
+          '"causal":{"eligible":true,"kind":"version",'
+          '"parents":[{"event_hash":"h-1","event_id":"p-1"}]},'
           '"client_timestamp":"2026-09-01T12:00:00.000Z",'
           '"data":{"title":"g"},'
           '"entry_type":"golden_note",'
@@ -189,11 +212,11 @@ void main() {
           '"sequence_number":7}';
       expect(
         sha256.convert(utf8.encode(canonical)).toString(),
-        '76050980b364317b90490e3ae972ed6100f1977a5aae821ba52b4fda2e536bb2',
+        '7e2711ec92786e45f8c4e3651c6d6e5de215a4ab92834537f0af1d32ef0b2ecc',
       );
       expect(
         canonicalEventHash(record),
-        '76050980b364317b90490e3ae972ed6100f1977a5aae821ba52b4fda2e536bb2',
+        '7e2711ec92786e45f8c4e3651c6d6e5de215a4ab92834537f0af1d32ef0b2ecc',
       );
     });
   });

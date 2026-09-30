@@ -1,57 +1,299 @@
-// Tests the watcher behavior using the real substrate's subscribe<T>
-// and the real WsConnectionRegistry. Each test seeds a permission
-// or role event into the substrate and asserts the registry's
-// channels received the right reaction (close-frame or stale_data).
+// AuthorizationWatcher's permission_revoked/permission_granted fan-out
+// reads the effective role of every connected user through the
+// substrate's authorization policy. That read refuses with
+// ViewConvergingRefusal while the role-assignment or permission-grant
+// view is converging for this instance. On a narrowing signal
+// (permission_revoked) the watcher fails closed, per EVS-DEV-authz-
+// watcher/G; on an expanding one (permission_granted) it over-notifies,
+// per EVS-DEV-converging-view-reads/H. Neither lets the unawaited
+// fan-out's error escape uncaught.
 //
-// All tests are skipped — full coverage is deferred to the
-// e2e harness (test/e2e/authz_test.dart). Stubs here serve as a
-// checklist of the behavior surface to cover.
-//
-// Verifies: EVS-DEV-authz-watcher/A+B+C+D+E
-// force-logout on
-//   role_unassigned and permission_revoked, stale_data on role_assigned
-//   and permission_granted, containment opt-in via watchContainment,
-//   single server-wide substrate subscription. Coverage currently
-//   skipped (see note above); the e2e harness exercises the same
-//   assertions end-to-end.
+// Verifies: EVS-DEV-authz-watcher/G
+// on permission_revoked, a
+//   connected user whose role cannot be determined (a
+//   ViewConvergingRefusal, or any other error) is force-closed along
+//   with every confirmed holder of the revoked role, without aborting
+//   the fan-out for later users or leaking an uncaught async error.
+// Verifies: EVS-DEV-converging-view-reads/H
+// on permission_granted, a
+//   connected user whose role cannot be determined is over-notified
+//   with stale_data rather than skipped.
 
+import 'dart:async';
+
+import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:logging/logging.dart';
+import 'package:reaction/src/server/authorization_watcher.dart';
+import 'package:reaction/src/server/ws_connection_registry.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
+
+import '../local/test_support/reaction_test_harness.dart';
+
+/// Policy fake standing in for `TableBackedAuthorizationPolicy`: returns
+/// the principal's active role as-is for every user except the
+/// configured `throwFor` userIds, for which it throws
+/// [ViewConvergingRefusal] the way the real policy does while its role
+/// or permission view converges, and the configured `throwOtherFor`
+/// userIds, for which it throws an arbitrary non-refusal error (e.g. a
+/// storage error) the way an unrelated backend failure would surface.
+class _FakePolicy extends AuthorizationPolicy {
+  _FakePolicy({this.throwFor = const {}, this.throwOtherFor = const {}});
+
+  final Set<String> throwFor;
+  final Set<String> throwOtherFor;
+  final List<String> queried = [];
+
+  @override
+  Future<AuthorizationDecision> isPermitted(
+    Principal principal,
+    Permission permission,
+    ScopeValue? scopeValue, {
+    Transaction? txn,
+  }) {
+    throw UnimplementedError('not exercised by these tests');
+  }
+
+  @override
+  Future<EffectiveAuthorization> effectivePermissionsFor(
+    Principal principal, {
+    Transaction? txn,
+  }) async {
+    final p = principal as UserPrincipal;
+    queried.add(p.userId);
+    if (throwFor.contains(p.userId)) {
+      throw const ViewConvergingRefusal('user_role_scopes');
+    }
+    if (throwOtherFor.contains(p.userId)) {
+      throw StateError('backend unavailable for ${p.userId}');
+    }
+    return EffectiveAuthorization(
+      activeRole: p.activeRole,
+      rolePermissions: const <Permission>{},
+      scopeAssignments: const [],
+    );
+  }
+}
+
+/// Records close-code/reason and every stale_data envelope sent to it,
+/// standing in for a live WS connection in `WsConnectionRegistry`.
+class _RecordingChannel implements WebSocketChannel {
+  final List<String> messages = [];
+  int? _closeCode;
+  String? _closeReason;
+
+  @override
+  int? get closeCode => _closeCode;
+
+  @override
+  String? get closeReason => _closeReason;
+
+  @override
+  WebSocketSink get sink => _RecordingSink(this);
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      throw UnimplementedError(invocation.memberName.toString());
+}
+
+class _RecordingSink implements WebSocketSink {
+  _RecordingSink(this._channel);
+  final _RecordingChannel _channel;
+
+  @override
+  void add(Object? event) => _channel.messages.add(event! as String);
+
+  @override
+  Future<void> close([int? closeCode, String? closeReason]) async {
+    _channel._closeCode = closeCode;
+    _channel._closeReason = closeReason;
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      throw UnimplementedError(invocation.memberName.toString());
+}
 
 void main() {
-  test(
-    "role_unassigned closes the affected user's WS with 4003",
-    () async {
-      // Seed substrate with a role assignment for alice; register a
-      // CaptureChannel for alice on the registry; emit a
-      // role_unassigned event; assert closedCode == 4003.
-    },
-    skip: 'unit pattern; covered in e2e/authz_test.dart',
-  );
+  late ReactionTestHarness h;
+  late WsConnectionRegistry registry;
+
+  setUp(() async {
+    h = await ReactionTestHarness.open();
+    registry = WsConnectionRegistry();
+  });
+
+  tearDown(() async {
+    await h.close();
+  });
+
+  Future<void> appendPermissionEvent(String eventType, String role) {
+    return h.eventStore.append(
+      entryType: 'role_permission_grant',
+      aggregateType: 'role_permission_grant',
+      aggregateId: '$role:say_hello',
+      eventType: eventType,
+      data: eventType == 'permission_granted'
+          ? PermissionGrantedPayload(
+              role: role,
+              permissionName: 'say_hello',
+            ).toJson()
+          : PermissionRevokedPayload(
+              role: role,
+              permissionName: 'say_hello',
+            ).toJson(),
+      initiator: const AutomationInitiator(service: 'authz_watcher_test'),
+    );
+  }
+
+  test('permission_revoked force-logs-out a user whose role view is '
+      'converging and keeps closing every later connected user', () async {
+    // Verifies: EVS-DEV-authz-watcher/G
+    final alice = _RecordingChannel();
+    final bob = _RecordingChannel();
+    final carol = _RecordingChannel();
+    registry
+      ..register('alice', alice)
+      ..register('bob', bob)
+      ..register('carol', carol);
+
+    final policy = _FakePolicy(throwFor: {'alice'});
+    final watcher = AuthorizationWatcher(
+      eventStore: h.eventStore,
+      connectionRegistry: registry,
+      policy: policy,
+    );
+    await watcher.start();
+    addTearDown(watcher.stop);
+
+    final errors = <Object>[];
+    await runZonedGuarded(() async {
+      await appendPermissionEvent('permission_revoked', 'install');
+      for (var i = 0; i < 20 && policy.queried.length < 3; i++) {
+        await pumpEventQueue();
+      }
+    }, (error, stack) => errors.add(error));
+
+    expect(
+      errors,
+      isEmpty,
+      reason: 'no uncaught async error escapes the unawaited fan-out',
+    );
+    expect(
+      alice.closeCode,
+      4003,
+      reason: "fail closed: alice's role could not be confirmed",
+    );
+    expect(bob.closeCode, 4003);
+    expect(carol.closeCode, 4003);
+  });
 
   test(
-    "role_assigned sends stale_data to the user's connections",
+    'permission_revoked fails closed on a non-refusal error too, '
+    'forcing that user out and continuing the loop, logged at severe',
     () async {
-      // Seed; emit role_assigned for alice; assert the CaptureChannel
-      // received a stale_data envelope with reason: role_assigned.
+      // Verifies: EVS-DEV-authz-watcher/G
+      final alice = _RecordingChannel();
+      final bob = _RecordingChannel();
+      final carol = _RecordingChannel();
+      registry
+        ..register('alice', alice)
+        ..register('bob', bob)
+        ..register('carol', carol);
+
+      final policy = _FakePolicy(throwOtherFor: {'bob'});
+      final watcher = AuthorizationWatcher(
+        eventStore: h.eventStore,
+        connectionRegistry: registry,
+        policy: policy,
+      );
+      await watcher.start();
+      addTearDown(watcher.stop);
+
+      final records = <LogRecord>[];
+      final logSub = Logger.root.onRecord.listen(records.add);
+      addTearDown(logSub.cancel);
+      final previousLevel = Logger.root.level;
+      Logger.root.level = Level.ALL;
+      addTearDown(() => Logger.root.level = previousLevel);
+
+      final errors = <Object>[];
+      await runZonedGuarded(() async {
+        await appendPermissionEvent('permission_revoked', 'install');
+        for (var i = 0; i < 20 && policy.queried.length < 3; i++) {
+          await pumpEventQueue();
+        }
+      }, (error, stack) => errors.add(error));
+
+      expect(
+        errors,
+        isEmpty,
+        reason: 'no uncaught async error escapes the unawaited fan-out',
+      );
+      expect(alice.closeCode, 4003);
+      expect(
+        bob.closeCode,
+        4003,
+        reason:
+            "fail closed: bob's role could not be determined "
+            'because the policy threw an unexpected error',
+      );
+      expect(
+        carol.closeCode,
+        4003,
+        reason: 'the loop continues past the failing user',
+      );
+      expect(
+        records.any(
+          (r) =>
+              r.level == Level.SEVERE &&
+              r.loggerName == 'reaction.authorization_watcher',
+        ),
+        isTrue,
+        reason:
+            'the non-refusal error is logged at severe through '
+            'the package logger',
+      );
     },
-    skip: 'unit pattern; covered in e2e/authz_test.dart',
   );
 
-  test(
-    'permission_revoked closes WS for all users with that role',
-    () async {
-      // Seed; emit permission_revoked for a role; assert all users
-      // currently holding that activeRole get their WS closed with 4003.
-    },
-    skip: 'unit pattern; covered in e2e/authz_test.dart',
-  );
+  test('permission_granted sends stale_data even to a user whose role '
+      'view is converging (over-notify is safe)', () async {
+    // Verifies: EVS-DEV-converging-view-reads/H
+    final alice = _RecordingChannel();
+    final bob = _RecordingChannel();
+    registry
+      ..register('alice', alice)
+      ..register('bob', bob);
 
-  test(
-    'permission_granted sends stale_data to all users with that role',
-    () async {
-      // Seed; emit permission_granted; assert all users with that
-      // activeRole receive a stale_data envelope.
-    },
-    skip: 'unit pattern; covered in e2e/authz_test.dart',
-  );
+    final policy = _FakePolicy(throwFor: {'alice'});
+    final watcher = AuthorizationWatcher(
+      eventStore: h.eventStore,
+      connectionRegistry: registry,
+      policy: policy,
+    );
+    await watcher.start();
+    addTearDown(watcher.stop);
+
+    final errors = <Object>[];
+    await runZonedGuarded(() async {
+      await appendPermissionEvent('permission_granted', 'install');
+      for (var i = 0; i < 20 && policy.queried.length < 2; i++) {
+        await pumpEventQueue();
+      }
+    }, (error, stack) => errors.add(error));
+
+    expect(errors, isEmpty);
+    expect(
+      alice.closeCode,
+      isNull,
+      reason: 'an expanding event never force-closes',
+    );
+    expect(
+      alice.messages,
+      isNotEmpty,
+      reason: 'over-notify: alice still gets stale_data',
+    );
+    expect(bob.messages, isNotEmpty);
+  });
 }

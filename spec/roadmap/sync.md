@@ -77,3 +77,16 @@ the drainer appends when it honours it, and recovers. It cannot be one
 transaction, because it waits out any send in flight; it needs a bound on
 the wait, and a defined outcome when the destination has no head (the
 request stays open) or another operator acts in between.
+
+## Storing a large succession restore in resumable chunks
+
+**Baseline (what exists).** A succession stores the succession event and
+every restored event in one transaction (`EVS-DEV-sender-succession`).
+Every stored event extends the database's storage chain, so the
+successor holds that transaction for as long as the restore is large.
+
+**Remaining.** Store the succession event first, recording the whole
+range, and the restored events after it in bounded chunks, with a
+persisted record of the restore in progress that is continued after a
+crash, so that no restored event is stored without its succession event
+and the successor authors nothing until the restore completes.

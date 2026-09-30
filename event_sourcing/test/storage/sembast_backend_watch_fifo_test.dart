@@ -3,7 +3,8 @@
 //   status change) is published to the watchers of that destination's FIFO
 //   as a fresh snapshot, and to no other destination's watchers.
 import 'package:event_sourcing/src/destinations/batch_envelope_metadata.dart';
-import 'package:event_sourcing/src/ingest/batch_envelope.dart';
+import 'package:event_sourcing/src/ingest/delivery_channel.dart';
+import 'package:event_sourcing/src/ingest/delivery_envelope.dart';
 import 'package:event_sourcing/src/storage/attempt_result.dart';
 import 'package:event_sourcing/src/storage/fifo_entry.dart';
 import 'package:event_sourcing/src/storage/final_status.dart';
@@ -105,22 +106,29 @@ void main() {
       expect(emA, isEmpty);
     });
 
-    // envelopeMetadata for native (`esd/batch@2`) rows. The row-typed
+    // envelopeMetadata for native (`esd/batch@3`) rows. The row-typed
     // snapshot exposes the envelope identity that drain reconstructs from,
     // and wirePayload is null on the emitted entry.
     test('watchFifo emits envelopeMetadata for '
         'native rows; wirePayload is null on the snapshot', () async {
-      // Enqueue a native esd/batch@2 row via enqueueFifoTxn's
+      // Enqueue a native esd/batch@3 row via enqueueFifoTxn's
       // nativeEnvelope: path so the row's envelope_metadata column is
       // exercised end-to-end through the watchFifo snapshot pipeline.
       final event = storedEventFixture(eventId: 'e1', sequenceNumber: 1);
       final envelope = BatchEnvelopeMetadata(
-        batchFormatVersion: '2',
+        batchFormatVersion: '3',
         batchId: 'batch-watch-1',
         senderHop: 'mobile-1',
         senderIdentifier: 'device-watch',
         senderSoftwareVersion: 'diary@1.2.3',
         sentAt: DateTime.utc(2026, 4, 25, 12),
+        channel: const DeliveryChannel(
+          senderDatabaseId: 'db-1',
+          destinationId: 'dest',
+          registrationId: 'reg-1',
+          generation: 1,
+        ),
+        attributes: const <String, Object?>{},
       );
 
       final stream = backend.watchFifo('dest');
@@ -145,7 +153,7 @@ void main() {
       expect(snap, hasLength(1));
       final entry = snap.first;
       expect(entry.eventIds, ['e1']);
-      expect(entry.wireFormat, BatchEnvelope.wireFormat);
+      expect(entry.wireFormat, DeliveryEnvelope.wireFormat);
       expect(
         entry.wirePayload,
         isNull,
@@ -157,7 +165,8 @@ void main() {
       expect(entry.envelopeMetadata!.batchId, 'batch-watch-1');
       expect(entry.envelopeMetadata!.senderHop, 'mobile-1');
       expect(entry.envelopeMetadata!.senderIdentifier, 'device-watch');
-      expect(entry.envelopeMetadata!.batchFormatVersion, '2');
+      expect(entry.envelopeMetadata!.batchFormatVersion, '3');
+      expect(entry.envelopeMetadata!.channel.generation, 1);
     });
 
     test('watchFifo closes on backend close, then throws', () async {

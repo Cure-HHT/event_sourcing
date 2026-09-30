@@ -5,13 +5,16 @@
 // test/storage/postgres/postgres_versions_test.dart.
 //
 // Traceability lives on the individual tests below.
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing/src/security/security_context_store.dart';
-import 'package:event_sourcing/src/security/system_entry_types.dart'
-    show kViewSnapshotPromotedEntryType;
 import 'package:flutter_test/flutter_test.dart';
+
+import 'deliveries.dart';
+import 'record_fixtures.dart';
+import 'test_backends.dart';
 
 /// One database the scenarios open several backends over, as several
 /// builds of the library would.
@@ -41,30 +44,6 @@ const _kSpec = AggregateProjectionSpec(
   interest: SubscriptionFilter(entryTypes: <String>{_kType}),
   tombstoneEventTypes: <String>{'deleted'},
 );
-
-/// A table view keyed by two payload fields, holding the whole payload.
-const _kItemsView = 'versioned_note_items';
-const _kItemsSpec = TableProjectionSpec(
-  viewName: _kItemsView,
-  interest: SubscriptionFilter(entryTypes: <String>{_kType}),
-  insertEventTypes: <String>{'finalized'},
-  removeEventTypes: <String>{'deleted'},
-  rowKey: CompositeKey(<String>['data.list', 'data.item']),
-  rowData: WholePayload(),
-);
-
-/// A table view keyed by aggregate, holding only the payload field `a`.
-const _kTitlesView = 'versioned_note_titles';
-const _kTitlesSpec = TableProjectionSpec(
-  viewName: _kTitlesView,
-  interest: SubscriptionFilter(entryTypes: <String>{_kType}),
-  insertEventTypes: <String>{'finalized'},
-  removeEventTypes: <String>{'deleted'},
-  rowKey: AggregateIdKey(),
-  rowData: SelectedFields(<String>['a']),
-);
-
-const _kTableSpecs = <ProjectionSpec>[_kSpec, _kItemsSpec, _kTitlesSpec];
 
 const _kSource = Source(
   hopId: 'versions-hop',
@@ -100,50 +79,16 @@ Future<EventStore> _openStore(
   for (final spec in projections) {
     projectionRegistry.register(spec);
   }
-  return EventStore.open(
-    storage: backend,
+  final store = await EventStore.open(
+    storage: ApplicationSuppliedStorage(backend, db.securityFor(backend)),
     entryTypes: entryTypes,
     source: _kSource,
-    securityContexts: db.securityFor(backend),
     projections: projectionRegistry,
     promoters: promoterRegistry,
   );
+  trackTestBackend(store, backend);
+  return store;
 }
-
-/// The `1.0 -> 1.1` step adding `b` with the default `0` to [viewName].
-PromoterSpec _defaultB(String viewName) => PromoterSpec(
-  viewName: viewName,
-  entryType: _kType,
-  fromVersion: const EntryTypeVersion(1, 0),
-  toVersion: const EntryTypeVersion(1, 1),
-  transforms: const <TransformPrimitive>[
-    DefaultField(fieldName: 'b', defaultValue: 0),
-  ],
-);
-
-/// The newer build: registers `1.1`, whose minor step adds `b` with the
-/// default `0` to every view in [projections].
-Future<EventStore> _openNewer(
-  VersionTestDatabase db, {
-  List<ProjectionSpec> projections = const <ProjectionSpec>[_kSpec],
-}) => _openStore(
-  db,
-  registered: const EntryTypeVersion(1, 1),
-  projections: projections,
-  promoters: <PromoterSpec>[
-    for (final spec in projections) _defaultB(spec.viewName),
-  ],
-);
-
-/// The older build: registers `1.0`.
-Future<EventStore> _openOlder(
-  VersionTestDatabase db, {
-  List<ProjectionSpec> projections = const <ProjectionSpec>[_kSpec],
-}) => _openStore(
-  db,
-  registered: const EntryTypeVersion(1, 0),
-  projections: projections,
-);
 
 Future<void> _appendNote(
   EventStore store,
@@ -161,66 +106,14 @@ Future<void> _appendNote(
   );
 }
 
-List<Map<String, Object?>> _sortedRows(List<Map<String, dynamic>> rows) =>
-    <Map<String, Object?>>[
-      for (final row in rows) Map<String, Object?>.from(row),
-    ]..sort(
-      (x, y) =>
-          (x['aggregateId'] as String).compareTo(y['aggregateId'] as String),
-    );
-
-/// Asserts that [rebuildView] of each of [views] under [target] yields the
-/// rows the store holds now, and returns those rows by view.
-Future<Map<String, List<Map<String, Object?>>>> _expectRebuildMatches(
-  EventStore store,
-  List<String> views,
-  EntryTypeVersion target,
-) async {
-  final byView = <String, List<Map<String, Object?>>>{};
-  for (final view in views) {
-    final held = _sortedRows(await store.backend.findViewRows(view));
-    await rebuildView(
-      store: store,
-      viewName: view,
-      targetVersionByEntryType: <String, EntryTypeVersion>{_kType: target},
-    );
-    final rebuilt = _sortedRows(await store.backend.findViewRows(view));
-    expect(rebuilt, held, reason: 'view $view: rebuildView differs');
-    byView[view] = held;
-  }
-  return byView;
-}
-
-Map<String, Object?>? _rowOf(List<Map<String, Object?>> rows, String id) {
-  for (final row in rows) {
-    if (row['aggregateId'] == id) return row;
-  }
-  return null;
-}
-
-/// Asserts [row] exists, holds `a` equal to [a], and holds no `b`.
-void _expectRowWithoutDefault(Map<String, Object?>? row, Object? a) {
-  expect(row, isNotNull);
-  expect(row!['a'], a);
-  expect(row, isNot(contains('b')));
-}
-
-Future<EntryTypeVersion?> _storedTarget(EventStore store) =>
-    store.backend.transaction(
-      (txn) => store.backend.readViewTargetVersionInTxn(txn, _kView, _kType),
-    );
-
 Future<Map<String, Object?>?> _row(EventStore store, String aggregateId) =>
-    store.backend.transaction(
-      (txn) => store.backend.readViewRowInTxn(txn, _kView, aggregateId),
+    store.reader.transaction(
+      (txn) async => (await store.reader.readViewRowInTxn(
+        txn,
+        _kView,
+        aggregateId,
+      )).row.dataOrNull,
     );
-
-Future<int> _promotionAudits(EventStore store) async {
-  final events = await store.backend.findAllEvents(
-    entryType: kViewSnapshotPromotedEntryType,
-  );
-  return events.where((e) => e.data['viewName'] == _kView).length;
-}
 
 /// Registers the version-compatibility scenarios against databases produced
 /// by [openDatabase]. A null database skips the test.
@@ -241,779 +134,18 @@ void runVersionCompatibilityScenarios(
       db = null;
     });
 
-    group('re-promotion after an older minor folds', () {
-      // Verifies: EVS-DEV-version-compatibility/E
-      // Verifies: EVS-DEV-snapshot-promotion-on-open/A
-      test('an older minor lowers the stored target; the next newer open '
-          're-promotes the rows it folded', () async {
-        if (db == null) return;
-        final newer = await _openNewer(db!);
-        await _appendNote(newer, 'agg-n', <String, Object?>{'a': 1, 'b': 5});
-        expect(await _storedTarget(newer), const EntryTypeVersion(1, 1));
-        final auditsBefore = await _promotionAudits(newer);
-
-        final older = await _openOlder(db!);
-        // The older build opens a database whose target is a higher minor
-        // of its major, and leaves the target as it is until it folds.
-        expect(await _storedTarget(older), const EntryTypeVersion(1, 1));
-        await _appendNote(older, 'agg-o', <String, Object?>{'a': 2});
-        _expectRowWithoutDefault(await _row(older, 'agg-o'), 2);
-        expect(await _storedTarget(older), const EntryTypeVersion(1, 0));
-
-        final reopened = await _openNewer(db!);
-        expect((await _row(reopened, 'agg-o'))!['b'], 0);
-        expect((await _row(reopened, 'agg-o'))!['a'], 2);
-        expect((await _row(reopened, 'agg-n'))!['b'], 5);
-        expect(await _storedTarget(reopened), const EntryTypeVersion(1, 1));
-        expect(await _promotionAudits(reopened), auditsBefore + 1);
-      });
-
-      // Verifies: EVS-DEV-version-compatibility/E
-      // Verifies: EVS-DEV-snapshot-promotion-on-open/A
-      test('canary order: the newer build promotes while the older serves; '
-          "the older build's later fold is re-promoted", () async {
-        if (db == null) return;
-        final older = await _openOlder(db!);
-        await _appendNote(older, 'agg-1', <String, Object?>{'a': 1});
-        expect(await _storedTarget(older), const EntryTypeVersion(1, 0));
-
-        final newer = await _openNewer(db!);
-        expect((await _row(newer, 'agg-1'))!['b'], 0);
-        expect(await _storedTarget(newer), const EntryTypeVersion(1, 1));
-
-        // The older build is still serving and folds after the promotion.
-        await _appendNote(older, 'agg-2', <String, Object?>{'a': 2});
-        _expectRowWithoutDefault(await _row(older, 'agg-2'), 2);
-        expect(await _storedTarget(older), const EntryTypeVersion(1, 0));
-
-        final auditsBefore = await _promotionAudits(older);
-        final reopened = await _openNewer(db!);
-        expect((await _row(reopened, 'agg-2'))!['b'], 0);
-        expect((await _row(reopened, 'agg-1'))!['b'], 0);
-        expect(await _storedTarget(reopened), const EntryTypeVersion(1, 1));
-        expect(await _promotionAudits(reopened), auditsBefore + 1);
-      });
-
-      // Verifies: EVS-DEV-snapshot-promotion-on-open/D
-      test('after re-promotion, rebuildView under the newer build yields the '
-          'same rows', () async {
-        if (db == null) return;
-        final newer = await _openNewer(db!);
-        await _appendNote(newer, 'agg-n', <String, Object?>{'a': 1, 'b': 5});
-        final older = await _openOlder(db!);
-        await _appendNote(older, 'agg-o', <String, Object?>{'a': 2});
-        await _appendNote(older, 'agg-n', <String, Object?>{'a': 3});
-        final reopened = await _openNewer(db!);
-
-        final promoted = await reopened.backend.findViewRows(_kView);
-        await rebuildView(
-          store: reopened,
-          viewName: _kView,
-          targetVersionByEntryType: const <String, EntryTypeVersion>{
-            _kType: EntryTypeVersion(1, 1),
-          },
-        );
-        final rebuilt = await reopened.backend.findViewRows(_kView);
-        expect(rebuilt, promoted);
-        expect(await _storedTarget(reopened), const EntryTypeVersion(1, 1));
-      });
-
-      // Verifies: EVS-DEV-version-compatibility/E
-      test('a fold at the stored target, or under a higher minor than it, '
-          'writes no target', () async {
-        if (db == null) return;
-        final newer = await _openNewer(db!);
-        await _appendNote(newer, 'agg-1', <String, Object?>{'a': 1});
-        expect(await _storedTarget(newer), const EntryTypeVersion(1, 1));
-
-        // Stage a stored target below the registered version, as a
-        // concurrent older build's fold leaves it.
-        await newer.backend.transaction(
-          (txn) => newer.backend.writeViewTargetVersionInTxn(
-            txn,
-            _kView,
-            _kType,
-            const EntryTypeVersion(1, 0),
-          ),
-        );
-        await _appendNote(newer, 'agg-2', <String, Object?>{'a': 2});
-        expect(
-          await _storedTarget(newer),
-          const EntryTypeVersion(1, 0),
-          reason: 'a fold never raises the stored target; the next open does',
-        );
-      });
-
-      // Verifies: EVS-DEV-version-compatibility/E
-      test('a fold whose transaction fails leaves the stored target as it '
-          'was', () async {
-        if (db == null) return;
-        await _openNewer(db!);
-        final older = await _openOlder(db!);
-        final eventsBefore = await older.backend.findAllEvents();
-        EntryTypeVersion? targetInFold;
-        Map<String, Object?>? rowInFold;
-        await expectLater(
-          older.runTransaction<void>((txn, collector) async {
-            await older.appendInTxn(
-              txn,
-              collector: collector,
-              flowToken: null,
-              metadata: null,
-              security: null,
-              checkpointReason: null,
-              changeReason: null,
-              dedupeByContent: false,
-              entryType: _kType,
-              aggregateId: 'agg-1',
-              aggregateType: 'note',
-              eventType: 'finalized',
-              data: const <String, Object?>{'a': 1},
-              initiator: const UserInitiator('versions-user'),
-            );
-            // The fold lowers the target inside its own transaction.
-            targetInFold = await older.backend.readViewTargetVersionInTxn(
-              txn,
-              _kView,
-              _kType,
-            );
-            rowInFold = await older.backend.readViewRowInTxn(
-              txn,
-              _kView,
-              'agg-1',
-            );
-            throw StateError('injected failure after the fold');
-          }),
-          throwsStateError,
-        );
-        expect(targetInFold, const EntryTypeVersion(1, 0));
-        expect(rowInFold, isNotNull);
-        expect(rowInFold!['a'], 1);
-        expect(await _storedTarget(older), const EntryTypeVersion(1, 1));
-        expect(await _row(older, 'agg-1'), isNull);
-        expect(
-          (await older.backend.findAllEvents()).length,
-          eventsBefore.length,
-        );
-      });
-    });
-
-    group('boot promotion yields the rows replay yields', () {
-      // Verifies: EVS-DEV-snapshot-promotion-on-open/B+D
-      test('an aggregate whose only events are of the newer minor and never '
-          'set the defaulted field keeps no default', () async {
-        if (db == null) return;
-        final newer = await _openNewer(db!);
-        await _appendNote(newer, 'agg-n', <String, Object?>{'a': 1});
-        final older = await _openOlder(db!);
-        await _appendNote(older, 'agg-o', <String, Object?>{'a': 2});
-        expect(await _storedTarget(older), const EntryTypeVersion(1, 0));
-
-        final reopened = await _openNewer(db!);
-        final rows = await _expectRebuildMatches(reopened, <String>[
-          _kView,
-        ], const EntryTypeVersion(1, 1));
-        _expectRowWithoutDefault(_rowOf(rows[_kView]!, 'agg-n'), 1);
-        expect(_rowOf(rows[_kView]!, 'agg-o')!['b'], 0);
-      });
-
-      // Verifies: EVS-DEV-snapshot-promotion-on-open/B+D
-      test('an older-minor event then a newer-minor event of one aggregate, '
-          'folded by different builds', () async {
-        if (db == null) return;
-        final older = await _openOlder(db!);
-        await _appendNote(older, 'agg-m', <String, Object?>{'a': 1});
-        final newer = await _openNewer(db!);
-        await _appendNote(newer, 'agg-m', <String, Object?>{'a': 2});
-        await _appendNote(older, 'agg-x', <String, Object?>{'a': 9});
-
-        final reopened = await _openNewer(db!);
-        final rows = await _expectRebuildMatches(reopened, <String>[
-          _kView,
-        ], const EntryTypeVersion(1, 1));
-        expect(_rowOf(rows[_kView]!, 'agg-m')!['a'], 2);
-        expect(_rowOf(rows[_kView]!, 'agg-m')!['b'], 0);
-      });
-
-      // Verifies: EVS-DEV-snapshot-promotion-on-open/B+D
-      test('a newer-minor event then an older-minor event of one aggregate, '
-          'folded by different builds', () async {
-        if (db == null) return;
-        final newer = await _openNewer(db!);
-        await _appendNote(newer, 'agg-m', <String, Object?>{'a': 1});
-        final older = await _openOlder(db!);
-        await _appendNote(older, 'agg-m', <String, Object?>{'a': 2});
-        _expectRowWithoutDefault(await _row(older, 'agg-m'), 2);
-
-        final reopened = await _openNewer(db!);
-        final rows = await _expectRebuildMatches(reopened, <String>[
-          _kView,
-        ], const EntryTypeVersion(1, 1));
-        expect(_rowOf(rows[_kView]!, 'agg-m')!['a'], 2);
-        expect(_rowOf(rows[_kView]!, 'agg-m')!['b'], 0);
-      });
-
-      // Verifies: EVS-DEV-snapshot-promotion-on-open/B+D
-      test('an aggregate tombstoned and recreated by newer-minor events '
-          'keeps no default from before the tombstone', () async {
-        if (db == null) return;
-        final older = await _openOlder(db!);
-        await _appendNote(older, 'agg-t', <String, Object?>{'a': 1});
-        await _appendNote(
-          older,
-          'agg-t',
-          const <String, Object?>{},
-          eventType: 'deleted',
-        );
-        final newer = await _openNewer(db!);
-        await _appendNote(newer, 'agg-t', <String, Object?>{'a': 2});
-        await _appendNote(older, 'agg-z', <String, Object?>{'a': 0});
-
-        final reopened = await _openNewer(db!);
-        final rows = await _expectRebuildMatches(reopened, <String>[
-          _kView,
-        ], const EntryTypeVersion(1, 1));
-        _expectRowWithoutDefault(_rowOf(rows[_kView]!, 'agg-t'), 2);
-      });
-
-      // Verifies: EVS-DEV-snapshot-promotion-on-open/A+B+D
-      // Verifies: EVS-DEV-version-compatibility/E
-      test('table views, keyed by composite key or by aggregate, are '
-          're-derived as rebuildView derives them', () async {
-        if (db == null) return;
-        final older = await _openOlder(db!, projections: _kTableSpecs);
-        await _appendNote(older, 'agg-1', <String, Object?>{
-          'list': 'l1',
-          'item': 'i1',
-          'a': 1,
-        });
-        final newer = await _openNewer(db!, projections: _kTableSpecs);
-        await _appendNote(newer, 'agg-2', <String, Object?>{
-          'list': 'l1',
-          'item': 'i2',
-          'a': 2,
-        });
-        await _appendNote(older, 'agg-3', <String, Object?>{
-          'list': 'l2',
-          'item': 'i1',
-          'a': 3,
-        });
-        await _appendNote(older, 'agg-4', <String, Object?>{
-          'list': 'l2',
-          'item': 'i2',
-          'a': 4,
-        });
-        await _appendNote(older, 'agg-4', const <String, Object?>{
-          'list': 'l2',
-          'item': 'i2',
-        }, eventType: 'deleted');
-
-        final reopened = await _openNewer(db!, projections: _kTableSpecs);
-        final rows = await _expectRebuildMatches(reopened, <String>[
-          _kView,
-          _kItemsView,
-          _kTitlesView,
-        ], const EntryTypeVersion(1, 1));
-        final items = rows[_kItemsView]!;
-        expect(_rowOf(items, 'l1|i1')!['b'], 0);
-        _expectRowWithoutDefault(_rowOf(items, 'l1|i2'), 2);
-        expect(_rowOf(items, 'l2|i1')!['b'], 0);
-        expect(_rowOf(items, 'l2|i2'), isNull);
-        final titles = rows[_kTitlesView]!;
-        expect(titles.map((r) => r['aggregateId']).toSet(), <String>{
-          'agg-1',
-          'agg-2',
-          'agg-3',
-        });
-        for (final row in titles) {
-          expect(row, isNot(contains('b')));
-        }
-        for (final view in <String>[_kView, _kItemsView, _kTitlesView]) {
-          final target = await reopened.backend.transaction(
-            (txn) =>
-                reopened.backend.readViewTargetVersionInTxn(txn, view, _kType),
-          );
-          expect(target, const EntryTypeVersion(1, 1), reason: view);
-        }
-      });
-    });
-
-    group('a chain across a major decides each default under its final '
-        'name', () {
-      // `1.0 -> 1.1` adds `x`; `1.1 -> 2.0` renames `x` to `y`.
-      const steps = <PromoterSpec>[
-        PromoterSpec(
-          viewName: _kView,
-          entryType: _kType,
-          fromVersion: EntryTypeVersion(1, 0),
-          toVersion: EntryTypeVersion(1, 1),
-          transforms: <TransformPrimitive>[
-            DefaultField(fieldName: 'x', defaultValue: 0),
-          ],
-        ),
-        PromoterSpec(
-          viewName: _kView,
-          entryType: _kType,
-          fromVersion: EntryTypeVersion(1, 1),
-          toVersion: EntryTypeVersion(2, 0),
-          transforms: <TransformPrimitive>[
-            RenameField(sourceField: 'x', targetField: 'y'),
-          ],
-        ),
-      ];
-
-      // Verifies: EVS-DEV-ingest-promotes-before-fold/A
-      // Verifies: EVS-DEV-snapshot-promotion-on-open/D
-      // Verifies: EVS-DEV-version-compatibility/D
-      test('promotion at the major bump and lower-major ingest keep a value '
-          'the row holds under the renamed field', () async {
-        if (db == null) return;
-        final v11 = await _openStore(
-          db!,
-          registered: const EntryTypeVersion(1, 1),
-          promoters: <PromoterSpec>[steps.first],
-        );
-        await _appendNote(v11, 'agg-r', <String, Object?>{'x': 5});
-        final v10 = await _openStore(
-          db!,
-          registered: const EntryTypeVersion(1, 0),
-        );
-        await _appendNote(v10, 'agg-r', <String, Object?>{'a': 3});
-        await _appendNote(v10, 'agg-s', <String, Object?>{'a': 4});
-        // The major bump is deployed stop-then-start.
-        await db!.stop(v11);
-        await db!.stop(v10);
-
-        final v20 = await _openStore(
-          db!,
-          registered: const EntryTypeVersion(2, 0),
-          promoters: steps,
-        );
-        var rows = await _expectRebuildMatches(v20, <String>[
-          _kView,
-        ], const EntryTypeVersion(2, 0));
-        expect(_rowOf(rows[_kView]!, 'agg-r')!['y'], 5);
-        expect(_rowOf(rows[_kView]!, 'agg-r')!['a'], 3);
-        expect(_rowOf(rows[_kView]!, 'agg-r'), isNot(contains('x')));
-        expect(_rowOf(rows[_kView]!, 'agg-s')!['y'], 0);
-
-        // A lagging peer's events of the lower major, through both ingest
-        // entry points, into the aggregate that holds `y`.
-        await v20.ingestEvent(
-          _peerEvent(
-            entryTypeVersion: const EntryTypeVersion(1, 0),
-            dataFormat: LibVersion.dataFormat,
-            data: const <String, Object?>{'a': 7},
-            aggregateId: 'agg-r',
-          ),
-        );
-        expect((await _row(v20, 'agg-r'))!['y'], 5);
-        await v20.ingestBatch(
-          _batchOf(
-            _peerEvent(
-              entryTypeVersion: const EntryTypeVersion(1, 1),
-              dataFormat: LibVersion.dataFormat,
-              data: const <String, Object?>{'a': 8},
-              aggregateId: 'agg-r',
-            ),
-          ),
-          wireFormat: BatchEnvelope.wireFormat,
-        );
-        await v20.ingestEvent(
-          _peerEvent(
-            entryTypeVersion: const EntryTypeVersion(1, 0),
-            dataFormat: LibVersion.dataFormat,
-            data: const <String, Object?>{'a': 9},
-            aggregateId: 'agg-new',
-          ),
-        );
-        rows = await _expectRebuildMatches(v20, <String>[
-          _kView,
-        ], const EntryTypeVersion(2, 0));
-        expect(_rowOf(rows[_kView]!, 'agg-r')!['y'], 5);
-        expect(_rowOf(rows[_kView]!, 'agg-r')!['a'], 8);
-        expect(_rowOf(rows[_kView]!, 'agg-new')!['y'], 0);
-      });
-    });
-
-    group('views catch up with the log', () {
-      const otherType = 'versioned_label';
-      const newView = 'versioned_note_titles_new';
-      const newViewSpec = AggregateProjectionSpec(
-        viewName: newView,
-        interest: SubscriptionFilter(entryTypes: <String>{_kType}),
-        tombstoneEventTypes: <String>{},
-      );
-      const widenedSpec = AggregateProjectionSpec(
-        viewName: _kView,
-        interest: SubscriptionFilter(entryTypes: <String>{_kType, otherType}),
-        tombstoneEventTypes: <String>{'deleted'},
-      );
-
-      /// Opens a build registering [_kType] at `1.0`, [otherType] when
-      /// [withOther], and [projections].
-      Future<EventStore> openBuild(
-        List<ProjectionSpec> projections, {
-        bool withOther = false,
-      }) async {
-        final backend = await db!.openBackend();
-        final entryTypes = EntryTypeRegistry();
-        for (final definition in kSystemEntryTypes) {
-          entryTypes.register(definition);
-        }
-        entryTypes.register(
-          const EntryTypeDefinition(
-            id: _kType,
-            registeredVersion: EntryTypeVersion(1, 0),
-            name: _kType,
-          ),
-        );
-        if (withOther) {
-          entryTypes.register(
-            const EntryTypeDefinition(
-              id: otherType,
-              registeredVersion: EntryTypeVersion(1, 0),
-              name: otherType,
-            ),
-          );
-        }
-        final registry = ProjectionRegistry();
-        for (final spec in projections) {
-          registry.register(spec);
-        }
-        return EventStore.open(
-          storage: backend,
-          entryTypes: entryTypes,
-          source: _kSource,
-          securityContexts: db!.securityFor(backend),
-          projections: registry,
-        );
-      }
-
-      Future<bool> behind(EventStore store, String view, String entryType) =>
-          store.backend.transaction(
-            (txn) =>
-                store.backend.readViewTargetBehindInTxn(txn, view, entryType),
-          );
-
-      Future<List<Map<String, Object?>>> rowsAfterRebuild(
-        EventStore store,
-        String view,
-        Map<String, EntryTypeVersion> targets,
-      ) async {
-        final held = _sortedRows(await store.backend.findViewRows(view));
-        await rebuildView(
-          store: store,
-          viewName: view,
-          targetVersionByEntryType: targets,
-        );
-        expect(
-          _sortedRows(await store.backend.findViewRows(view)),
-          held,
-          reason: 'view $view: rebuildView differs',
-        );
-        return held;
-      }
-
-      // Verifies: EVS-DEV-version-compatibility/L
-      test('a new view over an existing entry type is derived at its first '
-          'open, marked behind by the build that does not register it, and '
-          're-derived at the next open', () async {
-        if (db == null) return;
-        final older = await openBuild(<ProjectionSpec>[_kSpec]);
-        await _appendNote(older, 'agg-1', <String, Object?>{'a': 1});
-        await _appendNote(older, 'agg-2', <String, Object?>{'a': 2});
-
-        final newer = await openBuild(<ProjectionSpec>[_kSpec, newViewSpec]);
-        expect(await newer.backend.findViewRows(newView), hasLength(2));
-
-        // The older build keeps serving: its appends are not folded into the
-        // new view, and mark it.
-        await _appendNote(older, 'agg-3', <String, Object?>{'a': 3});
-        expect(await behind(older, newView, _kType), isTrue);
-        expect(await behind(older, _kView, _kType), isFalse);
-        expect(await newer.backend.findViewRows(newView), hasLength(2));
-
-        final reopened = await openBuild(<ProjectionSpec>[_kSpec, newViewSpec]);
-        expect(await behind(reopened, newView, _kType), isFalse);
-        final rows = await rowsAfterRebuild(reopened, newView, {
-          _kType: const EntryTypeVersion(1, 0),
-        });
-        expect(rows.map((r) => r['aggregateId']), <String>[
-          'agg-1',
-          'agg-2',
-          'agg-3',
-        ]);
-      });
-
-      // Verifies: EVS-DEV-version-compatibility/L
-      test("an entry type added to a view's interest, ingested by the older "
-          'build, marks the view, and the next open of the newer build '
-          're-derives it', () async {
-        if (db == null) return;
-        final newer = await openBuild(<ProjectionSpec>[
-          widenedSpec,
-        ], withOther: true);
-        await _appendNote(newer, 'agg-1', <String, Object?>{'a': 1});
-
-        final older = await openBuild(<ProjectionSpec>[_kSpec]);
-        await older.ingestEvent(
-          _peerEvent(
-            entryTypeVersion: const EntryTypeVersion(1, 0),
-            dataFormat: LibVersion.dataFormat,
-            data: const <String, Object?>{'label': 'peer'},
-            aggregateId: 'agg-1',
-            entryType: otherType,
-          ),
-        );
-        expect(await behind(older, _kView, otherType), isTrue);
-        expect(await behind(older, _kView, _kType), isFalse);
-        final before = await older.backend.transaction(
-          (txn) => older.backend.readViewRowInTxn(txn, _kView, 'agg-1'),
-        );
-        expect(before!.containsKey('label'), isFalse);
-
-        final reopened = await openBuild(<ProjectionSpec>[
-          widenedSpec,
-        ], withOther: true);
-        expect(await behind(reopened, _kView, otherType), isFalse);
-        final rows = await rowsAfterRebuild(reopened, _kView, {
-          _kType: const EntryTypeVersion(1, 0),
-          otherType: const EntryTypeVersion(1, 0),
-        });
-        expect(_rowOf(rows, 'agg-1')!['label'], 'peer');
-        expect(_rowOf(rows, 'agg-1')!['a'], 1);
-      });
-
-      // Verifies: EVS-DEV-version-compatibility/L
-      test('a new table view over an existing entry type is derived whole at '
-          'its first open, marked by the build that does not register it, and '
-          're-derived whole at the next open', () async {
-        if (db == null) return;
-        const tableView = 'versioned_note_values_new';
-        const tableSpec = TableProjectionSpec(
-          viewName: tableView,
-          interest: SubscriptionFilter(entryTypes: <String>{_kType}),
-          insertEventTypes: <String>{'finalized'},
-          removeEventTypes: <String>{'deleted'},
-          rowKey: CompositeKey(<String>['data.list', 'data.item']),
-          rowData: WholePayload(),
-        );
-        Future<List<Map<String, Object?>>> tableRows(EventStore store) async {
-          final rows = <Map<String, Object?>>[
-            for (final row in await store.backend.findViewRows(tableView))
-              Map<String, Object?>.from(row),
-          ];
-          String key(Map<String, Object?> row) =>
-              '${row['list']}/${row['item']}';
-          return rows..sort((x, y) => key(x).compareTo(key(y)));
-        }
-
-        final older = await openBuild(<ProjectionSpec>[_kSpec]);
-        await _appendNote(older, 'agg-1', <String, Object?>{
-          'list': 'l1',
-          'item': 'i1',
-          'a': 1,
-        });
-        await _appendNote(older, 'agg-2', <String, Object?>{
-          'list': 'l1',
-          'item': 'i2',
-          'a': 2,
-        });
-
-        final newer = await openBuild(<ProjectionSpec>[_kSpec, tableSpec]);
-        expect(await tableRows(newer), hasLength(2));
-
-        // The older build appends a new row and removes one: neither folds
-        // into the table view, and the view is marked.
-        await _appendNote(older, 'agg-3', <String, Object?>{
-          'list': 'l2',
-          'item': 'i3',
-          'a': 3,
-        });
-        await _appendNote(older, 'agg-1', <String, Object?>{
-          'list': 'l1',
-          'item': 'i1',
-        }, eventType: 'deleted');
-        expect(await behind(older, tableView, _kType), isTrue);
-        expect(await tableRows(newer), hasLength(2));
-
-        final reopened = await openBuild(<ProjectionSpec>[_kSpec, tableSpec]);
-        expect(await behind(reopened, tableView, _kType), isFalse);
-        final held = await tableRows(reopened);
-        await rebuildView(
-          store: reopened,
-          viewName: tableView,
-          targetVersionByEntryType: const <String, EntryTypeVersion>{
-            _kType: EntryTypeVersion(1, 0),
-          },
-        );
-        expect(await tableRows(reopened), held, reason: 'rebuildView differs');
-        expect(held.map((row) => row['item']), <String>['i2', 'i3']);
-      });
-
-      // Verifies: EVS-DEV-version-compatibility/L
-      test('a view whose interest names no entry types is not caught up: a '
-          'new one registered over existing events stays empty until '
-          'rebuildView', () async {
-        if (db == null) return;
-        const byAggregateView = 'versioned_notes_by_aggregate_type';
-        const byAggregateSpec = AggregateProjectionSpec(
-          viewName: byAggregateView,
-          interest: SubscriptionFilter(aggregateTypes: <String>{'note'}),
-          tombstoneEventTypes: <String>{},
-        );
-        final older = await openBuild(<ProjectionSpec>[_kSpec]);
-        await _appendNote(older, 'agg-1', <String, Object?>{'a': 1});
-        await _appendNote(older, 'agg-2', <String, Object?>{'a': 2});
-
-        final newer = await openBuild(<ProjectionSpec>[
-          _kSpec,
-          byAggregateSpec,
-        ]);
-        expect(await newer.backend.findViewRows(byAggregateView), isEmpty);
-        expect(
-          await newer.backend.transaction(
-            (txn) =>
-                newer.backend.readViewTargetsForEntryTypeInTxn(txn, _kType),
-          ),
-          isNot(contains(byAggregateView)),
-          reason: 'no target is stored for an interest without entry types',
-        );
-
-        await rebuildView(
-          store: newer,
-          viewName: byAggregateView,
-          targetVersionByEntryType: const <String, EntryTypeVersion>{
-            _kType: EntryTypeVersion(1, 0),
-          },
-        );
-        final rows = _sortedRows(
-          await newer.backend.findViewRows(byAggregateView),
-        );
-        expect(rows.map((r) => r['aggregateId']), <String>['agg-1', 'agg-2']);
-      });
-
-      // Verifies: EVS-DEV-version-compatibility/L
-      test('builds whose interests for one view differ only in aggregate '
-          'types mark nothing: the event only the wider interest matches '
-          'stays out of the view until rebuildView', () async {
-        if (db == null) return;
-        const narrowSpec = AggregateProjectionSpec(
-          viewName: _kView,
-          interest: SubscriptionFilter(
-            entryTypes: <String>{_kType},
-            aggregateTypes: <String>{'note'},
-          ),
-          tombstoneEventTypes: <String>{'deleted'},
-        );
-        const wideSpec = AggregateProjectionSpec(
-          viewName: _kView,
-          interest: SubscriptionFilter(
-            entryTypes: <String>{_kType},
-            aggregateTypes: <String>{'note', 'memo'},
-          ),
-          tombstoneEventTypes: <String>{'deleted'},
-        );
-        await openBuild(<ProjectionSpec>[wideSpec]);
-        final older = await openBuild(<ProjectionSpec>[narrowSpec]);
-        await older.append(
-          entryType: _kType,
-          aggregateId: 'memo-1',
-          aggregateType: 'memo',
-          eventType: 'finalized',
-          data: const <String, Object?>{'a': 1},
-          initiator: const UserInitiator('versions-user'),
-        );
-        expect(await behind(older, _kView, _kType), isFalse);
-
-        final reopened = await openBuild(<ProjectionSpec>[wideSpec]);
-        expect(
-          await reopened.backend.transaction(
-            (txn) => reopened.backend.readViewRowInTxn(txn, _kView, 'memo-1'),
-          ),
-          isNull,
-        );
-        await rebuildView(
-          store: reopened,
-          viewName: _kView,
-          targetVersionByEntryType: const <String, EntryTypeVersion>{
-            _kType: EntryTypeVersion(1, 0),
-          },
-        );
-        final row = await reopened.backend.transaction(
-          (txn) => reopened.backend.readViewRowInTxn(txn, _kView, 'memo-1'),
-        );
-        expect(row!['a'], 1);
-      });
-
-      // Verifies: EVS-DEV-version-compatibility/L
-      test('a build that registers the view and names the entry type marks '
-          'nothing, whether or not its interest matches the event', () async {
-        if (db == null) return;
-        final store = await openBuild(<ProjectionSpec>[_kSpec, newViewSpec]);
-        await _appendNote(store, 'agg-1', <String, Object?>{'a': 1});
-        await _appendNote(
-          store,
-          'agg-1',
-          <String, Object?>{},
-          eventType: 'deleted',
-        );
-        expect(await behind(store, _kView, _kType), isFalse);
-        expect(await behind(store, newView, _kType), isFalse);
-      });
-
-      // Verifies: EVS-DEV-version-compatibility/L
-      test('a mark whose append does not commit is not kept', () async {
-        if (db == null) return;
-        await openBuild(<ProjectionSpec>[_kSpec, newViewSpec]);
-        final older = await openBuild(<ProjectionSpec>[_kSpec]);
-        await expectLater(
-          older.runTransaction<void>((txn, collector) async {
-            await older.appendInTxn(
-              txn,
-              entryType: _kType,
-              aggregateId: 'agg-1',
-              aggregateType: 'note',
-              eventType: 'finalized',
-              data: const <String, Object?>{'a': 1},
-              initiator: const UserInitiator('versions-user'),
-              flowToken: null,
-              metadata: null,
-              security: null,
-              checkpointReason: null,
-              changeReason: null,
-              dedupeByContent: false,
-              collector: collector,
-            );
-            expect(
-              await older.backend.readViewTargetBehindInTxn(
-                txn,
-                newView,
-                _kType,
-              ),
-              isTrue,
-            );
-            throw StateError('roll back');
-          }),
-          throwsStateError,
-        );
-        expect(await behind(older, newView, _kType), isFalse);
-      });
-    });
-
     group('downgrade refusal compares majors', () {
       // Verifies: EVS-DEV-entry-type-downgrade-refusal/A+C
-      test('a stored 2.0 target refuses a build registering 1.5, naming both '
-          'versions, and changes nothing', () async {
+      test('a generation record of major 2 refuses a build registering 1.5, '
+          'naming both majors, and changes nothing', () async {
         if (db == null) return;
         final current = await _openStore(
           db!,
           registered: const EntryTypeVersion(2, 0),
         );
         await _appendNote(current, 'agg-1', <String, Object?>{'a': 1});
-        final eventsBefore = await current.backend.findAllEvents();
-        final counterBefore = await current.backend.readSequenceCounter();
+        final eventsBefore = await current.reader.findAllEvents();
+        final counterBefore = await current.reader.readSequenceCounter();
         await db!.stop(current);
         final reader = await db!.openBackend();
 
@@ -1039,25 +171,18 @@ void runVersionCompatibilityScenarios(
                 ),
           ),
         );
-        expect(
-          await reader.transaction(
-            (txn) => reader.readViewTargetVersionInTxn(txn, _kView, _kType),
-          ),
-          const EntryTypeVersion(2, 0),
-        );
         expect((await reader.findAllEvents()).length, eventsBefore.length);
         expect(await reader.readSequenceCounter(), counterBefore);
       });
 
       // Verifies: EVS-DEV-entry-type-downgrade-refusal/A
-      test('a stored 1.3 target opens under a build registering 1.1', () async {
+      test('a generation record of major 1 admits a build registering a lower '
+          'minor of the same major', () async {
         if (db == null) return;
         await _openStore(db!, registered: const EntryTypeVersion(1, 3));
-        final older = await _openStore(
-          db!,
-          registered: const EntryTypeVersion(1, 1),
-        );
-        expect(await _storedTarget(older), const EntryTypeVersion(1, 3));
+        // Majors only rise: a lower minor of the same major is not a
+        // downgrade and opens without throwing.
+        await _openStore(db!, registered: const EntryTypeVersion(1, 1));
       });
     });
 
@@ -1079,54 +204,55 @@ void runVersionCompatibilityScenarios(
       );
 
       final paths = <String, Future<void> Function(EventStore, StoredEvent)>{
-        'ingestBatch': (store, event) async {
-          await store.ingestBatch(
-            _batchOf(event),
-            wireFormat: BatchEnvelope.wireFormat,
-          );
+        'delivery': (store, event) async {
+          await deliverEventsOrThrow(store, <StoredEvent>[event]);
         },
         'ingestEvent': (store, event) async {
-          await store.ingestEvent(event);
+          await ingestEventForTest(store, event);
         },
       };
 
-      final refusals = <String, (EntryTypeVersion, DataFormatVersion, Matcher)>{
-        'data format 1.0': (
-          const EntryTypeVersion(1, 4),
-          const DataFormatVersion(1, 0),
-          isA<IngestDataFormatIncompatible>()
-              .having(
-                (e) => e.wireFormat,
-                'wireFormat',
-                const DataFormatVersion(1, 0),
-              )
-              .having(
-                (e) => e.receiverFormat,
-                'receiverFormat',
-                LibVersion.dataFormat,
-              ),
-        ),
-        'data format 3.0': (
-          const EntryTypeVersion(1, 4),
-          const DataFormatVersion(3, 0),
-          isA<IngestDataFormatIncompatible>(),
-        ),
-        'entry type 2.0 under 1.4': (
-          const EntryTypeVersion(2, 0),
-          LibVersion.dataFormat,
-          isA<IngestEntryTypeVersionAhead>()
-              .having(
-                (e) => e.wireVersion,
-                'wireVersion',
-                const EntryTypeVersion(2, 0),
-              )
-              .having(
-                (e) => e.receiverVersion,
-                'receiverVersion',
-                const EntryTypeVersion(1, 4),
-              ),
-        ),
-      };
+      final refusals =
+          <String, (EntryTypeVersion, DataFormatVersion, Matcher, String)>{
+            'data format 1.0': (
+              const EntryTypeVersion(1, 4),
+              const DataFormatVersion(1, 0),
+              isA<IngestDataFormatIncompatible>()
+                  .having(
+                    (e) => e.wireFormat,
+                    'wireFormat',
+                    const DataFormatVersion(1, 0),
+                  )
+                  .having(
+                    (e) => e.receiverFormat,
+                    'receiverFormat',
+                    LibVersion.dataFormat,
+                  ),
+              IngestDataFormatIncompatible.refusalReason,
+            ),
+            'the next data-format major': (
+              const EntryTypeVersion(1, 4),
+              DataFormatVersion(LibVersion.dataFormat.major + 1, 0),
+              isA<IngestDataFormatIncompatible>(),
+              IngestDataFormatIncompatible.refusalReason,
+            ),
+            'entry type 2.0 under 1.4': (
+              const EntryTypeVersion(2, 0),
+              LibVersion.dataFormat,
+              isA<IngestEntryTypeVersionAhead>()
+                  .having(
+                    (e) => e.wireVersion,
+                    'wireVersion',
+                    const EntryTypeVersion(2, 0),
+                  )
+                  .having(
+                    (e) => e.receiverVersion,
+                    'receiverVersion',
+                    const EntryTypeVersion(1, 4),
+                  ),
+              IngestEntryTypeVersionAhead.refusalReason,
+            ),
+          };
 
       for (final path in paths.entries) {
         for (final refusal in refusals.entries) {
@@ -1134,41 +260,44 @@ void runVersionCompatibilityScenarios(
           test('${path.key} refuses ${refusal.key} before any write', () async {
             if (db == null) return;
             final receiver = await openReceiver();
-            final (entryVersion, dataFormat, matcher) = refusal.value;
-            final eventsBefore = await receiver.backend.findAllEvents();
-            final counterBefore = await receiver.backend.readSequenceCounter();
+            final (entryVersion, dataFormat, matcher, reason) = refusal.value;
+            final eventsBefore = await receiver.reader.findAllEvents();
+            final counterBefore = await receiver.reader.readSequenceCounter();
+            final event = _peerEvent(
+              entryTypeVersion: entryVersion,
+              dataFormat: dataFormat,
+              data: const <String, Object?>{'title': 'peer'},
+            );
             await expectLater(
-              path.value(
-                receiver,
-                _peerEvent(
-                  entryTypeVersion: entryVersion,
-                  dataFormat: dataFormat,
-                  data: const <String, Object?>{'title': 'peer'},
-                ),
+              path.value(receiver, event),
+              throwsA(
+                path.key == 'delivery'
+                    ? _refusedRejected(reason, event.eventId)
+                    : matcher,
               ),
-              throwsA(matcher),
             );
             expect(
-              (await receiver.backend.findAllEvents()).length,
+              (await receiver.reader.findAllEvents()).length,
               eventsBefore.length,
             );
-            expect(await receiver.backend.readSequenceCounter(), counterBefore);
-            expect(await receiver.backend.findViewRows(_kView), isEmpty);
+            expect(await receiver.reader.readSequenceCounter(), counterBefore);
+            expect((await receiver.reader.findViewRows(_kView)).rows, isEmpty);
           });
         }
 
         // Verifies: EVS-DEV-version-compatibility/D
-        test('${path.key} accepts data format 2.7', () async {
+        test('${path.key} accepts a later minor of the data format', () async {
           if (db == null) return;
           final receiver = await openReceiver();
+          final laterMinor = DataFormatVersion(LibVersion.dataFormat.major, 7);
           final event = _peerEvent(
             entryTypeVersion: const EntryTypeVersion(1, 4),
-            dataFormat: const DataFormatVersion(2, 7),
+            dataFormat: laterMinor,
             data: const <String, Object?>{'title': 'peer'},
           );
           await path.value(receiver, event);
-          final stored = await receiver.backend.findEventById(event.eventId);
-          expect(stored!.libFormatVersion, const DataFormatVersion(2, 7));
+          final stored = await receiver.reader.findEventById(event.eventId);
+          expect(stored!.libFormatVersion, laterMinor);
         });
 
         // Verifies: EVS-DEV-version-compatibility/D
@@ -1183,7 +312,7 @@ void runVersionCompatibilityScenarios(
             data: const <String, Object?>{'title': 'newer'},
           );
           await path.value(receiver, event);
-          final stored = await receiver.backend.findEventById(event.eventId);
+          final stored = await receiver.reader.findEventById(event.eventId);
           expect(stored!.entryTypeVersion, const EntryTypeVersion(1, 9));
           final row = await _row(receiver, event.aggregateId);
           expect(row!['title'], 'newer');
@@ -1204,7 +333,7 @@ void runVersionCompatibilityScenarios(
           final row = await _row(receiver, event.aggregateId);
           expect(row!['title'], 'older');
           expect(row['added'], 'default');
-          final stored = await receiver.backend.findEventById(event.eventId);
+          final stored = await receiver.reader.findEventById(event.eventId);
           expect(stored!.entryTypeVersion, const EntryTypeVersion(1, 0));
         });
       }
@@ -1212,9 +341,9 @@ void runVersionCompatibilityScenarios(
       // A batch whose later event is refused commits nothing, not even the
       // compatible event staged before it.
       final laterRefusals = <String, (EntryTypeVersion, DataFormatVersion)>{
-        'data format 3.0': (
+        'the next data-format major': (
           const EntryTypeVersion(1, 4),
-          const DataFormatVersion(3, 0),
+          DataFormatVersion(LibVersion.dataFormat.major + 1, 0),
         ),
         'entry type 2.0 under 1.4': (
           const EntryTypeVersion(2, 0),
@@ -1223,41 +352,45 @@ void runVersionCompatibilityScenarios(
       };
       for (final refusal in laterRefusals.entries) {
         // Verifies: EVS-DEV-version-compatibility/D
-        test('ingestBatch of [a compatible event, ${refusal.key}] writes '
+        test('a delivery of [a compatible event, ${refusal.key}] writes '
             'nothing', () async {
           if (db == null) return;
           final receiver = await openReceiver();
           await _appendNote(receiver, 'agg-held', <String, Object?>{'a': 1});
-          final eventsBefore = (await receiver.backend.findAllEvents()).length;
-          final counterBefore = await receiver.backend.readSequenceCounter();
-          final rowsBefore = await receiver.backend.findViewRows(_kView);
-          final targetBefore = await _storedTarget(receiver);
+          final eventsBefore = (await receiver.reader.findAllEvents()).length;
+          final counterBefore = await receiver.reader.readSequenceCounter();
+          final rowsBefore = (await receiver.reader.findViewRows(_kView)).rows;
           final (entryVersion, dataFormat) = refusal.value;
-          final bytes = _batchOfMaps(<Map<String, Object?>>[
-            _peerEvent(
-              entryTypeVersion: const EntryTypeVersion(1, 0),
-              dataFormat: LibVersion.dataFormat,
-              data: const <String, Object?>{'title': 'staged'},
-            ).toMap(),
-            _peerEvent(
-              entryTypeVersion: entryVersion,
-              dataFormat: dataFormat,
-              data: const <String, Object?>{'title': 'refused'},
-            ).toMap(),
-          ]);
+          final refused = _peerEvent(
+            entryTypeVersion: entryVersion,
+            dataFormat: dataFormat,
+            data: const <String, Object?>{'title': 'refused'},
+          );
           await expectLater(
-            receiver.ingestBatch(bytes, wireFormat: BatchEnvelope.wireFormat),
+            deliverEventsOrThrow(receiver, <StoredEvent>[
+              _peerEvent(
+                entryTypeVersion: const EntryTypeVersion(1, 0),
+                dataFormat: LibVersion.dataFormat,
+                data: const <String, Object?>{'title': 'staged'},
+              ),
+              refused,
+            ]),
             throwsA(
               anyOf(
-                isA<IngestDataFormatIncompatible>(),
-                isA<IngestEntryTypeVersionAhead>(),
+                _refusedRejected(
+                  IngestDataFormatIncompatible.refusalReason,
+                  refused.eventId,
+                ),
+                _refusedRejected(
+                  IngestEntryTypeVersionAhead.refusalReason,
+                  refused.eventId,
+                ),
               ),
             ),
           );
-          expect((await receiver.backend.findAllEvents()).length, eventsBefore);
-          expect(await receiver.backend.readSequenceCounter(), counterBefore);
-          expect(await receiver.backend.findViewRows(_kView), rowsBefore);
-          expect(await _storedTarget(receiver), targetBefore);
+          expect((await receiver.reader.findAllEvents()).length, eventsBefore);
+          expect(await receiver.reader.readSequenceCounter(), counterBefore);
+          expect((await receiver.reader.findViewRows(_kView)).rows, rowsBefore);
         });
       }
 
@@ -1270,8 +403,8 @@ void runVersionCompatibilityScenarios(
             db!,
             registered: const EntryTypeVersion(2, 0),
           );
-          final eventsBefore = (await receiver.backend.findAllEvents()).length;
-          final counterBefore = await receiver.backend.readSequenceCounter();
+          final eventsBefore = (await receiver.reader.findAllEvents()).length;
+          final counterBefore = await receiver.reader.readSequenceCounter();
           final event = _peerEvent(
             entryTypeVersion: const EntryTypeVersion(1, 3),
             dataFormat: LibVersion.dataFormat,
@@ -1280,25 +413,30 @@ void runVersionCompatibilityScenarios(
           await expectLater(
             path.value(receiver, event),
             throwsA(
-              isA<IngestEntryTypeVersionUnpromotable>()
-                  .having((e) => e.eventId, 'eventId', event.eventId)
-                  .having((e) => e.entryType, 'entryType', _kType)
-                  .having((e) => e.viewName, 'viewName', _kView)
-                  .having(
-                    (e) => e.wireVersion,
-                    'wireVersion',
-                    const EntryTypeVersion(1, 3),
-                  )
-                  .having(
-                    (e) => e.receiverVersion,
-                    'receiverVersion',
-                    const EntryTypeVersion(2, 0),
-                  ),
+              path.key == 'delivery'
+                  ? _refusedRejected(
+                      IngestEntryTypeVersionUnpromotable.refusalReason,
+                      event.eventId,
+                    )
+                  : isA<IngestEntryTypeVersionUnpromotable>()
+                        .having((e) => e.eventId, 'eventId', event.eventId)
+                        .having((e) => e.entryType, 'entryType', _kType)
+                        .having((e) => e.viewName, 'viewName', _kView)
+                        .having(
+                          (e) => e.wireVersion,
+                          'wireVersion',
+                          const EntryTypeVersion(1, 3),
+                        )
+                        .having(
+                          (e) => e.receiverVersion,
+                          'receiverVersion',
+                          const EntryTypeVersion(2, 0),
+                        ),
             ),
           );
-          expect((await receiver.backend.findAllEvents()).length, eventsBefore);
-          expect(await receiver.backend.readSequenceCounter(), counterBefore);
-          expect(await receiver.backend.findViewRows(_kView), isEmpty);
+          expect((await receiver.reader.findAllEvents()).length, eventsBefore);
+          expect(await receiver.reader.readSequenceCounter(), counterBefore);
+          expect((await receiver.reader.findViewRows(_kView)).rows, isEmpty);
         });
 
         // Verifies: EVS-DEV-version-compatibility/D
@@ -1313,23 +451,69 @@ void runVersionCompatibilityScenarios(
             entryType: 'unregistered_type',
           );
           await path.value(receiver, event);
-          final stored = await receiver.backend.findEventById(event.eventId);
+          final stored = await receiver.reader.findEventById(event.eventId);
           expect(stored!.entryTypeVersion, const EntryTypeVersion(9, 3));
           expect(stored.data, event.data);
-          expect(await receiver.backend.findViewRows(_kView), isEmpty);
+          expect((await receiver.reader.findViewRows(_kView)).rows, isEmpty);
         });
       }
 
-      // Verifies: EVS-DEV-version-compatibility/D
-      test('ingestBatch refuses an event with a malformed version as a decode '
-          'failure naming the field, before any write', () async {
+      // Verifies: EVS-DEV-version-compatibility/Q
+      test('an event of data format 2.0 that also lacks library_version and '
+          'causal is refused on every ingest entry point naming data-format '
+          'major 2, not a missing field, before any write', () async {
         if (db == null) return;
         final receiver = await openReceiver();
-        final eventsBefore = (await receiver.backend.findAllEvents()).length;
-        final counterBefore = await receiver.backend.readSequenceCounter();
+        final eventsBefore = (await receiver.reader.findAllEvents()).length;
+        final counterBefore = await receiver.reader.readSequenceCounter();
+        final record = _dataFormat2Record();
+        final refusal = isA<IngestDataFormatIncompatible>()
+            .having((e) => e.wireFormat.major, 'wireFormat.major', 2)
+            .having((e) => e.toString(), 'toString', contains('2.0'));
+        final answer = (await deliverTo(receiver, <Map<String, Object?>>[
+          record,
+        ], channel: testChannel(kPeerDatabaseId))).response;
+        expect(
+          answer,
+          isA<ReceiverRefusal>()
+              .having((r) => r.refusal, 'refusal', RefusalKind.rejected)
+              .having(
+                (r) => r.reason,
+                'reason',
+                IngestDataFormatIncompatible.refusalReason,
+              )
+              .having(
+                (r) => r.refusedEventId,
+                'refusedEventId',
+                record['event_id'],
+              ),
+        );
+        await expectLater(
+          ingestEventForTest(receiver, _dataFormat2Event(record)),
+          throwsA(refusal),
+        );
+        expect((await receiver.reader.findAllEvents()).length, eventsBefore);
+        expect(await receiver.reader.readSequenceCounter(), counterBefore);
+      });
+
+      // Verifies: EVS-DEV-version-compatibility/D
+      // Verifies: EVS-DEV-security-findings/O
+      test('a delivery keeps an event with a malformed version in an '
+          'event_malformed finding, storing no event for it', () async {
+        if (db == null) return;
+        final receiver = await openReceiver();
+        Future<List<String>> besideFindings() async => <String>[
+          for (final e in await receiver.reader.findAllEvents())
+            if (e.entryType != kSecurityFindingEntryType &&
+                e.eventType != 'ingest.delivery_accepted')
+              e.eventId,
+        ];
+        final eventsBefore = await besideFindings();
         final malformed = <String, Map<String, Object?>>{
           'entry_type_version': <String, Object?>{'major': 0, 'minor': 0},
-          'lib_format_version': <String, Object?>{'major': 2},
+          'lib_format_version': <String, Object?>{
+            'major': LibVersion.dataFormat.major,
+          },
         };
         for (final field in malformed.entries) {
           final map = Map<String, Object?>.from(
@@ -1339,22 +523,28 @@ void runVersionCompatibilityScenarios(
               data: const <String, Object?>{'title': 'malformed'},
             ).toMap(),
           )..[field.key] = field.value;
-          await expectLater(
-            receiver.ingestBatch(
-              _batchOfMaps(<Map<String, Object?>>[map]),
-              wireFormat: BatchEnvelope.wireFormat,
-            ),
-            throwsA(
-              isA<IngestDecodeFailure>().having(
-                (e) => e.message,
-                'message',
-                contains(field.key),
-              ),
-            ),
+          final delivery = await deliverTo(receiver, <Map<String, Object?>>[
+            map,
+          ]);
+          expect(await recordOutcomes(receiver, delivery), <IngestOutcome>[
+            IngestOutcome.keptInFinding,
+          ], reason: field.key);
+          final findings = await receiver.reader.findAllEvents(
+            entryType: kSecurityFindingEntryType,
+          );
+          expect(
+            findings.last.data['kind'],
+            'event_malformed',
+            reason: field.key,
+          );
+          expect(
+            ((findings.last.data['evidence']! as Map)['record']!
+                as Map)[field.key],
+            field.value,
+            reason: field.key,
           );
         }
-        expect((await receiver.backend.findAllEvents()).length, eventsBefore);
-        expect(await receiver.backend.readSequenceCounter(), counterBefore);
+        expect(await besideFindings(), eventsBefore);
       });
 
       // Verifies: EVS-DEV-version-compatibility/D
@@ -1362,27 +552,33 @@ void runVersionCompatibilityScenarios(
           'any write', () async {
         if (db == null) return;
         final receiver = await openReceiver();
-        final eventsBefore = await receiver.backend.findAllEvents();
-        final bytes = _batchOf(
-          _peerEvent(
-            entryTypeVersion: const EntryTypeVersion(1, 4),
-            dataFormat: LibVersion.dataFormat,
-            data: const <String, Object?>{'title': 'peer'},
+        final eventsBefore = await receiver.reader.findAllEvents();
+        // A batch in the envelope format of data format 1, which names no
+        // delivery channel.
+        final bytes = Uint8List.fromList(
+          utf8.encode(
+            jsonEncode(<String, Object?>{
+              'batch_format_version': '1',
+              'batch_id': 'versions-batch-1',
+              'sender_hop': 'peer-hop',
+              'sender_identifier': 'peer-install',
+              'sender_software_version': 'peer@1',
+              'sent_at': DateTime.utc(2026, 9, 1, 12).toIso8601String(),
+              'events': <Object?>[
+                _peerEvent(
+                  entryTypeVersion: const EntryTypeVersion(1, 4),
+                  dataFormat: LibVersion.dataFormat,
+                  data: const <String, Object?>{'title': 'peer'},
+                ).toMap(),
+              ],
+            }),
           ),
-          batchFormatVersion: '1',
         );
         await expectLater(
-          receiver.ingestBatch(bytes, wireFormat: 'esd/batch@1'),
-          throwsA(
-            isA<IngestDecodeFailure>().having(
-              (e) => e.message,
-              'message',
-              contains('esd/batch@1'),
-            ),
+          receiver.receiverEndpoint.accept(
+            bytes,
+            senderDatabaseIds: const <String>{kPeerDatabaseId},
           ),
-        );
-        await expectLater(
-          receiver.ingestBatch(bytes, wireFormat: BatchEnvelope.wireFormat),
           throwsA(
             isA<IngestDecodeFailure>().having(
               (e) => e.message,
@@ -1392,7 +588,7 @@ void runVersionCompatibilityScenarios(
           ),
         );
         expect(
-          (await receiver.backend.findAllEvents()).length,
+          (await receiver.reader.findAllEvents()).length,
           eventsBefore.length,
         );
       });
@@ -1431,6 +627,8 @@ StoredEvent _peerEvent({
           receivedAt: now,
           identifier: 'peer-install',
           softwareVersion: 'peer@1',
+          databaseId: kPeerDatabaseId,
+          libraryVersion: kPeerLibraryVersion,
         ).toJson(),
       ],
     },
@@ -1438,29 +636,58 @@ StoredEvent _peerEvent({
     'flow_token': null,
     'client_timestamp': now.toIso8601String(),
     'previous_event_hash': null,
+    'causal': kRootVersionCausalJson,
   };
   record['event_hash'] = canonicalEventHash(record);
   return StoredEvent.fromMap(record, 0);
 }
 
-Uint8List _batchOf(StoredEvent event, {String? batchFormatVersion}) =>
-    _batchOfMaps(<Map<String, Object?>>[
-      Map<String, Object?>.from(event.toMap()),
-    ], batchFormatVersion: batchFormatVersion);
-
-Uint8List _batchOfMaps(
-  List<Map<String, Object?>> events, {
-  String? batchFormatVersion,
-}) {
-  final now = DateTime.utc(2026, 9, 1, 12);
-  return BatchEnvelope(
-    batchFormatVersion:
-        batchFormatVersion ?? BatchEnvelope.currentBatchFormatVersion,
-    batchId: 'versions-batch-${events.first['event_id']}',
-    senderHop: 'peer-hop',
-    senderIdentifier: 'peer-install',
-    senderSoftwareVersion: 'peer@1',
-    sentAt: now,
-    events: events,
-  ).encode();
+/// A record as a build of data format 2.0 sent it: its provenance entry
+/// carries no `library_version` and no `database_id`, and it carries no
+/// `causal` object.
+Map<String, Object?> _dataFormat2Record() {
+  final record = Map<String, Object?>.from(
+    _peerEvent(
+      entryTypeVersion: const EntryTypeVersion(1, 4),
+      dataFormat: const DataFormatVersion(2, 0),
+      data: const <String, Object?>{'title': 'data format 2'},
+    ).toMap(),
+  )..remove('causal');
+  final metadata = Map<String, Object?>.from(record['metadata']! as Map);
+  metadata['provenance'] = <Map<String, Object?>>[
+    for (final entry in metadata['provenance']! as List)
+      Map<String, Object?>.from(entry as Map)
+        ..remove('library_version')
+        ..remove('database_id'),
+  ];
+  record['metadata'] = metadata;
+  record['event_hash'] = canonicalEventHash(record);
+  return record;
 }
+
+/// [record], a record of data format 2.0, as an event built in process,
+/// without the parse that refuses its shape.
+StoredEvent _dataFormat2Event(Map<String, Object?> record) => StoredEvent(
+  key: 0,
+  eventId: record['event_id']! as String,
+  aggregateId: record['aggregate_id']! as String,
+  aggregateType: record['aggregate_type']! as String,
+  entryType: record['entry_type']! as String,
+  entryTypeVersion: EntryTypeVersion.fromJson(record['entry_type_version']),
+  libFormatVersion: DataFormatVersion.fromJson(record['lib_format_version']),
+  eventType: record['event_type']! as String,
+  sequenceNumber: record['sequence_number']! as int,
+  data: Map<String, dynamic>.from(record['data']! as Map),
+  metadata: Map<String, dynamic>.from(record['metadata']! as Map),
+  initiator: const UserInitiator('peer-user'),
+  clientTimestamp: DateTime.parse(record['client_timestamp']! as String),
+  eventHash: record['event_hash']! as String,
+);
+
+/// Matches the [TestDeliveryRefused] of a delivery the receiver refused
+/// `rejected`, naming [reason] and the event [eventId].
+Matcher _refusedRejected(String reason, String eventId) =>
+    isA<TestDeliveryRefused>()
+        .having((e) => e.refusal.refusal, 'refusal', RefusalKind.rejected)
+        .having((e) => e.refusal.reason, 'reason', reason)
+        .having((e) => e.refusal.refusedEventId, 'refusedEventId', eventId);

@@ -26,9 +26,18 @@ class EntryTypeRegistry {
   /// shadowing would let an app declare two competing definitions for the
   /// same entry type and the later one would silently win — so it is
   /// surfaced loudly via `ArgumentError`, leaving the existing
-  /// registration in effect.
+  /// registration in effect. A definition that declares one event type
+  /// twice is refused the same way and is not registered. Throws
+  /// [ArgumentError] after [seal].
   // Implements: EVS-DEV-append-stamps-registered-version/D
   void register(EntryTypeDefinition definition) {
+    if (_sealed) {
+      throw ArgumentError.value(
+        definition.id,
+        'definition.id',
+        'EntryTypeRegistry: cannot register after seal()',
+      );
+    }
     if (_defs.containsKey(definition.id)) {
       throw ArgumentError.value(
         definition.id,
@@ -36,7 +45,25 @@ class EntryTypeRegistry {
         'EntryTypeDefinition "${definition.id}" already registered',
       );
     }
+    _refuseDuplicateDeclarations(definition);
     _defs[definition.id] = definition;
+  }
+
+  // Implements: EVS-DEV-causal-parents/D
+  // a definition that declares one event type twice is refused before it is
+  //   registered, so no append or audit reads it.
+  static void _refuseDuplicateDeclarations(EntryTypeDefinition definition) {
+    final seen = <String>{};
+    for (final declaration in definition.declarations) {
+      if (!seen.add(declaration.eventType)) {
+        throw ArgumentError.value(
+          definition.id,
+          'definition.declarations',
+          'EntryTypeDefinition "${definition.id}" declares event type '
+              '"${declaration.eventType}" more than once',
+        );
+      }
+    }
   }
 
   /// Returns the `EntryTypeDefinition` registered under [id], or `null`
@@ -55,6 +82,20 @@ class EntryTypeRegistry {
   List<EntryTypeDefinition> all() =>
       List<EntryTypeDefinition>.unmodifiable(_defs.values);
 
+  /// Called by `EventStore.open` after `_registerLibraryDefinitions`;
+  /// further [register] calls throw. Sealing at open keeps the registry
+  /// complete for everything that reads the whole set at boot: a view
+  /// fingerprint whose interest names no entry type, the generation
+  /// descriptor, and the registry audit event.
+  // Implements: EVS-DEV-view-convergence/A (fingerprint term)
+  // Implements: EVS-DEV-version-compatibility/F
+  void seal() {
+    _sealed = true;
+  }
+
+  bool get isSealed => _sealed;
+
   final Map<String, EntryTypeDefinition> _defs =
       <String, EntryTypeDefinition>{};
+  bool _sealed = false;
 }

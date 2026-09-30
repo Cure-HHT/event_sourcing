@@ -74,11 +74,15 @@ void main() {
     expect(decoded.sequence, 44);
   });
 
-  test('round-trips EndOfReplay envelope', () {
-    const original = EndOfReplay<Map<String, Object?>>(sequence: 45);
+  test('round-trips EndOfReplay envelope (current)', () {
+    const original = EndOfReplay<Map<String, Object?>>(
+      sequence: 45,
+      state: ViewConvergenceState.current,
+    );
     final json = UpdateCodec.encode(original, subscriptionId: 'sub-1');
     expect(json['type'], 'end_of_replay');
     expect(json['sequence'], 45);
+    expect(json['state'], 'current');
     expect(json.containsKey('aggregateId'), isFalse);
     expect(json.containsKey('value'), isFalse);
     expect(json.containsKey('cause'), isFalse);
@@ -86,11 +90,40 @@ void main() {
     final decoded =
         UpdateCodec.decode(json) as EndOfReplay<Map<String, Object?>>;
     expect(decoded.sequence, 45);
+    expect(decoded.state, ViewConvergenceState.current);
+  });
+
+  test('round-trips EndOfReplay envelope (converging)', () {
+    const original = EndOfReplay<Map<String, Object?>>(
+      sequence: 46,
+      state: ViewConvergenceState.converging,
+    );
+    final json = UpdateCodec.encode(original, subscriptionId: 'sub-1');
+    expect(json['state'], 'converging');
+
+    final decoded =
+        UpdateCodec.decode(json) as EndOfReplay<Map<String, Object?>>;
+    expect(decoded.state, ViewConvergenceState.converging);
+  });
+
+  test('round-trips Pending envelope', () {
+    const original = Pending<Map<String, Object?>>(aggregateId: 'agg-9');
+    final json = UpdateCodec.encode(original, subscriptionId: 'sub-1');
+    expect(json['type'], 'pending');
+    expect(json['aggregateId'], 'agg-9');
+    expect(json['sequence'], 0);
+
+    final decoded = UpdateCodec.decode(json) as Pending<Map<String, Object?>>;
+    expect(decoded.aggregateId, 'agg-9');
+    expect(decoded.sequence, 0);
   });
 
   test('decode reads subscriptionId from envelope', () {
     final encoded = UpdateCodec.encode(
-      const EndOfReplay<Map<String, Object?>>(sequence: 1),
+      const EndOfReplay<Map<String, Object?>>(
+        sequence: 1,
+        state: ViewConvergenceState.current,
+      ),
       subscriptionId: 'sub-xyz',
     );
     expect(UpdateCodec.subscriptionIdOf(encoded), 'sub-xyz');

@@ -13,6 +13,7 @@
 // kLibVersionInitializedEntryType
 //   and kLibVersionChangedEntryType are the boot-version event types emitted
 //   by EventStore.open on first boot and on version transitions respectively.
+import 'package:event_sourcing/src/causal_record.dart';
 import 'package:event_sourcing/src/entry_type_definition.dart';
 import 'package:event_sourcing/src/versions.dart';
 import 'package:meta/meta.dart' show internal;
@@ -75,6 +76,22 @@ const String kDestinationHaltRequestedEntryType =
 const String kDestinationHaltCancelledEntryType =
     'system.destination_halt_cancelled';
 
+/// Reserved id for the resume event the drainer appends when it resends to
+/// a receiver that fell behind the retained deliveries it lacks.
+// Implements: EVS-DEV-resume-event/H
+// the resume event is the reserved destination audit entry type
+//   system.destination_channel_resumed, with an event type of its own.
+const String kDestinationChannelResumedEntryType =
+    'system.destination_channel_resumed';
+
+/// Reserved id for the succession event a successor appends in the
+/// transaction that stores the predecessor sender's restored deliveries.
+// Implements: EVS-DEV-resume-event/H
+// the succession event is the reserved destination audit entry type
+//   system.destination_sender_succeeded, with an event type of its own.
+const String kDestinationSenderSucceededEntryType =
+    'system.destination_sender_succeeded';
+
 // Implements: EVS-DEV-destination-drain/H
 // each kind of destination audit event carries
 //   an event type distinct from every other kind's, so a declarative filter
@@ -116,8 +133,18 @@ const String kDestinationHaltRequestedEventType = 'destination_halt_requested';
 /// ([kDestinationHaltCancelledEntryType]).
 const String kDestinationHaltCancelledEventType = 'destination_halt_cancelled';
 
+/// Event type of the resume event ([kDestinationChannelResumedEntryType]).
+const String kDestinationChannelResumedEventType =
+    'destination_channel_resumed';
+
+/// Event type of the succession event
+/// ([kDestinationSenderSucceededEntryType]).
+const String kDestinationSenderSucceededEventType =
+    'destination_sender_succeeded';
+
 /// Every destination audit entry type: the registry's configuration,
-/// recovery and halt audits and the drainer's wedge event. Each carries the
+/// recovery and halt audits, the drainer's wedge and resume events and the
+/// succession event. Each carries the
 /// destination identifier in `data['id']` and the appending database's
 /// identity in `data['database_id']`.
 @internal
@@ -130,6 +157,8 @@ const List<String> kDestinationAuditEntryTypes = <String>[
   kDestinationWedgedEntryType,
   kDestinationHaltRequestedEntryType,
   kDestinationHaltCancelledEntryType,
+  kDestinationChannelResumedEntryType,
+  kDestinationSenderSucceededEntryType,
 ];
 
 /// Reserved id for the retention-policy-applied audit event emitted by
@@ -191,9 +220,9 @@ const String kLibVersionInitializedEntryType = 'lib_version_initialized';
 //   internal and must not be admitted to destinations as user events.
 const String kLibVersionChangedEntryType = 'lib_version_changed';
 
-/// Reserved id for the raw-path ingest-audit event emitted by
-/// `EventStore.logRejectedBatch` and `_emitDuplicateReceivedInTxn`.
-/// Registered here so the raw-path callers can read
+/// Reserved id for the ingest audits: the duplicate-received audit and the
+/// accepted-delivery audit a receiver appends for each delivery it
+/// accepts. Registered here so the raw-path caller can read
 /// `registeredVersion` from the registry instead of hardcoding.
 const String kIngestAuditEntryType = 'ingest-audit';
 
@@ -201,29 +230,85 @@ const String kIngestAuditEntryType = 'ingest-audit';
 @internal
 const String kIngestAuditAggregateType = 'ingest-audit';
 
-/// Event type of the ingest audit recording a rejected batch.
-@internal
-const String kIngestBatchRejectedEventType = 'ingest.batch_rejected';
-
 /// Event type of the ingest audit recording a duplicate received.
 @internal
 const String kIngestDuplicateReceivedEventType = 'ingest.duplicate_received';
 
-/// Reserved id for the boot-time view-snapshot-promotion audit event
-/// emitted by the snapshot-promotion pass.
-const String kViewSnapshotPromotedEntryType = 'view_snapshot_promoted';
-
-/// Event type of the view-snapshot-promotion audit
-/// ([kViewSnapshotPromotedEntryType]).
+/// Event type of the accepted-delivery audit a receiver appends, in the
+/// transaction that accepts a delivery, on its per-channel ingest audit
+/// aggregate.
+// Implements: EVS-DEV-delivery-receiver/S
+// ingest.delivery_accepted is an event type of the reserved ingest audit
+//   entry type.
 @internal
-const String kViewSnapshotPromotedEventType = 'finalized';
+const String kIngestDeliveryAcceptedEventType = 'ingest.delivery_accepted';
 
-/// Reserved set of ids. `EventStore.open` registers every definition of
-/// [kSystemEntryTypes] the caller's registry lacks, and refuses
-/// (`ArgumentError` with an explicit "reserved" message) a caller registry
-/// that holds one of these ids under any definition but the library's own.
-/// The event store's public append operations refuse every one of them:
-/// only the library appends reserved system events.
+/// Reserved id for the security finding a detection point records when it
+/// meets an integrity anomaly.
+// Implements: EVS-DEV-security-findings/A
+// the reserved entry type system.security_finding, with the one event type
+//   security_finding_recorded.
+const String kSecurityFindingEntryType = 'system.security_finding';
+
+/// Aggregate type of every security finding
+/// ([kSecurityFindingEntryType]). The aggregate id is the finding's
+/// `finding_id`.
+const String kSecurityFindingAggregateType = 'security_finding';
+
+/// Event type of the security finding ([kSecurityFindingEntryType]).
+const String kSecurityFindingRecordedEventType = 'security_finding_recorded';
+
+/// The entry types the fill and every replay enqueue on every natively
+/// serializing destination registration of the database whatever that
+/// destination's filter: the succession event and the security finding.
+// Implements: EVS-DEV-destination-drain/X
+// the entry types a channel-wide enqueue names: the succession event and
+//   the security finding.
+const Set<String> kChannelWideEntryTypes = <String>{
+  kSecurityFindingEntryType,
+  kDestinationSenderSucceededEntryType,
+};
+
+/// Whether [entryType] is one the fill and every replay enqueue on every
+/// natively serializing destination registration whatever that
+/// destination's filter names ([kChannelWideEntryTypes]).
+@internal
+bool isChannelWideEntryType(String entryType) =>
+    kChannelWideEntryTypes.contains(entryType);
+
+/// The reserved entry types outside the `system.` prefix. With every
+/// identifier beginning with `system.`, they form the reserved namespace
+/// ([isReservedEntryType]), which no later release extends.
+const Set<String> kReservedFixedEntryTypeIds = <String>{
+  kSecurityContextRedactedEntryType,
+  kSecurityContextCompactedEntryType,
+  kSecurityContextPurgedEntryType,
+  kLibVersionInitializedEntryType,
+  kLibVersionChangedEntryType,
+  kIngestAuditEntryType,
+};
+
+/// Whether [entryType] is reserved for the library: it begins with
+/// `system.`, is one of [kReservedFixedEntryTypeIds], or is a reserved entry
+/// type this release declares ([kReservedSystemEntryTypeIds]). An entry type
+/// in the namespace that no release this build knows declares is reserved
+/// all the same: a later release of the data-format major may declare it.
+// Implements: EVS-DEV-destination-drain/L
+// the reserved entry-type namespace is every identifier beginning with
+//   system. together with the six fixed identifiers.
+bool isReservedEntryType(String entryType) =>
+    entryType.startsWith('system.') ||
+    kReservedFixedEntryTypeIds.contains(entryType) ||
+    kReservedSystemEntryTypeIds.contains(entryType);
+
+/// The reserved entry types this release declares. `EventStore.open`
+/// registers every definition of [kSystemEntryTypes] the caller's registry
+/// lacks, and refuses (`ArgumentError` with an explicit "reserved" message)
+/// a caller registry that holds one of these ids under any definition but
+/// the library's own, or any other entry type of the reserved namespace
+/// ([isReservedEntryType]). The event store's public append operations
+/// refuse every entry type of the namespace: only the library appends
+/// reserved system events.
 ///
 /// Also includes the substrate-internal lib-version boot events
 /// (`lib_version_initialized`, `lib_version_changed`) so that
@@ -247,21 +332,22 @@ const Set<String> kReservedSystemEntryTypeIds = <String>{
   kLibVersionInitializedEntryType,
   kLibVersionChangedEntryType,
   kIngestAuditEntryType,
-  kViewSnapshotPromotedEntryType,
+  kSecurityFindingEntryType,
+  kDestinationChannelResumedEntryType,
+  kDestinationSenderSucceededEntryType,
 };
 
 /// The reserved system entry-type definitions covering security-
-/// context lifecycle events (redacted / compacted / purged), config-
+/// context lifecycle events (redacted / compacted / purged), security
+/// findings, config-
 /// change audit events (destination registration / start_date / end_date /
 /// deletion / wedge recovery / halt request / halt cancellation, plus
 /// retention-policy-applied per-sweep), the drainer's destination wedge
 /// event,
 /// the bootstrap registry-initialized audit, the substrate-internal
-/// lib-version boot events (initialized / changed), the raw-path
-/// `ingest-audit` event (covering `logRejectedBatch` and
-/// `_emitDuplicateReceivedInTxn`), and the `view_snapshot_promoted`
-/// audit emitted by the boot-time snapshot-promotion pass. They exist to
-/// stamp an immutable event_log row for every covered mutation.
+/// lib-version boot events (initialized / changed), and the raw-path
+/// `ingest-audit` event (covering `_emitDuplicateReceivedInTxn`). They
+/// exist to stamp an immutable event_log row for every covered mutation.
 ///
 /// Membership in this set is what `SubscriptionFilter` discriminates on: a
 /// filter that does not opt in admits none of them, and one that opts in
@@ -280,91 +366,244 @@ const Set<String> kReservedSystemEntryTypeIds = <String>{
 // lib-version boot events
 //   registered here so byId() returns non-null and SubscriptionFilter gates
 //   them correctly, even though they are appended raw (bypassing the registry).
+// Implements: EVS-DEV-causal-parents/E
+// every event type of every reserved entry type (each event type its
+//   kReservedEventShapes entry lists) is declared an ineligible annotation,
+//   so the library's own records never enter an aggregate's causal
+//   structure.
 const List<EntryTypeDefinition> kSystemEntryTypes = <EntryTypeDefinition>[
   EntryTypeDefinition(
     id: kSecurityContextRedactedEntryType,
     registeredVersion: EntryTypeVersion(1, 0),
     name: 'Security Context Redacted',
+    declarations: <EventTypeDeclaration>[
+      EventTypeDeclaration(
+        eventType: kSecurityContextRedactedEventType,
+        kind: CausalKind.annotation,
+        eligible: false,
+      ),
+    ],
   ),
   EntryTypeDefinition(
     id: kSecurityContextCompactedEntryType,
     registeredVersion: EntryTypeVersion(1, 0),
     name: 'Security Context Compacted',
+    declarations: <EventTypeDeclaration>[
+      EventTypeDeclaration(
+        eventType: kSecurityContextCompactedEventType,
+        kind: CausalKind.annotation,
+        eligible: false,
+      ),
+    ],
   ),
   EntryTypeDefinition(
     id: kSecurityContextPurgedEntryType,
     registeredVersion: EntryTypeVersion(1, 0),
     name: 'Security Context Purged',
+    declarations: <EventTypeDeclaration>[
+      EventTypeDeclaration(
+        eventType: kSecurityContextPurgedEventType,
+        kind: CausalKind.annotation,
+        eligible: false,
+      ),
+    ],
   ),
   EntryTypeDefinition(
     id: kDestinationRegisteredEntryType,
     registeredVersion: EntryTypeVersion(1, 0),
     name: 'Destination Registered',
+    declarations: <EventTypeDeclaration>[
+      EventTypeDeclaration(
+        eventType: kDestinationRegisteredEventType,
+        kind: CausalKind.annotation,
+        eligible: false,
+      ),
+    ],
   ),
   EntryTypeDefinition(
     id: kDestinationStartDateSetEntryType,
     registeredVersion: EntryTypeVersion(1, 0),
     name: 'Destination Start Date Set',
+    declarations: <EventTypeDeclaration>[
+      EventTypeDeclaration(
+        eventType: kDestinationStartDateSetEventType,
+        kind: CausalKind.annotation,
+        eligible: false,
+      ),
+    ],
   ),
   EntryTypeDefinition(
     id: kDestinationEndDateSetEntryType,
     registeredVersion: EntryTypeVersion(1, 0),
     name: 'Destination End Date Set',
+    declarations: <EventTypeDeclaration>[
+      EventTypeDeclaration(
+        eventType: kDestinationEndDateSetEventType,
+        kind: CausalKind.annotation,
+        eligible: false,
+      ),
+    ],
   ),
   EntryTypeDefinition(
     id: kDestinationDeletedEntryType,
     registeredVersion: EntryTypeVersion(1, 0),
     name: 'Destination Deleted',
+    declarations: <EventTypeDeclaration>[
+      EventTypeDeclaration(
+        eventType: kDestinationDeletedEventType,
+        kind: CausalKind.annotation,
+        eligible: false,
+      ),
+    ],
   ),
   EntryTypeDefinition(
     id: kDestinationWedgeRecoveredEntryType,
     registeredVersion: EntryTypeVersion(1, 0),
     name: 'Destination Wedge Recovered',
+    declarations: <EventTypeDeclaration>[
+      EventTypeDeclaration(
+        eventType: kDestinationWedgeRecoveredEventType,
+        kind: CausalKind.annotation,
+        eligible: false,
+      ),
+    ],
   ),
   EntryTypeDefinition(
     id: kDestinationWedgedEntryType,
     registeredVersion: EntryTypeVersion(1, 0),
     name: 'Destination Wedged',
+    declarations: <EventTypeDeclaration>[
+      EventTypeDeclaration(
+        eventType: kDestinationWedgedEventType,
+        kind: CausalKind.annotation,
+        eligible: false,
+      ),
+    ],
   ),
   EntryTypeDefinition(
     id: kDestinationHaltRequestedEntryType,
     registeredVersion: EntryTypeVersion(1, 0),
     name: 'Destination Halt Requested',
+    declarations: <EventTypeDeclaration>[
+      EventTypeDeclaration(
+        eventType: kDestinationHaltRequestedEventType,
+        kind: CausalKind.annotation,
+        eligible: false,
+      ),
+    ],
   ),
   EntryTypeDefinition(
     id: kDestinationHaltCancelledEntryType,
     registeredVersion: EntryTypeVersion(1, 0),
     name: 'Destination Halt Cancelled',
+    declarations: <EventTypeDeclaration>[
+      EventTypeDeclaration(
+        eventType: kDestinationHaltCancelledEventType,
+        kind: CausalKind.annotation,
+        eligible: false,
+      ),
+    ],
   ),
   EntryTypeDefinition(
     id: kRetentionPolicyAppliedEntryType,
     registeredVersion: EntryTypeVersion(1, 0),
     name: 'Retention Policy Applied',
+    declarations: <EventTypeDeclaration>[
+      EventTypeDeclaration(
+        eventType: kRetentionPolicyAppliedEventType,
+        kind: CausalKind.annotation,
+        eligible: false,
+      ),
+    ],
   ),
   EntryTypeDefinition(
     id: kEntryTypeRegistryInitializedEntryType,
     registeredVersion: EntryTypeVersion(1, 0),
     name: 'Entry Type Registry Initialized',
+    declarations: <EventTypeDeclaration>[
+      EventTypeDeclaration(
+        eventType: kEntryTypeRegistryInitializedEventType,
+        kind: CausalKind.annotation,
+        eligible: false,
+      ),
+    ],
   ),
   EntryTypeDefinition(
     id: kLibVersionInitializedEntryType,
     registeredVersion: EntryTypeVersion(1, 0),
     name: 'Lib Version Initialized',
+    declarations: <EventTypeDeclaration>[
+      EventTypeDeclaration(
+        eventType: kLibVersionInitializedEntryType,
+        kind: CausalKind.annotation,
+        eligible: false,
+      ),
+    ],
   ),
   EntryTypeDefinition(
     id: kLibVersionChangedEntryType,
     registeredVersion: EntryTypeVersion(1, 0),
     name: 'Lib Version Changed',
+    declarations: <EventTypeDeclaration>[
+      EventTypeDeclaration(
+        eventType: kLibVersionChangedEntryType,
+        kind: CausalKind.annotation,
+        eligible: false,
+      ),
+    ],
   ),
   EntryTypeDefinition(
     id: kIngestAuditEntryType,
     registeredVersion: EntryTypeVersion(1, 0),
     name: 'Ingest Audit',
+    declarations: <EventTypeDeclaration>[
+      EventTypeDeclaration(
+        eventType: kIngestDuplicateReceivedEventType,
+        kind: CausalKind.annotation,
+        eligible: false,
+      ),
+      EventTypeDeclaration(
+        eventType: kIngestDeliveryAcceptedEventType,
+        kind: CausalKind.annotation,
+        eligible: false,
+      ),
+    ],
   ),
   EntryTypeDefinition(
-    id: kViewSnapshotPromotedEntryType,
+    id: kSecurityFindingEntryType,
     registeredVersion: EntryTypeVersion(1, 0),
-    name: 'View Snapshot Promoted',
+    name: 'Security Finding',
+    declarations: <EventTypeDeclaration>[
+      EventTypeDeclaration(
+        eventType: kSecurityFindingRecordedEventType,
+        kind: CausalKind.annotation,
+        eligible: false,
+      ),
+    ],
+  ),
+  EntryTypeDefinition(
+    id: kDestinationChannelResumedEntryType,
+    registeredVersion: EntryTypeVersion(1, 0),
+    name: 'Destination Channel Resumed',
+    declarations: <EventTypeDeclaration>[
+      EventTypeDeclaration(
+        eventType: kDestinationChannelResumedEventType,
+        kind: CausalKind.annotation,
+        eligible: false,
+      ),
+    ],
+  ),
+  EntryTypeDefinition(
+    id: kDestinationSenderSucceededEntryType,
+    registeredVersion: EntryTypeVersion(1, 0),
+    name: 'Destination Sender Succeeded',
+    declarations: <EventTypeDeclaration>[
+      EventTypeDeclaration(
+        eventType: kDestinationSenderSucceededEventType,
+        kind: CausalKind.annotation,
+        eligible: false,
+      ),
+    ],
   ),
 ];
 
@@ -388,8 +627,8 @@ class ReservedEventShape {
 // Implements: EVS-DEV-destination-drain/L
 // the library declares the aggregate type and event types of every
 //   reserved entry type, changing them only with a data-format major step;
-//   every library emitter appends in a declared shape, and ingest refuses a
-//   reserved event in any other shape.
+//   every library emitter appends in a declared shape, and ingest stores no
+//   event for a reserved event of a declared entry type in any other shape.
 /// The declared shape of every reserved system entry type, keyed by entry
 /// type id: the library appends each reserved entry type only with its
 /// aggregate type and one of its event types, and no two reserved entry
@@ -465,16 +704,26 @@ const Map<String, ReservedEventShape> kReservedEventShapes =
         kLibAggregateType,
         <String>{kLibVersionChangedEntryType},
       ),
+      // The shape constrains the aggregate type only: each accepted-delivery
+      // audit is appended on its channel's own aggregate id.
       kIngestAuditEntryType: ReservedEventShape(
         kIngestAuditAggregateType,
         <String>{
-          kIngestBatchRejectedEventType,
           kIngestDuplicateReceivedEventType,
+          kIngestDeliveryAcceptedEventType,
         },
       ),
-      kViewSnapshotPromotedEntryType: ReservedEventShape(
-        kLibAggregateType,
-        <String>{kViewSnapshotPromotedEventType},
+      kSecurityFindingEntryType: ReservedEventShape(
+        kSecurityFindingAggregateType,
+        <String>{kSecurityFindingRecordedEventType},
+      ),
+      kDestinationChannelResumedEntryType: ReservedEventShape(
+        kDestinationAuditAggregateType,
+        <String>{kDestinationChannelResumedEventType},
+      ),
+      kDestinationSenderSucceededEntryType: ReservedEventShape(
+        kDestinationAuditAggregateType,
+        <String>{kDestinationSenderSucceededEventType},
       ),
     };
 
@@ -520,6 +769,39 @@ void checkReservedEventShape({
       'the library declares entry type $entryType only with aggregate type '
           '${shape.aggregateType} and event types '
           '${(shape.eventTypes.toList()..sort()).join(', ')}',
+    );
+  }
+}
+
+/// Throws [ArgumentError] unless [entryType] is a reserved system entry type
+/// appended in a shape the library declares for it
+/// ([checkReservedEventShape]) and, for a destination audit, with data
+/// ingest admits ([isWellFormedDestinationAuditData]). The event store's
+/// reserved appends run this check before they write.
+// Implements: EVS-DEV-destination-drain/K
+// every destination audit event the library appends carries a destination
+//   identifier and the appending database's identity, each non-empty and
+//   without '|'.
+@internal
+void checkReservedAppend({
+  required String entryType,
+  required String aggregateType,
+  required String eventType,
+  required Map<String, Object?> data,
+}) {
+  checkReservedEventShape(
+    entryType: entryType,
+    aggregateType: aggregateType,
+    eventType: eventType,
+  );
+  if (kDestinationAuditEntryTypes.contains(entryType) &&
+      !isWellFormedDestinationAuditData(data)) {
+    throw ArgumentError.value(
+      data,
+      'data',
+      'a destination audit event carries a destination identifier (id) '
+          'and a database identity (database_id), each a non-empty string '
+          "without '|'",
     );
   }
 }
