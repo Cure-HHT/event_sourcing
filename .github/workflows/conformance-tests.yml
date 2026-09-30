@@ -344,7 +344,7 @@ jobs:
   postgres_throughput_guard:
     name: Postgres throughput guard against the baseline build
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     services:
       postgres:
         image: postgres:16

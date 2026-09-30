@@ -201,7 +201,9 @@ abstract class StorageBackend {
   /// runs one transaction with no partial-rollback primitive, [body] simply
   /// runs as given: the fold-failure ordering that always precedes a call
   /// here (compute before write) means [body] never writes ahead of a
-  /// failure it then throws on that backend.
+  /// failure it then throws on that backend. [body] is a fold, or a catch-up
+  /// transaction's batched flush of the rows it folded, whose rejected
+  /// write ends that transaction unwritten.
   ///
   /// A value [body] returns commits with the rest of [txn]. A throw from
   /// [body] propagates to the caller, wrapped as [RowWriteRejected] when a
@@ -482,6 +484,67 @@ abstract class StorageBackend {
     String copyId,
     String sourceAggregateId,
   );
+
+  /// Writes every row of [rows] into [copyId] inside [txn], each exactly as
+  /// [upsertViewRowInTxn] writes it at its key: the batched counterpart a
+  /// catch-up transaction flushes its folded rows through. The default
+  /// makes one [upsertViewRowInTxn] call per row; a backend may override it
+  /// with fewer statements to the same effect.
+  @internal
+  Future<void> upsertViewRowsInTxn(
+    Transaction txn,
+    String copyId,
+    Map<String, Map<String, dynamic>> rows,
+  ) async {
+    for (final MapEntry(:key, value: row) in rows.entries) {
+      await upsertViewRowInTxn(txn, copyId, key, row);
+    }
+  }
+
+  /// Writes every row of [rows] into the table view copy [copyId] inside
+  /// [txn], each with the producer its entry names: a non-null `source`
+  /// exactly as [upsertTableViewRowInTxn] writes it, a null one as a row
+  /// no producer indexes (as [deleteViewRowInTxn] followed by
+  /// [upsertViewRowInTxn] leaves it). The default makes those calls per
+  /// row; a backend may override it with fewer statements to the same
+  /// effect.
+  @internal
+  Future<void> upsertTableViewRowsInTxn(
+    Transaction txn,
+    String copyId,
+    Map<String, ({Map<String, dynamic> row, String? source})> rows,
+  ) async {
+    for (final MapEntry(:key, value: entry) in rows.entries) {
+      final source = entry.source;
+      if (source == null) {
+        await deleteViewRowInTxn(txn, copyId, key);
+        await upsertViewRowInTxn(txn, copyId, key, entry.row);
+      } else {
+        await upsertTableViewRowInTxn(
+          txn,
+          copyId,
+          key,
+          entry.row,
+          sourceAggregateId: source,
+        );
+      }
+    }
+  }
+
+  /// Deletes the rows of [keys] from [copyId] inside [txn], each exactly as
+  /// [deleteViewRowInTxn] deletes it. The default makes one
+  /// [deleteViewRowInTxn] call per key; a backend may override it with
+  /// fewer statements to the same effect.
+  @internal
+  Future<void> deleteViewRowsInTxn(
+    Transaction txn,
+    String copyId,
+    List<String> keys,
+  ) async {
+    for (final key in keys) {
+      await deleteViewRowInTxn(txn, copyId, key);
+    }
+  }
 
   // -------- View copies --------
   //

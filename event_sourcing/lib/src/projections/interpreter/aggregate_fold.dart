@@ -15,6 +15,7 @@
 //   runs before the row write.
 import 'package:event_sourcing/src/projections/integrity_marks.dart';
 import 'package:event_sourcing/src/projections/interpreter/fold_failure.dart';
+import 'package:event_sourcing/src/projections/interpreter/view_row_access.dart';
 import 'package:event_sourcing/src/projections/primitives/merge.dart';
 import 'package:event_sourcing/src/projections/projection_spec.dart';
 import 'package:event_sourcing/src/storage/storage_backend.dart';
@@ -53,6 +54,9 @@ class AggregateFold {
   ///   aggregate, last so it wins over every other key,
   /// - delete row if event.eventType is in spec.tombstoneEventTypes.
   ///
+  /// Reads and writes the row through [rows] when given, otherwise straight
+  /// through [backend] in [txn] at [copyId].
+  ///
   /// Returns an [AggregateFoldChange] describing the mutation for subscriber
   /// notification, or `null` when the event was a tombstone for a row that
   /// did not exist (no change occurred).
@@ -64,14 +68,12 @@ class AggregateFold {
     required StoredEvent event,
     required List<String> integrity,
     required String copyId,
+    ViewRowAccess? rows,
   }) async {
+    final access = rows ?? DirectViewRowAccess(backend, txn, copyId);
     if (spec.tombstoneEventTypes.contains(event.eventType)) {
-      final existing = await backend.readViewRowInTxn(
-        txn,
-        copyId,
-        event.aggregateId,
-      );
-      await backend.deleteViewRowInTxn(txn, copyId, event.aggregateId);
+      final existing = await access.readRow(event.aggregateId);
+      await access.deleteRow(event.aggregateId);
       if (existing == null) return null; // nothing to report
       return AggregateFoldChange(
         viewName: spec.viewName,
@@ -82,11 +84,7 @@ class AggregateFold {
         isTombstone: true,
       );
     }
-    final priorRaw = await backend.readViewRowInTxn(
-      txn,
-      copyId,
-      event.aggregateId,
-    );
+    final priorRaw = await access.readRow(event.aggregateId);
     final prior = priorRaw ?? const <String, Object?>{};
     final firstEventTimestamp =
         (prior['firstEventTimestamp'] as String?) != null
@@ -124,12 +122,7 @@ class AggregateFold {
     next[kIntegrityRowKey] = integrityValue(integrity);
 
     final immutableNext = Map<String, Object?>.unmodifiable(next);
-    await backend.upsertViewRowInTxn(
-      txn,
-      copyId,
-      event.aggregateId,
-      immutableNext,
-    );
+    await access.upsertRow(event.aggregateId, immutableNext);
     return AggregateFoldChange(
       viewName: spec.viewName,
       aggregateId: event.aggregateId,

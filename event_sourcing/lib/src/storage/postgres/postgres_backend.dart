@@ -1966,6 +1966,89 @@ class PostgresBackend extends StorageBackend {
     return result.map((r) => _asJsonMap(r[0])).toList();
   }
 
+  // Implements: EVS-DEV-postgres-backend/B
+  // the batched whole-row upsert: one INSERT ... SELECT over the batch's
+  //   elements, each row written as upsertViewRowInTxn writes it, leaving
+  //   source_aggregate_id untouched on conflict.
+  @override
+  @internal
+  Future<void> upsertViewRowsInTxn(
+    Transaction txn,
+    String copyId,
+    Map<String, Map<String, dynamic>> rows,
+  ) async {
+    if (rows.isEmpty) return;
+    final session = _asPgTxn(txn)._session;
+    await session.execute(
+      Sql.named('''
+        INSERT INTO view_rows (copy_id, row_key, row_data, updated_at)
+        SELECT @v, e->>'k', e->'d', NOW()
+        FROM jsonb_array_elements(@batch:jsonb) AS e
+        ON CONFLICT (copy_id, row_key)
+        DO UPDATE SET row_data = EXCLUDED.row_data, updated_at = NOW()
+      '''),
+      parameters: {
+        'v': copyId,
+        'batch': [
+          for (final MapEntry(:key, value: row) in rows.entries)
+            {'k': key, 'd': row},
+        ],
+      },
+    );
+  }
+
+  // Implements: EVS-PRD-materializer/E
+  // the batched table upsert: one INSERT ... SELECT over the batch's
+  //   elements, each stamping the producer its element names (NULL for
+  //   none) into source_aggregate_id, as upsertTableViewRowInTxn does.
+  @override
+  @internal
+  Future<void> upsertTableViewRowsInTxn(
+    Transaction txn,
+    String copyId,
+    Map<String, ({Map<String, dynamic> row, String? source})> rows,
+  ) async {
+    if (rows.isEmpty) return;
+    final session = _asPgTxn(txn)._session;
+    await session.execute(
+      Sql.named('''
+        INSERT INTO view_rows (copy_id, row_key, row_data, source_aggregate_id, updated_at)
+        SELECT @v, e->>'k', e->'d', e->>'s', NOW()
+        FROM jsonb_array_elements(@batch:jsonb) AS e
+        ON CONFLICT (copy_id, row_key)
+        DO UPDATE SET row_data = EXCLUDED.row_data,
+                      source_aggregate_id = EXCLUDED.source_aggregate_id,
+                      updated_at = NOW()
+      '''),
+      parameters: {
+        'v': copyId,
+        'batch': [
+          for (final MapEntry(:key, value: entry) in rows.entries)
+            {'k': key, 'd': entry.row, 's': entry.source},
+        ],
+      },
+    );
+  }
+
+  // Implements: EVS-DEV-postgres-backend/B
+  // the batched delete: one DELETE of every row_key in the batch.
+  @override
+  @internal
+  Future<void> deleteViewRowsInTxn(
+    Transaction txn,
+    String copyId,
+    List<String> keys,
+  ) async {
+    if (keys.isEmpty) return;
+    final session = _asPgTxn(txn)._session;
+    await session.execute(
+      Sql.named(
+        'DELETE FROM view_rows WHERE copy_id = @v AND row_key = ANY(@keys)',
+      ),
+      parameters: {'v': copyId, 'keys': keys},
+    );
+  }
+
   // -------- View copies --------
   //
   // Storage shape: a single `view_copies` table (copy_id PK, view_name,

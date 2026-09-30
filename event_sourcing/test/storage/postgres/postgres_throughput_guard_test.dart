@@ -34,6 +34,11 @@ import 'throughput_workload.dart';
 /// step: the throughput guard's baseline build.
 const _kBaselineCommit = '3089bbe';
 
+/// The per-test timeout of the nested `flutter test` running the baseline
+/// workload, in the runner's `--timeout` syntax: long enough for a slow CI
+/// runner, whose workload run alone can exceed the runner's 30 s default.
+const _kNestedWorkloadTimeout = '600s';
+
 /// Opt-in variable: unset, the harness (a git checkout, a `pub get` and a
 /// nested `flutter test`) does not run, so the default suites stay fast.
 const _kOptInVar = 'EVS_THROUGHPUT_TEST';
@@ -133,9 +138,19 @@ void main() {
             p.join(baselineEventSourcing, baselineTestRelativePath),
           ).writeAsStringSync(workloadSource);
 
+          // The nested run's own per-test timeout: its default (30 s) is
+          // shorter than the workload takes on a slow runner. The timed
+          // passes measure elapsed time themselves, so the timeout bounds
+          // only how long the harness waits, never what is measured.
           final baselineOutput = await _runTool(
             sdkTool('flutter'),
-            ['test', '--no-pub', '--concurrency=1', baselineTestRelativePath],
+            [
+              'test',
+              '--no-pub',
+              '--concurrency=1',
+              '--timeout=$_kNestedWorkloadTimeout',
+              baselineTestRelativePath,
+            ],
             workingDirectory: baselineEventSourcing,
             environment: <String, String>{'PG_TEST_URL': pgUrl!},
           );
@@ -184,6 +199,9 @@ void main() {
       );
     },
     skip: skipReason,
-    timeout: const Timeout(Duration(minutes: 20)),
+    // The checkout, both dependency resolutions, the nested workload run
+    // (bounded by _kNestedWorkloadTimeout) and the current tree's workload,
+    // on a slow runner, inside the CI job's own 20-minute limit.
+    timeout: const Timeout(Duration(minutes: 18)),
   );
 }

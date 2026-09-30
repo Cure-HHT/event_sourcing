@@ -47,9 +47,13 @@ import 'dart:async';
 
 import 'package:event_sourcing/src/entry_type_registry.dart';
 import 'package:event_sourcing/src/logging.dart';
+import 'package:event_sourcing/src/projections/interpreter/aggregate_fold.dart'
+    show AggregateFoldChange;
 import 'package:event_sourcing/src/projections/interpreter/fold_failure.dart';
 import 'package:event_sourcing/src/projections/interpreter/projection_interpreter.dart';
+import 'package:event_sourcing/src/projections/interpreter/view_row_access.dart';
 import 'package:event_sourcing/src/projections/projection_registry.dart';
+import 'package:event_sourcing/src/projections/projection_spec.dart';
 import 'package:event_sourcing/src/projections/view_fingerprint.dart';
 import 'package:event_sourcing/src/promoters/promoter_registry.dart';
 import 'package:event_sourcing/src/security/security_finding.dart'
@@ -112,6 +116,14 @@ class _CatchUpFoldFailureSignal implements Exception {
 /// no further step begins once a transaction has run this long.
 @internal
 const Duration kCatchUpStepBound = Duration(milliseconds: 200);
+
+/// The page size a catch-up transaction reads the log in, and the most
+/// events whose folded rows it holds in memory before writing them: an
+/// implementation detail of how it walks the log within one transaction,
+/// not a spec-bound quantity like [kCatchUpStepBound] or
+/// [kCatchUpDeleteBatchLimit].
+@internal
+const int kCatchUpReadChunk = 200;
 
 /// The row limit of one deletion step (EVS-DEV-view-convergence Terms).
 @internal
@@ -242,6 +254,12 @@ class ViewCatchUpDriver {
   void Function(String viewName)? onCaughtUp;
 
   final Map<String, ViewCopyProgress> _progressByCopyId = {};
+
+  /// Per copy id, the log position through which the copy folds event by
+  /// event, each fold in a savepoint of its own, rather than through a
+  /// buffer: set when a batched flush met a rejected row write, dropped
+  /// once a committed transaction moves the copy's watermark to it.
+  final Map<String, int> _perEventThrough = {};
   final Set<String> _deletionCopyIds = {};
 
   bool _stopping = false;
@@ -381,8 +399,9 @@ class ViewCatchUpDriver {
   // Implements: EVS-DEV-view-convergence/Q
   // Implements: EVS-DEV-view-convergence/W
   void _pruneStaleProgress(List<ViewCopy> copies) {
-    if (_progressByCopyId.isEmpty) return;
     final liveCopyIds = {for (final copy in copies) copy.copyId};
+    _perEventThrough.removeWhere((copyId, _) => !liveCopyIds.contains(copyId));
+    if (_progressByCopyId.isEmpty) return;
     final unmarkedFingerprints = {
       for (final copy in copies)
         if (!copy.markedForDeletion) copy.fingerprint,
@@ -448,121 +467,163 @@ class ViewCatchUpDriver {
       }
       _observeTransactionBegin(copy.copyId);
       final spec = _projections.lookup(target.viewName);
-      if (spec == null) return _StepResult(copy.copyId, 0, true);
+      if (spec == null) {
+        return _StepResult(copy.copyId, 0, true, copy.watermark);
+      }
+      // Implements: EVS-DEV-view-convergence/Z
+      // the copy folds event by event, each fold in a savepoint of its own,
+      //   only over a range in which a batched flush met a row write the
+      //   server rejected; everywhere else it folds through a buffer.
+      final perEventThrough = _perEventThrough[copy.copyId];
+      final perEvent =
+          perEventThrough != null && copy.watermark < perEventThrough;
+      final rows = perEvent
+          ? null
+          : BufferedViewRowAccess(_backend, txn, copy.copyId);
       final start = _effectiveClock();
       var watermark = copy.watermark;
+      var lastRead = watermark;
       var steps = 0;
       var reachedTip = false;
-      // The page size the step loop reads events in: an implementation
-      // detail of how it walks the log within one transaction, not a
-      // spec-bound quantity like kCatchUpStepBound or
-      // kCatchUpDeleteBatchLimit.
-      const chunkSize = 200;
-      var chunk = await _backend.findAllEventsInTxn(
-        txn,
-        afterSequence: watermark,
-        limit: chunkSize,
-      );
-      var index = 0;
-      // Implements: EVS-DEV-view-convergence/O
-      // a do-while: the first step always runs, whatever the clock reads.
-      do {
-        if (index >= chunk.length) {
-          if (chunk.length < chunkSize) {
-            reachedTip = true;
-            break;
-          }
-          chunk = await _backend.findAllEventsInTxn(
+      try {
+        Future<List<StoredEvent>> readChunk() async {
+          final chunk = await _backend.findAllEventsInTxn(
             txn,
             afterSequence: watermark,
-            limit: chunkSize,
+            limit: kCatchUpReadChunk,
           );
-          index = 0;
-          if (chunk.isEmpty) {
-            reachedTip = true;
-            break;
+          if (rows != null && spec is AggregateProjectionSpec) {
+            await rows.prefetch(<String>{
+              for (final e in chunk)
+                if (spec.interest.matches(e)) e.aggregateId,
+            });
           }
+          return chunk;
         }
-        final event = chunk[index];
-        index++;
-        await DeliveryTestHooks.current?.onCatchUpStep?.call(
-          copy.copyId,
-          event.eventId,
-        );
-        final def = _entryTypes.byId(event.entryType);
-        final registeredVersion =
-            def?.registeredVersion ?? event.entryTypeVersion;
-        // Implements: EVS-DEV-view-convergence/Z
-        // the fold runs in a savepoint, exactly as the always-stored path's
-        //   applyToAllCopies does, so a row write the server rejects for its
-        //   value (on Postgres, SQLSTATE class 22, 23 or 54, reclassified
-        //   as RowWriteRejected) rolls back only the fold's own writes: the
-        //   transaction stays usable to run the held check and, if needed,
-        //   to end unwritten by throwing out of this savepoint's caller.
-        FoldFailureReason? failureReason;
-        try {
-          await _backend.runInSavepointInTxn(
-            txn,
-            () => ProjectionInterpreter.foldStep(
-              txn: txn,
-              backend: _backend,
-              spec: spec,
-              promoters: _promoters,
-              event: event,
-              registeredVersion: registeredVersion,
-              copyId: copy.copyId,
-            ),
+
+        var chunk = await readChunk();
+        var index = 0;
+        // Implements: EVS-DEV-view-convergence/O
+        // a do-while: the first step always runs, whatever the clock reads.
+        do {
+          if (index >= chunk.length) {
+            if (chunk.length < kCatchUpReadChunk) {
+              reachedTip = true;
+              break;
+            }
+            await rows?.flush();
+            chunk = await readChunk();
+            index = 0;
+            if (chunk.isEmpty) {
+              reachedTip = true;
+              break;
+            }
+          }
+          final event = chunk[index];
+          index++;
+          lastRead = event.sequenceNumber;
+          await DeliveryTestHooks.current?.onCatchUpStep?.call(
+            copy.copyId,
+            event.eventId,
           );
-        } on FoldFailure catch (e) {
-          failureReason = e.reason;
-        } on RowWriteRejected catch (_) {
-          // Implements: EVS-DEV-security-findings/T (reason rowWriteFailed)
-          failureReason = FoldFailureReason.rowWriteFailed;
-        }
-        if (failureReason != null) {
-          // Implements: EVS-DEV-security-findings/T
-          // a fold_failed finding this copy cannot fold is passed over at
-          //   once: no further fold_failed finding is authored about it.
-          if (!isFoldFailedFinding(event)) {
-            final evidence = foldFailedFindingEvidence(
-              viewName: target.viewName,
-              definitionFingerprint: copy.fingerprint,
-              event: event,
-              reason: failureReason,
-            );
-            final findingId = securityFindingId(
-              databaseId: _databaseId,
-              role: FindingRole.fold,
-              kind: FindingKind.foldFailed,
-              evidence: evidence,
-            );
+          final def = _entryTypes.byId(event.entryType);
+          final registeredVersion =
+              def?.registeredVersion ?? event.entryTypeVersion;
+          Future<List<AggregateFoldChange>> fold() =>
+              ProjectionInterpreter.foldStep(
+                txn: txn,
+                backend: _backend,
+                spec: spec,
+                promoters: _promoters,
+                event: event,
+                registeredVersion: registeredVersion,
+                copyId: copy.copyId,
+                rows: rows,
+              );
+          FoldFailureReason? failureReason;
+          if (rows != null) {
             // Implements: EVS-DEV-view-convergence/Z
-            // a later catch-up passes over the event once its finding is
-            //   held; until then, the transaction ends unwritten.
-            final held = await _backend.holdsAuthoredSecurityFindingInTxn(
-              txn,
-              databaseId: _databaseId,
-              findingId: findingId,
-            );
-            if (!held) {
-              throw _CatchUpFoldFailureSignal(
+            // the fold's writes reach only the buffer until the next flush;
+            //   a fold failure discards the writes of the failed fold alone
+            //   (the buffer's per-event undo, in place of a savepoint), so
+            //   the transaction stays usable to run the held check and, if
+            //   needed, to end unwritten by throwing.
+            try {
+              await foldBuffered(rows, fold);
+            } on FoldFailure catch (e) {
+              failureReason = e.reason;
+            }
+          } else {
+            // Implements: EVS-DEV-view-convergence/Z
+            // the fold runs in a savepoint, exactly as the always-stored
+            //   path's applyToAllCopies does, so a row write the server
+            //   rejects for its value (on Postgres, SQLSTATE class 22, 23 or
+            //   54, reclassified as RowWriteRejected) rolls back only the
+            //   fold's own writes: the transaction stays usable to run the
+            //   held check and, if needed, to end unwritten by throwing out
+            //   of this savepoint's caller.
+            try {
+              await _backend.runInSavepointInTxn(txn, fold);
+            } on FoldFailure catch (e) {
+              failureReason = e.reason;
+            } on RowWriteRejected catch (_) {
+              // Implements: EVS-DEV-security-findings/T (reason
+              //   rowWriteFailed)
+              failureReason = FoldFailureReason.rowWriteFailed;
+            }
+          }
+          if (failureReason != null) {
+            // Implements: EVS-DEV-security-findings/T
+            // a fold_failed finding this copy cannot fold is passed over at
+            //   once: no further fold_failed finding is authored about it.
+            if (!isFoldFailedFinding(event)) {
+              final evidence = foldFailedFindingEvidence(
                 viewName: target.viewName,
                 definitionFingerprint: copy.fingerprint,
                 event: event,
                 reason: failureReason,
               );
+              final findingId = securityFindingId(
+                databaseId: _databaseId,
+                role: FindingRole.fold,
+                kind: FindingKind.foldFailed,
+                evidence: evidence,
+              );
+              // Implements: EVS-DEV-view-convergence/Z
+              // a later catch-up passes over the event once its finding is
+              //   held; until then, the transaction ends unwritten.
+              final held = await _backend.holdsAuthoredSecurityFindingInTxn(
+                txn,
+                databaseId: _databaseId,
+                findingId: findingId,
+              );
+              if (!held) {
+                throw _CatchUpFoldFailureSignal(
+                  viewName: target.viewName,
+                  definitionFingerprint: copy.fingerprint,
+                  event: event,
+                  reason: failureReason,
+                );
+              }
             }
+            // Passed over: the watermark still advances below, as any other
+            // step's does, and this counts as a step.
           }
-          // Passed over: the watermark still advances below, as any other
-          // step's does, and this counts as a step.
-        }
-        watermark = event.sequenceNumber;
-        steps++;
-      } while (_effectiveClock().difference(start) < kCatchUpStepBound);
+          watermark = event.sequenceNumber;
+          steps++;
+        } while (_effectiveClock().difference(start) < kCatchUpStepBound);
+        await rows?.flush();
+      } on RowWriteRejected {
+        // Only a batched flush reaches here: the event-by-event fold above
+        // catches its own. Which event's write the server would have
+        // rejected is unknown, so the transaction ends unwritten and the
+        // range it read is folded again event by event.
+        throw _CatchUpBatchRejectedSignal(copy.copyId, lastRead);
+      }
       if (steps > 0) {
         await _backend.setViewCopyWatermarkInTxn(txn, copy.copyId, watermark);
       }
-      return _StepResult(copy.copyId, steps, reachedTip);
+      return _StepResult(copy.copyId, steps, reachedTip, watermark);
     }
 
     try {
@@ -574,6 +635,10 @@ class ViewCatchUpDriver {
       // has committed: a rolled-back attempt must not leave this instance
       // pointing at a copy id no reader can find.
       _viewCopyIds[target.viewName] = result.copyId;
+      final through = _perEventThrough[result.copyId];
+      if (through != null && result.watermark >= through) {
+        _perEventThrough.remove(result.copyId);
+      }
       // Implements: EVS-DEV-view-convergence/Q
       // Implements: EVS-DEV-view-convergence/W
       // Resets the resolved copy's own progress, keeping its last recorded
@@ -596,6 +661,17 @@ class ViewCatchUpDriver {
       return result.steps == 0
           ? _Outcome.idle
           : (result.reachedTip ? _Outcome.done : _Outcome.progressed);
+    } on _CatchUpBatchRejectedSignal catch (signal) {
+      // Implements: EVS-DEV-view-convergence/Z
+      // a rejected row write is a fold failure, not a storage failure: no
+      //   back-off (Q excludes fold failures from it); the copy is
+      //   rescheduled at once, folding the range event by event, which
+      //   finds the event, records its finding and passes over it.
+      final through = _perEventThrough[signal.copyId];
+      if (through == null || through < signal.throughSequence) {
+        _perEventThrough[signal.copyId] = signal.throughSequence;
+      }
+      return _Outcome.progressed;
     } on _CatchUpFoldFailureSignal catch (signal) {
       // Implements: EVS-DEV-view-convergence/Z
       // Implements: EVS-DEV-security-findings/F
@@ -640,7 +716,7 @@ class ViewCatchUpDriver {
         await _backend.deleteViewCopyRecordInTxn(txn, copyId);
         done = true;
       }
-      return _StepResult(copyId, 1, done);
+      return _StepResult(copyId, 1, done, 0);
     }
 
     try {
@@ -735,8 +811,25 @@ class ViewCatchUpDriver {
 enum _Outcome { progressed, done, idle, lockHeld, failed }
 
 class _StepResult {
-  _StepResult(this.copyId, this.steps, this.reachedTip);
+  _StepResult(this.copyId, this.steps, this.reachedTip, this.watermark);
   final String copyId;
   final int steps;
   final bool reachedTip;
+
+  /// The copy's watermark as the transaction left it (unused for a
+  /// deletion step).
+  final int watermark;
+}
+
+/// Thrown out of a catch-up transaction's body when a batched flush of its
+/// folded rows meets a row write the server rejects for its value
+/// (`RowWriteRejected`): the transaction rolls back unwritten, and
+/// [ViewCatchUpDriver] folds the range it read, [throughSequence] included,
+/// event by event -- each fold in a savepoint of its own, which names the
+/// event whose write is rejected -- before it batches again.
+class _CatchUpBatchRejectedSignal implements Exception {
+  _CatchUpBatchRejectedSignal(this.copyId, this.throughSequence);
+
+  final String copyId;
+  final int throughSequence;
 }

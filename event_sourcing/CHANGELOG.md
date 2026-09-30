@@ -693,6 +693,16 @@ created by an earlier release is dropped and provisioned again with
 
 ### Storage contract
 
+- `StorageBackend` gains `upsertViewRowsInTxn`, `upsertTableViewRowsInTxn`
+  and `deleteViewRowsInTxn`, the batched row writes a catch-up transaction
+  flushes through; each defaults to the single-row calls, and
+  `PostgresBackend` writes a batch with one statement. A catch-up
+  transaction reads the rows of each page of events it folds in one query,
+  serves the step's own earlier writes from memory, and writes the changed
+  rows with at most three statements per page, through the same fold step
+  appends use; a batch the server rejects for a row's value is folded again
+  event by event, each fold in a savepoint, which names the event for its
+  `fold_failed` finding.
 - `StoredEvent` carries the event's `causal` object (`CausalRecord`).
   `StoredEvent.synthetic` gives an event built without one an eligible
   version with no parents, so an in-memory `StorageBackend` double's seeded

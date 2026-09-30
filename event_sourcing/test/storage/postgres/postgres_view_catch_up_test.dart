@@ -14,6 +14,10 @@
 // Verifies: EVS-DEV-view-convergence/L
 // a catch-up transaction's first statement locks backend_state in SHARE
 //   mode, before any read of its copy, and an append waits for it.
+// Verifies: EVS-DEV-view-convergence/K
+// a copy caught up through the buffered catch-up, with its batched row
+//   writes, equals an event-by-event replay of the log through the fold
+//   step appends use.
 // Verifies: EVS-DEV-view-convergence/M (Postgres advisory)
 // a catch-up transaction takes a transaction-scoped advisory lock on its
 //   copy without waiting, and a second instance's catch-up transaction on
@@ -29,6 +33,7 @@ import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:test/test.dart';
 
+import '../../test_support/catch_up_equivalence_conformance.dart';
 import 'test_postgres_url.dart';
 
 const _kType = 'view_catch_up_note';
@@ -155,6 +160,29 @@ void main() {
       await backend.close();
     }
     backends.clear();
+  });
+
+  // Verifies: EVS-DEV-view-convergence/K
+  group('catch-up equivalence', () {
+    if (db == null) return;
+    runCatchUpEquivalenceConformance(
+      openBackend: open,
+      opener: (backend) =>
+          ({required entryTypes, required projections, required promoters}) =>
+              EventStore.open(
+                storage: ApplicationSuppliedStorage(
+                  backend,
+                  PostgresSecurityContextStore(
+                    backend: backend as PostgresBackend,
+                  ),
+                ),
+                entryTypes: entryTypes,
+                source: _kSource,
+                projections: projections,
+                promoters: promoters,
+              ),
+      settle: () => Future<void>.delayed(const Duration(milliseconds: 20)),
+    );
   });
 
   // Verifies: EVS-DEV-view-convergence/C

@@ -1597,11 +1597,15 @@ void main() {
         addTearDown(schema.drop);
         await schema.reset(provision: true);
       }
-      await _openStore(await open(at: schemas[0]));
-      await _openStore(
+      // Registered after the schema drops, so each store closes, and its
+      // catch-up stops, before the schemas are dropped.
+      final first = await _openStore(await open(at: schemas[0]));
+      addTearDown(first.close);
+      final second = await _openStore(
         await open(at: schemas[1]),
         types: const {_kX: EntryTypeVersion(2, 0)},
       );
+      addTearDown(second.close);
     });
   });
 

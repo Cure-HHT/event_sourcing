@@ -33,6 +33,7 @@ import 'package:event_sourcing/src/projections/integrity_marks.dart';
 import 'package:event_sourcing/src/projections/interpreter/aggregate_fold.dart';
 import 'package:event_sourcing/src/projections/interpreter/fold_failure.dart';
 import 'package:event_sourcing/src/projections/interpreter/table_fold.dart';
+import 'package:event_sourcing/src/projections/interpreter/view_row_access.dart';
 import 'package:event_sourcing/src/projections/projection_registry.dart';
 import 'package:event_sourcing/src/projections/projection_spec.dart';
 import 'package:event_sourcing/src/projections/view_read.dart'
@@ -433,6 +434,7 @@ class ProjectionInterpreter {
     required StoredEvent event,
     required EntryTypeVersion registeredVersion,
     required String copyId,
+    ViewRowAccess? rows,
   }) {
     final matches = spec.interest.matches(event);
     return foldIntoView(
@@ -443,6 +445,7 @@ class ProjectionInterpreter {
       event: event,
       version: matches ? registeredVersion : null,
       copyId: copyId,
+      rows: rows,
     );
   }
 
@@ -500,6 +503,11 @@ class ProjectionInterpreter {
   /// event is, or an event that reaches a held finding), so every view
   /// folds every finding whatever its interest, in log order.
   ///
+  /// The step reads and writes the copy's rows through [rows] when given
+  /// -- a catch-up transaction's buffer -- and otherwise straight through
+  /// [backend] in [txn] at [copyId]; the computation is the same either
+  /// way.
+  ///
   /// Returns the change records of the rows the step changed.
   // Implements: EVS-PRD-materializer/G
   // every view folds each security finding into the marks of the rows the
@@ -514,7 +522,9 @@ class ProjectionInterpreter {
     required StoredEvent event,
     required EntryTypeVersion? version,
     required String copyId,
+    ViewRowAccess? rows,
   }) async {
+    final access = rows ?? DirectViewRowAccess(backend, txn, copyId);
     if (version != null && event.entryTypeVersion.major > version.major) {
       throw StateError(
         'ProjectionInterpreter: event ${event.eventId} of entry type '
@@ -529,11 +539,7 @@ class ProjectionInterpreter {
       var eventForFold = event;
       if (event.entryTypeVersion < version) {
         final existingRow = switch (spec) {
-          AggregateProjectionSpec() => await backend.readViewRowInTxn(
-            txn,
-            copyId,
-            event.aggregateId,
-          ),
+          AggregateProjectionSpec() => await access.readRow(event.aggregateId),
           TableProjectionSpec() => null,
         };
         eventForFold = event.withData(
@@ -559,6 +565,7 @@ class ProjectionInterpreter {
           event: eventForFold,
           integrity: marks.own,
           copyId: copyId,
+          rows: access,
         ),
         TableProjectionSpec() => TableFold.applyEvent(
           txn: txn,
@@ -567,6 +574,7 @@ class ProjectionInterpreter {
           event: eventForFold,
           integrity: marks.own,
           copyId: copyId,
+          rows: access,
         ),
       };
       if (change != null) changes.add(change);
@@ -574,12 +582,10 @@ class ProjectionInterpreter {
     if (marks.refresh.isNotEmpty) {
       changes.addAll(
         await _refreshMarks(
-          txn: txn,
-          backend: backend,
           spec: spec,
           refresh: marks.refresh,
           event: event,
-          copyId: copyId,
+          rows: access,
         ),
       );
     }
@@ -591,12 +597,10 @@ class ProjectionInterpreter {
   /// that aggregate produced) and whose marks differ, and returns their
   /// change records, caused by [event].
   static Future<List<AggregateFoldChange>> _refreshMarks({
-    required Transaction txn,
-    required StorageBackend backend,
     required ProjectionSpec spec,
     required Map<String, List<String>> refresh,
     required StoredEvent event,
-    required String copyId,
+    required ViewRowAccess rows,
   }) async {
     final changes = <AggregateFoldChange>[];
     Future<void> rewrite(
@@ -610,7 +614,7 @@ class ProjectionInterpreter {
         ...row,
         kIntegrityRowKey: integrityValue(ids),
       });
-      await backend.upsertViewRowInTxn(txn, copyId, key, next);
+      await rows.upsertRow(key, next);
       changes.add(
         AggregateFoldChange(
           viewName: spec.viewName,
@@ -626,7 +630,7 @@ class ProjectionInterpreter {
     switch (spec) {
       case AggregateProjectionSpec():
         for (final entry in refresh.entries) {
-          final row = await backend.readViewRowInTxn(txn, copyId, entry.key);
+          final row = await rows.readRow(entry.key);
           if (row != null) await rewrite(entry.key, row, entry.value);
         }
       case TableProjectionSpec():
@@ -637,9 +641,7 @@ class ProjectionInterpreter {
         // whole copy.
         for (final entry in refresh.entries) {
           final ids = entry.value;
-          for (final row in await backend.findTableRowsBySourceAggregateInTxn(
-            txn,
-            copyId,
+          for (final row in await rows.findTableRowsBySourceAggregate(
             entry.key,
           )) {
             final key = row['aggregateId'];
