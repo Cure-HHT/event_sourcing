@@ -23,7 +23,7 @@ E. Ingested events SHALL participate in the local materializer and the local sub
 
 F. The ingest path SHALL be idempotent: re-presenting an event already admitted SHALL not duplicate it in the local log.
 
-G. The ingest path SHALL admit an event only as part of a delivery on a channel that admits that delivery, SHALL admit every event of such a delivery, whatever the outcome of this requirement's integrity verifications, the event's content, whether every view can fold it, or the age of its client-authored timestamps, other than a record it cannot store as an event, which it SHALL keep in full in a security finding, and the library SHALL expose no public ingest entry point that admits an event outside a delivery.
+G. Every event of a delivery the ingest path admits SHALL be held in the log, as an event or kept in full in a security finding, whatever the outcome of this requirement's integrity verifications, its content, whether every view can fold it, or the age of its client-authored timestamps.
 
 H. Every ingest entry point SHALL record a security finding for an event whose originator provenance entry names the receiving database's identity, whether or not the receiving database holds it, and SHALL store such an event as received when it does not hold it.
 
@@ -34,6 +34,10 @@ J. The ingest path SHALL record a security finding for an event that follows a h
 K. <RETIRED> Ingest compares no declarations: every holder reads the kind and eligibility recorded on each event.
 
 L. <RETIRED> A delivery records no withheld-parent flag; per-delivery facts travel as delivery attributes (EVS-DEV-delivery-receiver).
+
+M. The ingest path SHALL admit an event only as part of a delivery on a channel that admits that delivery.
+
+N. Every public operation of the library that admits an event through the ingest path SHALL take the event as part of a delivery.
 
 ## Rationale
 
@@ -55,12 +59,14 @@ L. <RETIRED> A delivery records no withheld-parent flag; per-delivery facts trav
 
 **Why a finding for a database's own events at ingest (assertion H)?** A database's own events enter its log by its appends, and a channel carries only what its sender authored, so one of its own events arriving through ingest is a clone's or a tamperer's: it may duplicate an event the database holds, or re-enter at an origin position an event appended since reuses. Ingest records it as a finding, held or not, and stores it as received when it is not held, like any other event whose integrity it cannot vouch for. Storing it gives it no authority over the database's own destinations: the default destination-wedges view folds no event of the database's own identity that it does not hold as authored (`EVS-PRD-destinations/S`). A sender that lost its own events after a restore is rebuilt as a successor that restores them from its receiver (EVS-PRD-delivery-channel).
 
-**Why only deliveries the channel admits (assertion G)?** Admission is unconditional about content, age, integrity and whether a view can fold the event, not about order or form. A view that cannot fold an admitted event leaves it out of its rows and the library records a security finding naming the view and the event (`EVS-DEV-security-findings`), so one view's definition never holds back a delivery. A record the library cannot store as an event (malformed, or a reserved event it does not admit) is kept in full in a finding instead, so the log holds it and the rest of its delivery is admitted. As for order, a delivery that does not follow the receiver's record of its channel is refused whole, with the record, so the sender delivers again what the receiver lacks, or continues the channel on a new generation (EVS-PRD-delivery-channel). The refusal loses nothing: the events stay in the sender's queue. An entry point that admitted a single event outside a delivery would let an event reach the log with no channel record, so a receiver's record would no longer describe everything it received from a sender; the library's own tests of the per-event checks reach them through library-internal code, not a public entry point.
+**Why hold every event of an admitted delivery, and only deliveries the channel admits (assertions G, M and N)?** Admission is unconditional about content, age, integrity and whether a view can fold the event, not about order or form. A view that cannot fold an admitted event leaves it out of its rows and the library records a security finding naming the view and the event (`EVS-DEV-security-findings`), so one view's definition never holds back a delivery. A record the library cannot store as an event (malformed, or a reserved event it does not admit) is kept in full in a finding instead, so the log holds it and the rest of its delivery is admitted. As for order, a delivery that does not follow the receiver's record of its channel is refused whole, with the record, so the sender delivers again what the receiver lacks, or continues the channel on a new generation (EVS-PRD-delivery-channel). The refusal loses nothing: the events stay in the sender's queue. An entry point that admitted a single event outside a delivery would let an event reach the log with no channel record, so a receiver's record would no longer describe everything it received from a sender; the library's own tests of the per-event checks reach them through library-internal code, not a public operation.
 
 **Why a finding for a wrong or an unlisted successor (assertions I and J)?** A predecessor the receiver holds, but that another database authored or that its own database authored later, cannot be the event the sender authored before this one. An event that follows a held predecessor which another held event of its sender already follows, or that sits at an origin position another held event of its sender occupies, forks the sender's origin chain; a filter can hide the first of these facts but not the second. A sender that went back in time and appended, a clone, and tampering all produce these, and the chain cannot tell them apart, so every fork and every reused position is stored with a finding and delivery continues.
 
 ## Changelog
 
+- 2026-09-29 | 8ad47c04 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-09-30 | - | - | Michael Lewis (<michael@anspar.org>) | G: restated as the invariant that every event of an admitted delivery is held in the log, as an event or in full in a security finding, whatever its verification outcome, content, foldability or timestamp age. Add M: an event is admitted only as part of a delivery on a channel that admits it, split from G. Add N: every public operation that admits an event through ingest takes it as part of a delivery, split from G. Code and tests cite G for all three obligations; none cites M or N
 - 2026-09-29 | 67bc4bf5 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-29 | - | - | Michael Lewis (<michael@anspar.org>) | G: admission is independent of whether every view can fold the event. Code and tests cite G
 - 2026-09-25 | dd17064b | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
@@ -87,4 +93,4 @@ L. <RETIRED> A delivery records no withheld-parent flag; per-delivery facts trav
 - 2026-08-06 | a8814731 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: sync changelog hash
 - 2026-07-02 | 92f2bd91 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
-*End* *Ingest Path* | **Hash**: 67bc4bf5
+*End* *Ingest Path* | **Hash**: 8ad47c04

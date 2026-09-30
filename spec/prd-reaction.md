@@ -280,7 +280,9 @@ I. The Remote-side transport SHALL surface its observable connection state via t
 
 J. The server-side wire handler SHALL support a configurable WebSocket keepalive interval. When set, it SHALL emit periodic ping frames on each connection and close any connection whose peer fails the ping/pong round-trip; when unset, it SHALL send no keepalive frames. Keepalive SHALL keep otherwise-idle connections from being silently reaped by network intermediaries and SHALL surface a dead peer as an observable close-frame.
 
-K. The Remote-side client SHALL treat a `view_converging` refusal from the server as transient: on a subscription or a permission-snapshot request it SHALL surface a typed converging state naming the view, distinct from an error, and SHALL retry the refused request with a bounded backoff and a bounded number of attempts; on an action submission it SHALL surface a typed transient refusal naming the view to the caller and SHALL NOT retry the submission itself.
+K. The Remote-side client SHALL deliver a `view_converging` refusal from the server to the caller of a subscription, a permission-snapshot request or an action submission as a typed transient condition naming the view.
+
+L. The Remote-side client SHALL recover, from its caller's single request, a subscription or a permission snapshot that the server refuses with `view_converging`.
 
 ### Rationale
 
@@ -300,17 +302,19 @@ K. The Remote-side client SHALL treat a `view_converging` refusal from the serve
 
 **Why server-side keepalive (J), and how does it relate to status (I) and reconnect (H)?** The Remote client cannot detect a silently dropped connection on web: a browser `WebSocket` neither lets application code send timed pings nor surfaces incoming ping/pong frames, and a half-open socket may never deliver a close event. Without keepalive, an idle connection behind a proxy/load-balancer can be reaped with no close-frame, so the client's lifecycle-driven status (I) stays `Connected` and the backoff reconnect (H) — which is edge-triggered by a close — never fires. A *server-side* keepalive (the host's `pingInterval`, which browsers auto-pong) solves both halves: it keeps the connection non-idle so it is not reaped in the first place, and when a peer is genuinely gone it forces a server-side close that reaches the client as the observable close-frame that I and H already act on. This is distinct from I's prohibition: I forbids the client from *synthesizing pings to derive status*; J is transport-level liveness on the *server*, and it feeds — rather than bypasses — the lifecycle-event path. It is opt-in (interval supplied by the consumer) so the library imposes no traffic by default.
 
-**Why retry some converging refusals and not others (K)?** A view the server reads is converging while its copy catches up after an open, which lasts seconds, and the server refuses rather than answer from unsettled rows. The refusal says "not yet", not "no". A subscription and the permission snapshot are opened and kept by the library, so the library owns their recovery: it retries them and surfaces a typed converging state, so a panel shows "loading" rather than an error or nothing. An action submission is started by a caller on a person's behalf, so the caller owns what the person sees and whether to try again: the library surfaces a typed transient refusal and leaves the retry, with the submission's idempotency key unchanged, to the caller.
+**Why a typed transient condition, and who recovers (K and L)?** A view the server reads is converging while its copy catches up after an open, which lasts seconds, and the server refuses rather than answer from unsettled rows (`EVS-DEV-converging-view-reads`). The refusal says "not yet", not "no", so it reaches the caller as a transient condition naming the view, distinct from an error: a panel shows "loading" rather than an error or nothing. The library owns the recovery of what it opens and keeps: a subscription and the permission snapshot are re-requested by the client, with a backoff, until the server serves them, and the caller asked once. An action submission is started by a caller on a person's behalf, so the caller owns the retry and what the person sees meanwhile; a submission may be retried with its idempotency key unchanged (`EVS-PRD-action-dispatch`), so a retry never applies an action twice. An automatic retry of action submissions that the client offers as an option, off by default, is a convenience for callers that want one and changes neither assertion.
 
 ### Changelog
 
+- 2026-09-29 | 6485cb2c | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-09-30 | - | - | Michael Lewis (<michael@anspar.org>) | K: restated as the invariant that a view_converging refusal reaches the caller of a subscription, a permission snapshot or an action submission as a typed transient condition naming the view. Add L: a subscription or permission snapshot refused with view_converging recovers from its caller's single request. The backoff, and the caller's ownership of an action submission's retry, move to the Rationale. No code or test references K or L
 - 2026-09-29 | bd13ba23 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-29 | 85156c09 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-29 | - | - | Michael Lewis (<michael@anspar.org>) | Add K: the remote client treats a view_converging refusal as transient; it retries a subscription or a permission-snapshot request with a bounded backoff and a bounded number of attempts, surfacing a typed converging state, and surfaces a typed transient refusal to the caller of an action submission without retrying it. No code or test references K
 - 2026-08-10 | 3e0bf707 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-07-02 | 2df8cc19 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
-*End* *Cross-Process Event Transport* | **Hash**: bd13ba23
+*End* *Cross-Process Event Transport* | **Hash**: 6485cb2c
 
 ## EVS-PRD-reaction-scope: Reaction Scope
 
