@@ -21,6 +21,35 @@ Each package under this repo (`event_sourcing/`, `canonical_json_jcs/`,
 suite; run `flutter test` from inside any package directory to run
 that package's tests.
 
+## Running the checks locally
+
+The root `Makefile` runs the same checks CI runs, through
+`tools/run-checks.sh`. `make` alone lists the targets and variables.
+
+| Target | What it runs |
+| --- | --- |
+| `make analyze` | `flutter analyze` / `dart analyze` in every package (infos fatal) |
+| `make test-unit` | every package's tests without Postgres, packages in parallel |
+| `make test-web` | `event_sourcing/test/web/` in Chrome |
+| `make test-desktop` | `event_sourcing/example`'s integration test under `xvfb-run` (Linux) |
+| `make test-postgres` | every Postgres-gated file in `conformance-tests.yml`, sharded across throwaway containers |
+| `make test-demos` | the example packages' unit, Postgres and desktop tests |
+| `make test-throughput` | the opt-in throughput guard against the baseline build |
+| `make elspais` | `elspais checks` |
+| `make test-all-parallel` | all of the above at once: the fast full verification |
+| `make test-all` | all of the above one suite at a time, as CI runs each, on one container (plus the second server one file needs): the slow reference run |
+| `make pg-up` / `make pg-down` | start / remove throwaway Postgres containers by hand |
+
+The Postgres targets need Docker: each shard gets its own `postgres:16`
+container on a free port, and every container a run starts is removed when
+it ends, interrupted or not. `PG_TEST_URL=...` reuses an existing server
+instead (the files then run one at a time). `SHARDS`, `JOBS` and `PG_IMAGE`
+tune a run. Output is one line per suite or shard; full logs go to
+`.check-logs/<run id>/`, and the run ends with every failing test and its
+log. Per-file Postgres durations are kept in `.check-durations` and
+balance the next run's shards. Runs on Linux and macOS (bash 3.2 or later,
+GNU make 3.81 or later).
+
 ## Related repositories
 
 - `hht_diary` — the core application that consumes this library.
