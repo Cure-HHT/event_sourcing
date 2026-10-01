@@ -10,6 +10,7 @@
 
 @TestOn('vm')
 @Timeout(Duration(minutes: 3))
+@Tags(['timing'])
 library;
 
 import 'dart:async';

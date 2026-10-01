@@ -1,0 +1,8 @@
+# A test file tagged `timing` asserts a wall-clock bound (a Stopwatch or
+# polling deadline compared against a fixed Duration). tools/run-checks.sh
+# runs these files without `--coverage`: the instrumentation the coverage
+# collector adds slows the Dart VM enough, on a loaded runner, to put a tight
+# bound at risk, while the bound itself states a real requirement and must
+# not move. The merged lcov simply carries no lines for a timing-tagged file.
+tags:
+  timing:

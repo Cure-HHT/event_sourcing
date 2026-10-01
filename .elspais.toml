@@ -164,7 +164,12 @@ reference_patterns = []
 # `target` subcommand (see `tools/run-checks.sh help`): it runs the files in
 # parallel pieces, writes one machine-JSON file per piece under the target's
 # `results` glob, merges the pieces' lcov into the target's `coverage` file,
-# and prints the pieces' JSON on stdout, one after another, at the end. The
+# and prints the pieces' JSON on stdout, one after another, at the end. A
+# _test.dart file tagged `timing` (its tests assert a wall-clock bound; see
+# event_sourcing/dart_test.yaml) runs in its own invocation without
+# --coverage, so the collector's instrumentation cannot slow it past the
+# bound; its results are still recorded and credited, and the merged lcov
+# simply carries no lines for it. The
 # Postgres targets take their servers from PG_TEST_URLS (space-separated, one
 # shard each) or PG_TEST_URL, the second server one file compares against from
 # PG_TEST_URL_OTHER_SERVER, and a slice of the shard plan from PG_PART=<i>/<n>

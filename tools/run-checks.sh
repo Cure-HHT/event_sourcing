@@ -21,6 +21,15 @@
 #     stdout; interleaved streams would cross their test ids). Progress goes
 #     to stderr.
 #
+# A _test.dart file tagged `timing` (`@Tags(['timing'])`, declared in the
+# package's dart_test.yaml) asserts a wall-clock bound: the `--coverage`
+# collector's instrumentation can slow the Dart VM enough, on a loaded
+# runner, to put a tight bound at risk without the requirement it checks
+# being any less true. The `unit` and `postgres` targets run a timing-tagged
+# file without --coverage (still recording and crediting its results) while
+# every other file keeps coverage; file_is_timing's grep against the file's
+# own annotation is the one place that decides.
+#
 # Portable to macOS (bash 3.2, BSD userland) and Linux: no associative
 # arrays, no mapfile, no `wait -n`, no GNU-only tool flags. Needs python3
 # (elspais runs on it) to read elspais's JSON.
@@ -485,11 +494,16 @@ emit_results() {
 }
 
 # The test files of piece $1 of $2 of this package's unit suite: every
-# *_test.dart under test/ outside test/web/, the largest first onto the piece
-# with the fewest bytes so far.
+# *_test.dart under test/ outside test/web/, timing-tagged files left to
+# unit_timing_files, the largest first onto the piece with the fewest bytes
+# so far.
 unit_piece_files() {
   find test -name '*_test.dart' ! -path 'test/web/*' -exec wc -c {} + |
-    awk '$2 != "total" { print $1 "\t" $2 }' | sort -t "$(printf '\t')" -k1,1nr -k2,2 |
+    awk '$2 != "total" { print $1 "\t" $2 }' |
+    while IFS="$(printf '\t')" read -r bytes f; do
+      file_is_timing "$f" && continue
+      printf '%s\t%s\n' "$bytes" "$f"
+    done | sort -t "$(printf '\t')" -k1,1nr -k2,2 |
     awk -F'\t' -v want="$1" -v n="$2" '
       BEGIN { for (i = 1; i <= n; i++) load[i] = 0 }
       {
@@ -500,15 +514,28 @@ unit_piece_files() {
       }'
 }
 
+# The timing-tagged *_test.dart files of this package's unit suite (none, in
+# most packages): pulled out of unit_piece_files's balancing and run in one
+# extra invocation of their own, without --coverage.
+unit_timing_files() {
+  find test -name '*_test.dart' ! -path 'test/web/*' | while IFS= read -r f; do
+    file_is_timing "$f" && echo "$f"
+  done
+}
+
 target_unit() {
   target_setup unit
   local out="coverage/unit" n="$UNIT_PIECES" i rc failed=0 pid
   rm -rf "$out"
   mkdir -p "$out/lcov"
+  local timingfiles=()
+  while IFS= read -r f; do [ -n "$f" ] && timingfiles+=("$f"); done < <(unit_timing_files)
   local nfiles
   nfiles="$(find test -name '*_test.dart' ! -path 'test/web/*' | wc -l | tr -d ' ')"
+  nfiles=$((nfiles - ${#timingfiles[@]}))
+  if [ "$nfiles" -lt 0 ]; then nfiles=0; fi
   if [ "$n" -gt "$nfiles" ]; then n="$nfiles"; fi
-  if [ "$n" -lt 1 ]; then
+  if [ "$n" -lt 1 ] && [ "${#timingfiles[@]}" -eq 0 ]; then
     echo "no test files under $PKG/test" >&2
     return 1
   fi
@@ -521,11 +548,16 @@ target_unit() {
       [ "${#files[@]}" -gt 0 ] || exit 0
       s=$SECONDS
       prc=0
+      {
+        echo "+ flutter test --no-pub --no-test-assets --concurrency=1 -r failures-only" \
+          "--file-reporter=json:$out/piece-$i-of-$n.jsonl" \
+          "--coverage --coverage-path=$out/lcov/piece-$i-of-$n.info" "${files[@]}"
+      } >"$TLOG/piece-$i-of-$n.log"
       env -u PG_TEST_URL -u PG_TEST_URLS -u PG_TEST_URL_OTHER_SERVER -u EVS_THROUGHPUT_TEST \
         flutter test --no-pub --no-test-assets --concurrency=1 -r failures-only \
         --file-reporter="json:$out/piece-$i-of-$n.jsonl" \
         --coverage --coverage-path="$out/lcov/piece-$i-of-$n.info" \
-        "${files[@]}" >"$TLOG/piece-$i-of-$n.log" 2>&1 </dev/null || prc=$?
+        "${files[@]}" >>"$TLOG/piece-$i-of-$n.log" 2>&1 </dev/null || prc=$?
       # 79: a piece in which no test ran (every test of its files gated off).
       if [ "$prc" -eq 79 ]; then prc=0; fi
       if [ "$prc" -eq 0 ]; then tag=PASS; else tag=FAIL; fi
@@ -537,6 +569,28 @@ target_unit() {
     TGT_PIDS="$TGT_PIDS $!"
     i=$((i + 1))
   done
+  if [ "${#timingfiles[@]}" -gt 0 ]; then
+    (
+      s=$SECONDS
+      prc=0
+      {
+        echo "+ flutter test --no-pub --no-test-assets --concurrency=1 -r failures-only" \
+          "--file-reporter=json:$out/piece-timing.jsonl (no coverage: timing-tagged)" \
+          "${timingfiles[@]}"
+      } >"$TLOG/piece-timing.log"
+      env -u PG_TEST_URL -u PG_TEST_URLS -u PG_TEST_URL_OTHER_SERVER -u EVS_THROUGHPUT_TEST \
+        flutter test --no-pub --no-test-assets --concurrency=1 -r failures-only \
+        --file-reporter="json:$out/piece-timing.jsonl" \
+        "${timingfiles[@]}" >>"$TLOG/piece-timing.log" 2>&1 </dev/null || prc=$?
+      if [ "$prc" -eq 79 ]; then prc=0; fi
+      if [ "$prc" -eq 0 ]; then tag=PASS; else tag=FAIL; fi
+      printf '%-4s  %s unit piece timing (%s file(s), no coverage)  %ss  (log: %s)\n' \
+        "$tag" "$PKG" "${#timingfiles[@]}" $((SECONDS - s)) "$(rel "$TLOG/piece-timing.log")" >&2
+      exit "$prc"
+    ) &
+    pids="$pids $!"
+    TGT_PIDS="$TGT_PIDS $!"
+  fi
   for pid in $pids; do
     rc=0
     wait "$pid" || rc=$?
@@ -545,7 +599,7 @@ target_unit() {
   TGT_PIDS=""
   merge_lcov_dir "$out"
   emit_results "$out"/piece-*.jsonl
-  echo "$PKG unit: $n piece(s), $((SECONDS - start))s" >&2
+  echo "$PKG unit: $n piece(s)$([ "${#timingfiles[@]}" -gt 0 ] && echo " + 1 timing piece"), $((SECONDS - start))s" >&2
   return "$failed"
 }
 
@@ -597,6 +651,19 @@ postgres_target_files() {
     esac
     echo "$f"
   done
+}
+
+# Whether a test file is tagged `timing`: its tests assert a wall-clock bound
+# (a Stopwatch or a polling deadline compared against a fixed Duration), so
+# the bound states a real requirement rather than a generous liveness
+# timeout. The `--coverage` collector's instrumentation slows the Dart VM
+# enough, on a loaded runner, to put a tight bound at risk without making the
+# requirement it checks any less true, so these files run without it; every
+# other file keeps coverage. event_sourcing/dart_test.yaml declares the tag
+# (flutter test warns on an undeclared one); this grep against the file's own
+# `@Tags(['timing'])` annotation is the single place that decides.
+file_is_timing() {
+  grep -q "^@Tags(\['timing'\])" "$1"
 }
 
 # Estimated seconds for a Postgres file: the last recorded duration, else a
@@ -702,17 +769,21 @@ run_shard() {
       piece=" (tests piece $((idx + 1))/$k)"
       extra=(--total-shards "$k" --shard-index "$idx")
     fi
-    if [ "$kind" != throughput ]; then
+    if [ "$kind" != throughput ] && ! file_is_timing "$path"; then
       extra+=(--coverage --coverage-path="$lcovdir/$tag-$seq.info")
     fi
     log="$TLOG/$(safe_name "$path")$([ "$k" -gt 1 ] && echo ".piece$((idx + 1))of$k").log"
     s=$SECONDS
     rc=0
+    {
+      echo "+ flutter test --no-pub --no-test-assets -r failures-only" \
+        "--file-reporter=json:$TLOG/run-$tag-$seq.jsonl" "${extra[@]}" "$path"
+    } >"$log"
     env -u EVS_THROUGHPUT_TEST -u PG_TEST_URLS PG_TEST_URL="$url" PG_TEST_URL_OTHER_SERVER="$other" \
       sh -c 'if [ "$0" = throughput ]; then EVS_THROUGHPUT_TEST=1; export EVS_THROUGHPUT_TEST; fi
              exec flutter test --no-pub --no-test-assets -r failures-only "$@"' \
       "$kind" --file-reporter="json:$TLOG/run-$tag-$seq.jsonl" "${extra[@]}" "$path" \
-      >"$log" 2>&1 </dev/null || rc=$?
+      >>"$log" 2>&1 </dev/null || rc=$?
     # 79: a piece of a split file that no test fell into.
     if [ "$rc" -eq 79 ] && [ "$k" -gt 1 ]; then rc=0; fi
     if [ -f "$TLOG/run-$tag-$seq.jsonl" ]; then

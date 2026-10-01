@@ -8,6 +8,7 @@
 // instances. Gated on PG_TEST_URL.
 
 @TestOn('vm')
+@Tags(['timing'])
 library;
 
 import 'dart:async';

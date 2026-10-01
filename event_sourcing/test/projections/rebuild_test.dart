@@ -16,6 +16,9 @@
 // the rows a rebuild's replacement copy converges to equal the rows the
 //   log already derived.
 
+@Tags(['timing'])
+library;
+
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing/src/projections/view_fingerprint.dart';
 import 'package:flutter_test/flutter_test.dart';

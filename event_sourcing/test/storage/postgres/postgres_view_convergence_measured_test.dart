@@ -15,6 +15,7 @@
 //   window's start, within the window, in all three scenarios.
 
 @TestOn('vm')
+@Tags(['timing'])
 library;
 
 import 'dart:async';
