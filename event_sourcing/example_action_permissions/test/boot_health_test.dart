@@ -30,7 +30,11 @@ BootProgress _p(BootPhase phase, int done, int total, int ms) => BootProgress(
 );
 
 Future<(int, String)> _get(HttpClient client, int port, String path) async {
-  final request = await client.get('localhost', port, path);
+  final request = await client.get(
+    InternetAddress.loopbackIPv4.address,
+    port,
+    path,
+  );
   final response = await request.close();
   return (response.statusCode, await utf8.decodeStream(response));
 }

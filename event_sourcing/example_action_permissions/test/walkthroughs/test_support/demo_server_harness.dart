@@ -1,7 +1,8 @@
 // test/walkthroughs/test_support/demo_server_harness.dart
 //
-// Spawns bin/server.dart as a subprocess on a fresh ephemeral port,
-// waits for /healthz, and exposes typed wire-shape helpers. Used by the
+// Spawns bin/server.dart as a subprocess on a port the kernel picks
+// (`--port=0`), reads the address and port the server reports, waits for
+// /healthz, and exposes typed wire-shape helpers. Used by the
 // walkthrough_*_test.dart walkthrough tests.
 //
 // The walkthroughs live under test/ (not integration_test/) so plain
@@ -21,20 +22,25 @@ import 'package:path/path.dart' as p;
 
 class DemoServerHarness {
   DemoServerHarness._({
+    required this.host,
     required this.port,
     required this.process,
     required this.client,
     required this.workingDirectory,
   });
 
+  /// The address the server listens on, as it reports it: an address, not
+  /// a name a resolver maps to several, so a request reaches this server and
+  /// no other process holding the same port number on another address.
+  final String host;
   final int port;
   final Process process;
   final http.Client client;
   final String workingDirectory;
 
-  String get baseUrl => 'http://localhost:$port';
+  String get baseUrl => 'http://$host:$port';
 
-  /// Start a fresh demo server on a free localhost port.
+  /// Start a fresh demo server on a port the kernel picks.
   ///
   /// [packageRoot] is the path to the example_action_permissions package
   /// (where bin/server.dart and tool/*.yaml live). When omitted, the
@@ -45,7 +51,6 @@ class DemoServerHarness {
     Duration healthTimeout = const Duration(seconds: 60),
   }) async {
     final root = packageRoot ?? _findPackageRoot();
-    final port = await _pickFreePort();
 
     final dartExe = _resolveDartExecutable();
     final process = await Process.start(
@@ -54,7 +59,7 @@ class DemoServerHarness {
         'run',
         'bin/server.dart',
         '--ephemeral',
-        '--port=$port',
+        '--port=0',
         '--permissions-yaml=${p.join('tool', 'permissions.yaml')}',
         '--users-yaml=${p.join('tool', 'users.yaml')}',
       ],
@@ -63,27 +68,47 @@ class DemoServerHarness {
     );
 
     // Pipe child stdout/stderr to the test runner so failures are
-    // diagnosable. Drain in the background; do not await.
-    unawaited(process.stdout.transform(utf8.decoder).forEach(stdout.write));
+    // diagnosable, and read the address the server reports it listens on.
+    // Drain in the background; do not await.
+    final listening = Completer<(String, int)>();
+    unawaited(
+      process.stdout
+          .transform(utf8.decoder)
+          .transform(const LineSplitter())
+          .forEach((line) {
+            stdout.writeln(line);
+            final match = _listening.firstMatch(line);
+            if (match != null && !listening.isCompleted) {
+              listening.complete((match.group(1)!, int.parse(match.group(2)!)));
+            }
+          }),
+    );
     unawaited(process.stderr.transform(utf8.decoder).forEach(stderr.write));
 
     final client = http.Client();
-    final harness = DemoServerHarness._(
-      port: port,
-      process: process,
-      client: client,
-      workingDirectory: root,
-    );
     try {
+      final (host, port) = await listening.future.timeout(healthTimeout);
+      final harness = DemoServerHarness._(
+        host: host,
+        port: port,
+        process: process,
+        client: client,
+        workingDirectory: root,
+      );
       await harness._waitForHealth(healthTimeout);
+      return harness;
     } on Object {
       // If the server failed to come up, kill the process and surface.
       process.kill();
       client.close();
       rethrow;
     }
-    return harness;
   }
+
+  /// The address and port of the line the server prints once it listens.
+  static final RegExp _listening = RegExp(
+    r'demo server listening on http://([^/]+):(\d+) ',
+  );
 
   Future<void> _waitForHealth(Duration timeout) async {
     final deadline = DateTime.now().add(timeout);
@@ -181,13 +206,6 @@ class DemoServerHarness {
   }
 
   // --- internals ---
-
-  static Future<int> _pickFreePort() async {
-    final socket = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
-    final port = socket.port;
-    await socket.close();
-    return port;
-  }
 
   static String _findPackageRoot() {
     Directory dir = Directory.current;

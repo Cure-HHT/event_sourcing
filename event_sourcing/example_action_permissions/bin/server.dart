@@ -227,7 +227,7 @@ Future<void> main(List<String> args) async {
   // its readiness probe (/health) are answered while the event store boots.
   final host = await DemoServerHost.listen(port: port);
   stdout.writeln(
-    'demo server listening on http://${host.http.address.host}:'
+    'demo server listening on http://${host.http.address.address}:'
     '${host.http.port} (booting; /livez, /health)',
   );
   Future<void> failStartup(Object error) async {
