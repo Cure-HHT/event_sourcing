@@ -1,10 +1,3 @@
-// Verifies: EVS-PRD-storage-barrier/B
-// Verifies: EVS-PRD-storage-barrier/C
-// Verifies: EVS-PRD-storage-barrier/D
-// Verifies: EVS-PRD-storage-barrier/E
-// Verifies: EVS-DEV-storage-capability/C
-// Verifies: EVS-DEV-storage-capability/F
-//
 // Runs the run-time barrier scenarios of run_time_barrier_conformance.dart
 // on Postgres databases the library opens from a description, under the
 // declared runtime and lock roles: no handed-out object, the idempotency

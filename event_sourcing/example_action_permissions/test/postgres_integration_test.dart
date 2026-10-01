@@ -95,10 +95,17 @@ void main() {
           lastTraceProvider: () => null,
         ),
       );
-      server = await shelf_io.serve(routes.handler, 'localhost', 0);
+      // Bound to, and reached at, one address: a name such as `localhost`
+      // resolves to two, and the client may try the one this server is not
+      // on, where another process can hold the same port number.
+      server = await shelf_io.serve(
+        routes.handler,
+        InternetAddress.loopbackIPv4,
+        0,
+      );
       baseUri = Uri(
         scheme: 'http',
-        host: server.address.host,
+        host: server.address.address,
         port: server.port,
       );
     });
@@ -478,10 +485,14 @@ void main() {
           lastTraceProvider: () => null,
         ),
       );
-      final server1 = await shelf_io.serve(routes1.handler, 'localhost', 0);
+      final server1 = await shelf_io.serve(
+        routes1.handler,
+        InternetAddress.loopbackIPv4,
+        0,
+      );
       final base1 = Uri(
         scheme: 'http',
-        host: server1.address.host,
+        host: server1.address.address,
         port: server1.port,
       );
 

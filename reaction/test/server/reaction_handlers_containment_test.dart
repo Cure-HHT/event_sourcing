@@ -16,6 +16,7 @@
 //   with the descendant rows once the view is current.
 
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -269,13 +270,16 @@ Future<(WebSocketChannel, List<Map<String, Object?>>)> _subscribeAsDr(
   final validator = TrustingAuthValidator(defaultActiveRole: 'investigator');
   final server = await shelf_io.serve(
     handlers.subscriptions(validator),
-    'localhost',
+    // A numeric address: a name such as localhost can resolve to an IPv6
+    // address the server binds while the client connects over IPv4 to
+    // another process holding the same port number.
+    InternetAddress.loopbackIPv4,
     0,
   );
   addTearDown(() async => server.close(force: true));
 
   final client = WebSocketChannel.connect(
-    Uri.parse('ws://localhost:${server.port}/'),
+    Uri.parse('ws://${server.address.address}:${server.port}/'),
   );
   await client.ready;
   addTearDown(() async => client.sink.close());

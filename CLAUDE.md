@@ -14,16 +14,16 @@ Builder primitives, `ViewListener`, `PermissionGate`,
 split out so consumers' release builds don't pull `flutter_test`).
 All other library packages are pure Dart at runtime, though the
 `event_sourcing` and `reaction` test suites run under `flutter test`.
-CI (`.github/workflows/event-sourcing-tests.yml`) runs
-`flutter analyze --no-pub` (infos fatal) and `flutter test` in each of
-the eight Flutter packages (`event_sourcing`, its three examples,
-`reaction`, `reaction/example`, `reaction_widgets`,
-`reaction_widgets_testing`), `dart analyze` and `dart test` in
-`provenance` and `canonical_json_jcs`, the browser-only
-`event_sourcing/test/web/` suite in Chrome, and the
-`event_sourcing/example` desktop integration test;
-`conformance-tests.yml` runs every Postgres-gated test file against a
-Postgres service. Every workflow pins the Flutter SDK version.
+The test suites are defined once, as the `[[scanning.test.targets]]` of
+`.elspais.toml`: each package's analyzer and unit tests (the eight Flutter
+packages, `provenance` and `canonical_json_jcs`), the browser-only
+`event_sourcing/test/web/` suite in Chrome, the `event_sourcing/example`
+desktop integration test, every Postgres-gated test file, and the opt-in
+throughput guard. CI (`.github/workflows/event-sourcing-tests.yml`) runs
+them through `elspais checks --run-tests` in parallel jobs, the Postgres
+targets against Postgres services, then one traceability gate over all
+results; locally, `make test-all-parallel` does the same (see `make help`).
+Every workflow pins the Flutter SDK version.
 Downstream consumers pin this repo by git ref.
 
 The substrate ships two concrete `StorageBackend` reference

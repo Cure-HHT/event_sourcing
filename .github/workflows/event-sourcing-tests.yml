@@ -1,19 +1,41 @@
-# Full test and analyzer gate — every package in the repository, on every PR
-# and push to main.
+# Tests, analyzers and the traceability gate — every package in the
+# repository, on every PR and push to main.
+#
+# The test suites are the [[scanning.test.targets]] of .elspais.toml; this
+# workflow lists no test command. Each job runs its targets through
+# `elspais checks --run-tests --targets <group or target>` (lenient: the
+# checks of one job see only its own results), uploads the results and
+# coverage files the targets wrote, and the traceability job downloads every
+# job's files and runs `elspais checks` once over all of them as the gate.
 #
 # Jobs:
-#   flutter_packages — per package (matrix): `flutter analyze --no-pub` at the
-#                      default level (infos fatal), then the package's full
-#                      `flutter test` suite. Postgres-gated files skip here
-#                      (no PG_TEST_URL); conformance-tests.yml runs them
-#                      against a Postgres service. Browser-only files under
-#                      event_sourcing/test/web/ run in the browser job.
-#   dart_packages    — provenance and canonical_json_jcs: `dart analyze` and
-#                      `dart test`.
-#   browser          — event_sourcing/test/web/ in Chrome (sembast_web on
-#                      IndexedDB).
-#   desktop_integration — event_sourcing/example's dual-pane integration test
-#                      on a Linux desktop build under a virtual display.
+#   unit        — per package (matrix): its analyzer (`flutter analyze
+#                 --no-pub`, infos fatal; `dart analyze` in pure Dart
+#                 packages), then its unit target. Postgres-gated files skip
+#                 there (the targets remove PG_TEST_URL).
+#   browser     — the `web` group: event_sourcing/test/web/ in Chrome.
+#   desktop     — the `desktop` group: event_sourcing/example's dual-pane
+#                 integration test on a Linux desktop build under a virtual
+#                 display.
+#   postgres    — the `postgres` group, cut into PG_PART slices (matrix), each
+#                 against its own postgres:16 service and the second server
+#                 one file compares against.
+#                 event_sourcing/test/ci/postgres_ci_listing_test.dart fails
+#                 when a gated file is not run by a target this job runs.
+#   throughput  — the `throughput` group: the throughput guard checks out the
+#                 baseline commit into a temporary worktree, so it needs the
+#                 full history (fetch-depth 0).
+#   traceability — the gate: `elspais checks` over every job's results (the
+#                 pre-push hook's --lenient; the spec carries warnings a
+#                 strict run would fail on), a strict check that results
+#                 were ingested and every results and coverage file a target
+#                 names was read, and the coverage summary. It fails when any
+#                 test job did not succeed.
+#
+# The required Validation Summary check waits at most 30 minutes for every
+# other check, so no job may run longer. The Flutter SDK is pinned
+# (flutter-version) so a new stable release or lint set cannot change a run's
+# outcome; bump it deliberately. elspais is pinned in .github/versions.env.
 
 name: Event sourcing tests
 
@@ -30,86 +52,83 @@ permissions:
   contents: read
 
 jobs:
-  flutter_packages:
-    name: ${{ matrix.package }} analyze + test
+  unit:
+    name: ${{ matrix.target }} analyze + test
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
+        # target: the .elspais.toml unit target, which runs in the package
+        # directory of the same name. id: its artifact name.
         include:
-          - package: event_sourcing
-            test_args: --concurrency=1
-          - package: event_sourcing/example
-            test_args: ''
-          - package: event_sourcing/example_action_permissions
-            test_args: --concurrency=1
-          - package: event_sourcing/example_clinical_scopes
-            test_args: ''
-          - package: reaction
-            test_args: ''
-          - package: reaction/example
-            test_args: ''
-          - package: reaction_widgets
-            test_args: ''
-          - package: reaction_widgets_testing
-            test_args: ''
+          - target: event_sourcing
+            id: event_sourcing
+          - target: event_sourcing/example
+            id: event_sourcing-example
+          - target: event_sourcing/example_action_permissions
+            id: event_sourcing-example_action_permissions
+          - target: event_sourcing/example_clinical_scopes
+            id: event_sourcing-example_clinical_scopes
+          - target: reaction
+            id: reaction
+          - target: reaction/example
+            id: reaction-example
+          - target: reaction_widgets
+            id: reaction_widgets
+          - target: reaction_widgets_testing
+            id: reaction_widgets_testing
+          - target: provenance
+            id: provenance
+          - target: canonical_json_jcs
+            id: canonical_json_jcs
     steps:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
           flutter-version: 3.44.7
-      - name: Resolve deps
-        run: flutter pub get
-        working-directory: ${{ matrix.package }}
-      - name: Analyze
-        run: flutter analyze --no-pub
-        working-directory: ${{ matrix.package }}
-      - name: Test (browser-only test/web/ excluded)
-        working-directory: ${{ matrix.package }}
-        env:
-          TEST_ARGS: ${{ matrix.test_args }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install elspais (pinned in .github/versions.env)
         run: |
-          set -euo pipefail
-          # Every top-level directory under test/ except web/, plus top-level
-          # test files. test/web/ holds @TestOn('browser') files, which the
-          # browser job runs.
-          mapfile -t targets < <(
-            find test -mindepth 1 -maxdepth 1 \
-              \( -type d ! -name web \) -o \( -type f -name '*_test.dart' \) |
-              sort
-          )
-          if [ "${#targets[@]}" -eq 0 ]; then
-            echo "::error::no test targets found under test/"
-            exit 1
-          fi
-          # shellcheck disable=SC2086 # TEST_ARGS is a flag list
-          flutter test $TEST_ARGS "${targets[@]}"
-
-  dart_packages:
-    name: ${{ matrix.package }} analyze + test
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        package: [provenance, canonical_json_jcs]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-          flutter-version: 3.44.7
+          . .github/versions.env
+          python -m pip install "elspais==${ELSPAIS_VERSION}"
       - name: Resolve deps
-        run: dart pub get
-        working-directory: ${{ matrix.package }}
+        working-directory: ${{ matrix.target }}
+        run: |
+          if grep -q 'sdk: flutter' pubspec.yaml; then
+            flutter pub get
+          else
+            dart pub get
+          fi
       - name: Analyze
-        run: dart analyze
-        working-directory: ${{ matrix.package }}
-      - name: Test
-        run: dart test
-        working-directory: ${{ matrix.package }}
+        working-directory: ${{ matrix.target }}
+        run: |
+          if grep -q 'sdk: flutter' pubspec.yaml; then
+            flutter analyze --no-pub
+          else
+            dart analyze
+          fi
+      - name: Test (elspais target ${{ matrix.target }})
+        env:
+          TARGET: ${{ matrix.target }}
+        run: elspais checks --run-tests --lenient --targets "$TARGET"
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: results-unit-${{ matrix.id }}
+          # .elspais.toml pins the artifact's root to the repository root, so
+          # the gate job restores every file to its own path.
+          path: |
+            .elspais.toml
+            ${{ matrix.target }}/coverage/
+            .check-logs/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
 
   browser:
     name: event_sourcing browser tests
@@ -121,14 +140,32 @@ jobs:
         with:
           channel: stable
           flutter-version: 3.44.7
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install elspais (pinned in .github/versions.env)
+        run: |
+          . .github/versions.env
+          python -m pip install "elspais==${ELSPAIS_VERSION}"
       - name: Resolve deps
         run: flutter pub get
         working-directory: event_sourcing
-      - name: Browser tests (Chrome)
-        run: flutter test --platform chrome test/web/
-        working-directory: event_sourcing
+      - name: Browser tests (elspais group web)
+        run: elspais checks --run-tests --lenient --targets web
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: results-web
+          path: |
+            .elspais.toml
+            event_sourcing/coverage/
+            .check-logs/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
 
-  desktop_integration:
+  desktop:
     name: event_sourcing/example desktop integration
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -138,6 +175,13 @@ jobs:
         with:
           channel: stable
           flutter-version: 3.44.7
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install elspais (pinned in .github/versions.env)
+        run: |
+          . .github/versions.env
+          python -m pip install "elspais==${ELSPAIS_VERSION}"
       - name: Install Linux desktop build dependencies
         run: |
           sudo apt-get update
@@ -146,6 +190,209 @@ jobs:
       - name: Resolve deps
         run: flutter pub get
         working-directory: event_sourcing/example
-      - name: Dual-pane integration test
-        run: xvfb-run flutter test integration_test/dual_pane_test.dart -d linux
-        working-directory: event_sourcing/example
+      - name: Dual-pane integration test (elspais group desktop)
+        run: elspais checks --run-tests --lenient --targets desktop
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: results-desktop
+          path: |
+            .elspais.toml
+            event_sourcing/example/coverage/
+            .check-logs/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+
+  postgres:
+    name: Postgres suites (part ${{ matrix.part }} of 6)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        # PG_PART slices of one shard plan; the plan is computed the same way
+        # in every job, so together the parts run every Postgres-gated file
+        # once. Keep the count in PG_PART below in step with this list.
+        part: [1, 2, 3, 4, 5, 6]
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: evs
+          POSTGRES_PASSWORD: evs
+          POSTGRES_DB: evs_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U evs -d evs_test"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 30
+      # A second server whose database and schema have the same names, for
+      # the check that a lock session reaches the pool's server.
+      postgres_other:
+        image: postgres:16
+        env:
+          POSTGRES_USER: evs
+          POSTGRES_PASSWORD: evs
+          POSTGRES_DB: evs_test
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U evs -d evs_test"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 30
+    env:
+      PG_TEST_URL: postgres://evs:evs@localhost:5432/evs_test
+      PG_TEST_URL_OTHER_SERVER: postgres://evs:evs@localhost:5433/evs_test
+      PG_PART: ${{ matrix.part }}/6
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.44.7
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install elspais (pinned in .github/versions.env)
+        run: |
+          . .github/versions.env
+          python -m pip install "elspais==${ELSPAIS_VERSION}"
+      - name: Resolve deps (event_sourcing)
+        run: flutter pub get
+        working-directory: event_sourcing
+      - name: Resolve deps (example_action_permissions)
+        run: flutter pub get
+        working-directory: event_sourcing/example_action_permissions
+      - name: Postgres-gated files (elspais group postgres)
+        run: elspais checks --run-tests --lenient --targets postgres
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: results-postgres-${{ matrix.part }}
+          path: |
+            .elspais.toml
+            event_sourcing/coverage/
+            event_sourcing/example_action_permissions/coverage/
+            .check-logs/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+
+  throughput:
+    name: Postgres throughput guard against the baseline build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: evs
+          POSTGRES_PASSWORD: evs
+          POSTGRES_DB: evs_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U evs -d evs_test"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 30
+    env:
+      PG_TEST_URL: postgres://evs:evs@localhost:5432/evs_test
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The baseline worktree checks out a commit from the tree's own
+          # history, so the full history must be present.
+          fetch-depth: 0
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.44.7
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install elspais (pinned in .github/versions.env)
+        run: |
+          . .github/versions.env
+          python -m pip install "elspais==${ELSPAIS_VERSION}"
+      - name: Resolve deps (canonical_json_jcs)
+        run: flutter pub get
+        working-directory: canonical_json_jcs
+      - name: Resolve deps (provenance)
+        run: flutter pub get
+        working-directory: provenance
+      - name: Resolve deps (event_sourcing)
+        run: flutter pub get
+        working-directory: event_sourcing
+      - name: Throughput guard (elspais group throughput)
+        run: elspais checks --run-tests --lenient --targets throughput
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: results-throughput
+          path: |
+            .elspais.toml
+            event_sourcing/coverage/
+            .check-logs/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+
+  traceability:
+    name: Traceability gate (elspais checks over every result)
+    needs: [unit, browser, desktop, postgres, throughput]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install elspais (pinned in .github/versions.env)
+        run: |
+          . .github/versions.env
+          python -m pip install "elspais==${ELSPAIS_VERSION}"
+      - name: Download every job's results
+        uses: actions/download-artifact@v4
+        with:
+          pattern: results-*
+          merge-multiple: true
+          path: .
+      - name: Merge the coverage of each target's pieces and shards
+        run: tools/run-checks.sh merge-coverage
+      # --spec-dir (the configured one) builds the graph in this process
+      # rather than through a daemon, which does not watch the results files.
+      - name: elspais checks (the gate)
+        run: elspais --spec-dir spec checks --lenient
+      - name: Every target's results ingested (strict)
+        run: tools/run-checks.sh results-ingested
+      - name: Coverage summary
+        if: always()
+        run: |
+          {
+            echo '## Traceability coverage'
+            echo
+            elspais --spec-dir spec summary --format markdown
+          } >>"$GITHUB_STEP_SUMMARY"
+      - name: Every test job succeeded
+        if: always()
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          failed="$(printf '%s' "$NEEDS" | python3 -c '
+          import json, sys
+          needs = json.load(sys.stdin)
+          print(" ".join(k + "=" + v["result"] for k, v in needs.items() if v["result"] != "success"))
+          ')"
+          if [ -n "$failed" ]; then
+            echo "::error::test jobs that did not succeed: $failed"
+            exit 1
+          fi

@@ -19,16 +19,22 @@ class DemoServerHost {
   /// Binds [port] on [host] (0 picks a free port) and answers the probes at
   /// once: `/livez` 200, `/health` 503 with the boot's progress. Every other
   /// route answers 503 until [serve].
+  ///
+  /// [host] is an address, not a name a resolver maps to several: the server
+  /// binds one address, and a client resolving a name such as `localhost`
+  /// may try another first (Dart's client tries IPv4 first), where another
+  /// process can hold the same port number. The default is the IPv4
+  /// loopback address.
   static Future<DemoServerHost> listen({
     required int port,
-    String host = 'localhost',
+    InternetAddress? host,
     BootHealth? health,
   }) async {
     final boot = health ?? BootHealth();
     late final DemoServerHost self;
     final http = await shelf_io.serve(
       bootGate(boot, () => self._handler),
-      host,
+      host ?? InternetAddress.loopbackIPv4,
       port,
     );
     return self = DemoServerHost._(http, boot);

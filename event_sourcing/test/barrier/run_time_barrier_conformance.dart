@@ -231,6 +231,12 @@ void runRunTimeBarrierScenarios({
   String? skip,
 }) {
   group('run-time barrier on $backendLabel', skip: skip, () {
+    // Verifies: EVS-PRD-storage-barrier/B
+    // Verifies: EVS-PRD-storage-barrier/C
+    // Verifies: EVS-PRD-storage-barrier/D
+    // Verifies: EVS-PRD-storage-barrier/E
+    // Verifies: EVS-DEV-storage-capability/C
+    // Verifies: EVS-DEV-storage-capability/F
     test('no handed-out object answers a forbidden member dynamically, and '
         'none downcasts to a writing type', () async {
       final opened = await _bootstrap(await freshStorage());

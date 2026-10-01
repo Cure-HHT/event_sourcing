@@ -23,27 +23,25 @@ String _dart() {
   return root == null || root.isEmpty ? 'dart' : '$root/bin/dart';
 }
 
-List<String> _args(String url, int port, [List<String> extra = const []]) =>
-    <String>[
-      'run',
-      'bin/server.dart',
-      '--backend=postgres',
-      '--postgres-url=$url',
-      '--postgres-ssl-mode=disable',
-      '--port=$port',
-      ...extra,
-    ];
+// The server binds a port the kernel picks (`--port=0`) and reports it, so
+// no other process can hold it between a choice and the bind.
+List<String> _args(String url) => <String>[
+  'run',
+  'bin/server.dart',
+  '--backend=postgres',
+  '--postgres-url=$url',
+  '--postgres-ssl-mode=disable',
+  '--port=0',
+];
 
-Future<int> _freePort() async {
-  final socket = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
-  final port = socket.port;
-  await socket.close();
-  return port;
-}
+/// The address and port of the line the server prints once it listens.
+final RegExp _listening = RegExp(
+  r'demo server listening on http://([^/]+):(\d+) ',
+);
 
 /// A server process and everything it has written to standard output.
 class _Server {
-  _Server(this.process, this.port) {
+  _Server(this.process) {
     process.stdout
         .transform(utf8.decoder)
         .transform(const LineSplitter())
@@ -54,13 +52,30 @@ class _Server {
         .listen((line) => _lines.add('stderr: $line'));
   }
 
+  /// Starts a server and waits until it reports the address it listens on.
   static Future<_Server> start(String url) async {
-    final port = await _freePort();
-    return _Server(await Process.start(_dart(), _args(url, port)), port);
+    final server = _Server(await Process.start(_dart(), _args(url)));
+    try {
+      await server.untilLine('demo server listening on');
+    } on Object {
+      await server.kill();
+      rethrow;
+    }
+    final match = server.lines
+        .map(_listening.firstMatch)
+        .firstWhere((m) => m != null)!;
+    server
+      ..host = match.group(1)!
+      ..port = int.parse(match.group(2)!);
+    return server;
   }
 
   final Process process;
-  final int port;
+
+  /// The address the server listens on, as it reports it: an address, not
+  /// a name, so a request reaches this server and no other.
+  late final String host;
+  late final int port;
   final List<String> _lines = <String>[];
 
   List<String> get lines => List<String>.unmodifiable(_lines);
@@ -69,7 +84,7 @@ class _Server {
     final client = HttpClient();
     try {
       final request = await client
-          .get('localhost', port, path)
+          .get(host, port, path)
           .timeout(const Duration(seconds: 2));
       final response = await request.close();
       final body = await utf8.decodeStream(response);

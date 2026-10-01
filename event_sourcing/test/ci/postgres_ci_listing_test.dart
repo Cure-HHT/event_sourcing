@@ -1,21 +1,28 @@
 // Tooling test: verifies repository configuration, not a requirement.
 //
 // Every Postgres-gated test file in this package and in
-// `example_action_permissions` must be run by name in
-// `.github/workflows/conformance-tests.yml`. The elspais test targets run
-// without `PG_TEST_URL`, so a gated file that the workflow does not run
-// never runs anywhere and its assertions go unexercised. A file is gated when
-// it names the `PG_TEST_URL` variable, calls `testPostgresUrl(`, or imports
-// `test_postgres_url.dart`. Only `_test.dart` files are considered; harness
-// files that mention the variable are not test entry points. This file names
-// the gating tokens in order to detect them, so the scan skips it.
+// `example_action_permissions` must run in CI against a Postgres server. The
+// unit targets remove the Postgres URL from their environment, so a gated file
+// that no Postgres target runs never runs anywhere and its assertions go
+// unexercised. A file is gated when it names the Postgres test URL variable,
+// calls the URL helper, or imports the helper's library (see
+// [isPostgresGated]). Only `_test.dart` files are considered; harness files
+// that mention the variable are not test entry points. This file spells the
+// gating tokens in pieces, so it is not gated itself.
 //
-// A file counts as run only when the parsed workflow has a step whose
-// `working-directory` is the file's package, whose `run:` command runs
-// `flutter test` or `dart test` with the file's path as an argument, and
-// whose job, step or workflow environment sets `PG_TEST_URL`. A mention in a
-// YAML comment, under another package's directory, or in a job without the
-// database does not count.
+// The test suites are the `[[scanning.test.targets]]` of `.elspais.toml`, and
+// CI runs them through `elspais checks --run-tests --targets <names>`. A gated
+// file counts as run in CI when all three links hold:
+//   1. `tools/run-checks.sh target-files <kind>`, run from the file's package,
+//      lists it: that is the set the package's `target <kind>` command runs
+//      (the script and [isPostgresGated] must agree);
+//   2. `.elspais.toml` has a target whose working directory is the package and
+//      whose command runs `run-checks.sh target <kind>`;
+//   3. `.github/workflows/event-sourcing-tests.yml` has a step that runs
+//      `elspais checks --run-tests --targets` naming that target or one of its
+//      groups, in a job or step whose environment sets the Postgres URL. A
+//      mention in a YAML comment or in a job without the database does not
+//      count.
 
 @TestOn('vm')
 library;
@@ -26,8 +33,20 @@ import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 import 'package:yaml/yaml.dart';
 
-/// A test file as the listing check sees it: its path relative to the
-/// package root the workflow runs it from, and its source text.
+// The gating tokens, spelled in pieces (see the file comment): the Postgres
+// test URL variable, the URL helper's call and the helper's library.
+const _pgUrlVar =
+    'PG_'
+    'TEST_URL';
+const _helperCall =
+    'testPostgresUrl'
+    '(';
+const _helperLibrary =
+    'test_postgres_url'
+    '.dart';
+
+/// A test file as the listing check sees it: its path relative to its package
+/// root, and its source text.
 class TestSource {
   const TestSource(this.packageRelativePath, this.contents);
 
@@ -37,104 +56,163 @@ class TestSource {
 
 /// Whether [contents] gates its tests on a Postgres test URL.
 bool isPostgresGated(String contents) =>
-    contents.contains('PG_TEST_URL') ||
-    contents.contains('testPostgresUrl(') ||
-    contents.contains('test_postgres_url.dart');
+    contents.contains(_pgUrlVar) ||
+    contents.contains(_helperCall) ||
+    contents.contains(_helperLibrary);
 
-/// A workflow step that runs tests against Postgres: its working directory
-/// (repository-relative, normalised) and the test paths its `run:` command
-/// passes to `flutter test` or `dart test`.
-class PostgresTestStep {
-  const PostgresTestStep(this.workingDirectory, this.testPaths);
+/// The package-relative paths of the gated `_test.dart` files in [sources].
+Set<String> gatedTestFiles(List<TestSource> sources) => <String>{
+  for (final source in sources)
+    if (source.packageRelativePath.endsWith('_test.dart') &&
+        isPostgresGated(source.contents))
+      source.packageRelativePath,
+};
 
-  final String workingDirectory;
-  final Set<String> testPaths;
+/// A `[[scanning.test.targets]]` entry of `.elspais.toml`.
+class ElspaisTarget {
+  const ElspaisTarget(this.name, this.cwd, this.command, this.groups);
+
+  final String name;
+  final String cwd;
+  final String command;
+  final List<String> groups;
+
+  /// The groups a run can name this target by: the ones it claims, or
+  /// `default` when it claims none, and `all`.
+  Set<String> get selectors => {
+    name,
+    ...(groups.isEmpty ? const ['default'] : groups),
+    'all',
+  };
+
+  /// The `run-checks.sh target <kind>` kind its command runs, if any.
+  String? get runChecksKind =>
+      RegExp(r'run-checks\.sh\s+target\s+(\w+)').firstMatch(command)?.group(1);
 }
 
-bool _setsPgUrl(Object? env) =>
-    env is YamlMap && env.containsKey('PG_TEST_URL');
+final _stringKey = RegExp(r'^(\w+)\s*=\s*"((?:[^"\\]|\\.)*)"\s*(#.*)?$');
+final _listKey = RegExp(r'^(\w+)\s*=\s*\[(.*)\]\s*(#.*)?$');
+final _quoted = RegExp(r'"((?:[^"\\]|\\.)*)"');
 
-/// The steps of [workflowText] whose environment (workflow, job or step)
-/// sets `PG_TEST_URL` and that run `flutter test` or `dart test`.
-List<PostgresTestStep> postgresTestSteps(String workflowText) {
+/// The test targets of an `.elspais.toml` text. Reads the subset of TOML the
+/// file uses for them: `[[scanning.test.targets]]` tables of one-line
+/// `key = "string"` and `key = ["string", ...]` entries.
+List<ElspaisTarget> elspaisTargets(String toml) {
+  final targets = <ElspaisTarget>[];
+  Map<String, Object>? current;
+  void close() {
+    final t = current;
+    if (t == null) return;
+    targets.add(
+      ElspaisTarget(
+        (t['name'] as String?) ?? '',
+        (t['cwd'] as String?) ?? '',
+        (t['command'] as String?) ?? '',
+        (t['groups'] as List<String>?) ?? const <String>[],
+      ),
+    );
+    current = null;
+  }
+
+  for (final raw in toml.split('\n')) {
+    final line = raw.trim();
+    if (line.startsWith('[')) {
+      close();
+      if (line == '[[scanning.test.targets]]') current = <String, Object>{};
+      continue;
+    }
+    final t = current;
+    if (t == null) continue;
+    final s = _stringKey.firstMatch(line);
+    if (s != null) {
+      t[s.group(1)!] = s.group(2)!;
+      continue;
+    }
+    final l = _listKey.firstMatch(line);
+    if (l != null) {
+      t[l.group(1)!] = [
+        for (final m in _quoted.allMatches(l.group(2)!)) m.group(1)!,
+      ];
+    }
+  }
+  close();
+  return targets;
+}
+
+bool _setsPgUrl(Object? env) => env is YamlMap && env.containsKey(_pgUrlVar);
+
+/// The names passed to `--targets` of `elspais checks --run-tests` by the
+/// steps of [workflowText] whose environment (workflow, job or step) sets the
+/// Postgres URL.
+Set<String> targetsRunWithPostgres(String workflowText) {
   final doc = loadYaml(workflowText);
-  if (doc is! YamlMap) return const <PostgresTestStep>[];
+  if (doc is! YamlMap) return const <String>{};
   final workflowPg = _setsPgUrl(doc['env']);
   final jobs = doc['jobs'];
-  if (jobs is! YamlMap) return const <PostgresTestStep>[];
-  final steps = <PostgresTestStep>[];
+  if (jobs is! YamlMap) return const <String>{};
+  final names = <String>{};
   for (final job in jobs.values) {
     if (job is! YamlMap) continue;
     final jobPg = workflowPg || _setsPgUrl(job['env']);
-    final defaults = job['defaults'];
-    final defaultRun = defaults is YamlMap ? defaults['run'] : null;
-    final defaultDir = defaultRun is YamlMap
-        ? defaultRun['working-directory'] as String?
-        : null;
-    final jobSteps = job['steps'];
-    if (jobSteps is! YamlList) continue;
-    for (final step in jobSteps) {
+    final steps = job['steps'];
+    if (steps is! YamlList) continue;
+    for (final step in steps) {
       if (step is! YamlMap) continue;
       final run = step['run'];
       if (run is! String) continue;
       if (!(jobPg || _setsPgUrl(step['env']))) continue;
-      final dir = (step['working-directory'] as String?) ?? defaultDir ?? '.';
-      final paths = <String>{};
       for (final line in run.split('\n')) {
         final tokens = line.trim().split(RegExp(r'\s+'));
-        for (var i = 0; i + 1 < tokens.length; i++) {
-          final runsTests =
-              (tokens[i] == 'flutter' || tokens[i] == 'dart') &&
-              tokens[i + 1] == 'test';
-          if (runsTests) {
-            paths.addAll(
-              tokens.skip(i + 2).where((t) => t.endsWith('_test.dart')),
-            );
+        final checks = tokens.indexOf('checks');
+        if (checks < 1 ||
+            !tokens[checks - 1].endsWith('elspais') ||
+            !tokens.contains('--run-tests')) {
+          continue;
+        }
+        var selecting = false;
+        for (final token in tokens.skip(checks + 1)) {
+          if (token.startsWith('--')) {
+            selecting = token == '--targets';
+          } else if (selecting) {
+            names.add(token.replaceAll('"', '').replaceAll("'", ''));
           }
         }
       }
-      if (paths.isNotEmpty) {
-        steps.add(PostgresTestStep(p.posix.normalize(dir), paths));
-      }
     }
   }
-  return steps;
+  return names;
 }
 
-/// The package-relative paths of gated `_test.dart` files in [sources] that
-/// no Postgres step of [workflowText] runs from [packageDir] (the package's
-/// repository-relative directory).
-List<String> unlistedPostgresTests(
-  List<TestSource> sources,
-  String packageDir,
-  String workflowText,
-) {
-  final steps = postgresTestSteps(workflowText);
-  final dir = p.posix.normalize(packageDir);
-  bool isRun(String path) =>
-      steps.any((s) => s.workingDirectory == dir && s.testPaths.contains(path));
-  final missing = <String>[
-    for (final source in sources)
-      if (source.packageRelativePath.endsWith('_test.dart') &&
-          isPostgresGated(source.contents) &&
-          !isRun(source.packageRelativePath))
-        source.packageRelativePath,
-  ]..sort();
-  return missing;
+/// The gated files of the package at [packageDir] (repository-relative) that
+/// no Postgres target run in CI covers. [listFiles] returns the files
+/// `run-checks.sh target-files <kind>` lists for the package.
+List<String> uncoveredPostgresTests({
+  required Set<String> gated,
+  required String packageDir,
+  required List<ElspaisTarget> targets,
+  required Set<String> ciTargets,
+  required Set<String> Function(String kind) listFiles,
+}) {
+  final covered = <String>{};
+  for (final target in targets) {
+    final kind = target.runChecksKind;
+    if (kind != 'postgres' && kind != 'throughput') continue;
+    if (p.posix.normalize(target.cwd) != p.posix.normalize(packageDir)) {
+      continue;
+    }
+    if (target.selectors.intersection(ciTargets).isEmpty) continue;
+    covered.addAll(listFiles(kind!));
+  }
+  return (gated.difference(covered).toList()..sort());
 }
 
-/// This file's path relative to the package root; the scan skips it.
-const _selfPath = 'test/ci/postgres_ci_listing_test.dart';
-
-/// Reads every `.dart` file under `<packageRoot>/test` except this one,
-/// keyed by its path relative to [packageRoot] with forward slashes.
+/// Reads every `.dart` file under `<packageRoot>/test`, keyed by its path
+/// relative to [packageRoot] with forward slashes.
 List<TestSource> _readTestTree(String packageRoot) {
   final testDir = Directory(p.join(packageRoot, 'test'));
   return <TestSource>[
     for (final entity in testDir.listSync(recursive: true))
-      if (entity is File &&
-          entity.path.endsWith('.dart') &&
-          !p.equals(entity.path, p.join(packageRoot, _selfPath)))
+      if (entity is File && entity.path.endsWith('.dart'))
         TestSource(
           p.posix.joinAll(p.split(p.relative(entity.path, from: packageRoot))),
           entity.readAsStringSync(),
@@ -147,154 +225,208 @@ void main() {
   final packageRoot = Directory.current.path;
   final repoRoot = p.dirname(packageRoot);
   final workflowFile = File(
-    p.join(repoRoot, '.github', 'workflows', 'conformance-tests.yml'),
+    p.join(repoRoot, '.github', 'workflows', 'event-sourcing-tests.yml'),
   );
+  final configFile = File(p.join(repoRoot, '.elspais.toml'));
+  final script = p.join(repoRoot, 'tools', 'run-checks.sh');
 
-  group('Postgres-gated test files are listed in conformance-tests.yml', () {
-    test('the workflow file exists', () {
+  Set<String> Function(String) scriptListing(String packageDir) => (kind) {
+    final result = Process.runSync('bash', [
+      script,
+      'target-files',
+      kind,
+    ], workingDirectory: p.join(repoRoot, packageDir));
+    expect(result.exitCode, 0, reason: '${result.stderr}');
+    return (result.stdout as String)
+        .split('\n')
+        .map((l) => l.trim())
+        .where((l) => l.isNotEmpty)
+        .toSet();
+  };
+
+  group('Postgres-gated test files run in CI through elspais targets', () {
+    test('the workflow and the elspais configuration exist', () {
       expect(workflowFile.existsSync(), isTrue, reason: workflowFile.path);
+      expect(configFile.existsSync(), isTrue, reason: configFile.path);
     });
 
-    test('every gated file in event_sourcing/test is listed', () {
-      final sources = _readTestTree(packageRoot);
+    for (final packageDir in const [
+      'event_sourcing',
+      'event_sourcing/example_action_permissions',
+    ]) {
+      test('every gated file in $packageDir/test is run', () {
+        final gated = gatedTestFiles(
+          _readTestTree(p.join(repoRoot, packageDir)),
+        );
+        expect(
+          gated,
+          isNotEmpty,
+          reason: 'the scan must find the known gated files',
+        );
+        final listFiles = scriptListing(packageDir);
+        final targets = elspaisTargets(configFile.readAsStringSync());
+        final pgTargets = targets.where(
+          (t) =>
+              t.cwd == packageDir &&
+              (t.runChecksKind == 'postgres' ||
+                  t.runChecksKind == 'throughput'),
+        );
+        expect(pgTargets, isNotEmpty, reason: 'no Postgres target runs here');
+        // The script's selection and the rule above agree exactly.
+        final listed = <String>{
+          for (final t in pgTargets) ...listFiles(t.runChecksKind!),
+        };
+        expect(listed, gated);
+        expect(
+          uncoveredPostgresTests(
+            gated: gated,
+            packageDir: packageDir,
+            targets: targets,
+            ciTargets: targetsRunWithPostgres(workflowFile.readAsStringSync()),
+            listFiles: listFiles,
+          ),
+          isEmpty,
+        );
+      });
+    }
+
+    test('an unlisted file gated by the literal variable is gated', () {
       expect(
-        sources.where((s) => isPostgresGated(s.contents)),
-        isNotEmpty,
-        reason: 'the scan must find the known gated files',
-      );
-      expect(
-        unlistedPostgresTests(
-          sources,
-          'event_sourcing',
-          workflowFile.readAsStringSync(),
-        ),
-        isEmpty,
+        isPostgresGated("final url = Platform.environment['$_pgUrlVar'];"),
+        isTrue,
       );
     });
 
-    test('every gated file in example_action_permissions/test is listed', () {
-      final sources = _readTestTree(
-        p.join(packageRoot, 'example_action_permissions'),
-      );
-      expect(
-        sources.where((s) => isPostgresGated(s.contents)),
-        isNotEmpty,
-        reason: 'the scan must find the known gated files',
-      );
-      expect(
-        unlistedPostgresTests(
-          sources,
-          'event_sourcing/example_action_permissions',
-          workflowFile.readAsStringSync(),
-        ),
-        isEmpty,
-      );
-    });
-
-    test('an unlisted file gated by the literal variable is reported', () {
-      final sources = <TestSource>[
-        const TestSource('test/listed_test.dart', "env['PG_TEST_URL']"),
-        const TestSource(
-          'test/storage/postgres/synthetic_test.dart',
-          "final url = Platform.environment['PG_TEST_URL'];",
-        ),
-      ];
-      expect(unlistedPostgresTests(sources, 'pkg', _workflow()), [
-        'test/storage/postgres/synthetic_test.dart',
-      ]);
-    });
-
-    test('an unlisted file gated only through the helper is reported', () {
-      final sources = <TestSource>[
-        const TestSource(
-          'test/storage/postgres/helper_call_test.dart',
-          'final url = testPostgresUrl();',
-        ),
-        const TestSource(
-          'test/storage/postgres/helper_import_test.dart',
-          "import 'test_postgres_url.dart';",
-        ),
-      ];
-      expect(unlistedPostgresTests(sources, 'pkg', _workflow()), [
-        'test/storage/postgres/helper_call_test.dart',
-        'test/storage/postgres/helper_import_test.dart',
-      ]);
-    });
-
-    test('a file run only by a job without PG_TEST_URL is reported', () {
-      final sources = <TestSource>[_gated('test/listed_test.dart')];
-      expect(unlistedPostgresTests(sources, 'pkg', _workflow(jobEnv: '')), [
-        'test/listed_test.dart',
-      ]);
-    });
-
-    test('a file run from another package directory is reported', () {
-      final sources = <TestSource>[_gated('test/listed_test.dart')];
-      expect(
-        unlistedPostgresTests(sources, 'pkg', _workflow(workingDir: 'other')),
-        ['test/listed_test.dart'],
-      );
-      expect(
-        unlistedPostgresTests(sources, 'other', _workflow()),
-        ['test/listed_test.dart'],
-        reason: 'the same relative path under another package is not a run',
-      );
-    });
-
-    test('a file named only in a YAML comment is reported', () {
-      final sources = <TestSource>[_gated('test/commented_test.dart')];
-      final workflow =
-          '${_workflow()}\n'
-          '      # run: flutter test test/commented_test.dart\n';
-      expect(unlistedPostgresTests(sources, 'pkg', workflow), [
-        'test/commented_test.dart',
-      ]);
-    });
-
-    test('a file run with the variable set on the step is listed', () {
-      final sources = <TestSource>[_gated('test/listed_test.dart')];
-      final workflow = _workflow(
-        jobEnv: '',
-        stepEnv: '        env:\n          PG_TEST_URL: postgres://x\n',
-      );
-      expect(unlistedPostgresTests(sources, 'pkg', workflow), isEmpty);
+    test('a file gated only through the helper is gated', () {
+      expect(isPostgresGated('final url = $_helperCall);'), isTrue);
+      expect(isPostgresGated("import '$_helperLibrary';"), isTrue);
+      expect(isPostgresGated('void main() {}'), isFalse);
     });
 
     test('a gated file that is not a _test.dart entry point is ignored', () {
-      final sources = <TestSource>[
-        const TestSource(
+      const sources = <TestSource>[
+        TestSource(
           'test/storage/storage_backend_conformance.dart',
-          "Platform.environment['PG_TEST_URL']",
+          "Platform.environment['$_pgUrlVar']",
         ),
+        TestSource('test/listed_test.dart', "env['$_pgUrlVar']"),
       ];
-      expect(unlistedPostgresTests(sources, 'pkg', ''), isEmpty);
+      expect(gatedTestFiles(sources), {'test/listed_test.dart'});
     });
 
-    test('an ungated file need not be listed', () {
-      final sources = <TestSource>[
-        const TestSource('test/plain_test.dart', 'void main() {}'),
-      ];
-      expect(unlistedPostgresTests(sources, 'pkg', ''), isEmpty);
+    test('the target tables of the configuration are read', () {
+      final targets = elspaisTargets(_config());
+      expect(targets.map((t) => t.name), ['pkg', 'pkg/postgres']);
+      expect(targets.first.selectors, {'pkg', 'default', 'all'});
+      expect(targets.first.runChecksKind, isNull);
+      expect(targets.last.groups, ['default', 'postgres']);
+      expect(targets.last.runChecksKind, 'postgres');
+    });
+
+    test('a file run by a Postgres target CI runs by its group is covered', () {
+      expect(_uncovered(_workflow()), isEmpty);
+      expect(_uncovered(_workflow(targets: 'pkg/postgres')), isEmpty);
+    });
+
+    test('a file whose target CI does not run is reported', () {
+      expect(_uncovered(_workflow(targets: 'unit')), ['test/listed_test.dart']);
+    });
+
+    test('a file run only by a job without the Postgres URL is reported', () {
+      expect(_uncovered(_workflow(jobEnv: '')), ['test/listed_test.dart']);
+    });
+
+    test('a file run with the variable set on the step is covered', () {
+      final workflow = _workflow(
+        jobEnv: '',
+        stepEnv: '        env:\n          $_pgUrlVar: postgres://x\n',
+      );
+      expect(_uncovered(workflow), isEmpty);
+    });
+
+    test('a run named only in a YAML comment is reported', () {
+      const workflow =
+          'jobs:\n'
+          '  postgres:\n'
+          '    env:\n'
+          '      $_pgUrlVar: postgres://x\n'
+          '    steps:\n'
+          '      - name: Tests\n'
+          '        run: echo none\n'
+          '      # run: elspais checks --run-tests --targets postgres\n';
+      expect(_uncovered(workflow), ['test/listed_test.dart']);
+    });
+
+    test('a target in another package directory is not a run', () {
+      expect(
+        uncoveredPostgresTests(
+          gated: {'test/listed_test.dart'},
+          packageDir: 'other',
+          targets: elspaisTargets(_config()),
+          ciTargets: targetsRunWithPostgres(_workflow()),
+          listFiles: (_) => {'test/listed_test.dart'},
+        ),
+        ['test/listed_test.dart'],
+      );
+    });
+
+    test('a gated file the script does not list is reported', () {
+      expect(
+        uncoveredPostgresTests(
+          gated: {'test/listed_test.dart', 'test/other_test.dart'},
+          packageDir: 'pkg',
+          targets: elspaisTargets(_config()),
+          ciTargets: targetsRunWithPostgres(_workflow()),
+          listFiles: (_) => {'test/listed_test.dart'},
+        ),
+        ['test/other_test.dart'],
+      );
     });
   });
 }
 
-TestSource _gated(String path) =>
-    TestSource(path, "Platform.environment['PG_TEST_URL']");
+/// The gated files of `pkg` that [workflow] leaves unrun, given [_config] and
+/// a script listing `test/listed_test.dart`.
+List<String> _uncovered(String workflow) => uncoveredPostgresTests(
+  gated: {'test/listed_test.dart'},
+  packageDir: 'pkg',
+  targets: elspaisTargets(_config()),
+  ciTargets: targetsRunWithPostgres(workflow),
+  listFiles: (_) => {'test/listed_test.dart'},
+);
 
-/// A one-job workflow that runs `test/listed_test.dart` from [workingDir].
-/// [jobEnv] is the job's `env:` block (empty for none); [stepEnv] is the
-/// step's.
+/// A configuration with a unit target and a Postgres target in `pkg`.
+String _config() =>
+    '[scanning.test.groups]\n'
+    'postgres = "Postgres"\n'
+    '\n'
+    '[[scanning.test.targets]]\n'
+    'name = "pkg"\n'
+    'cwd = "pkg"\n'
+    'command = "flutter test --machine"\n'
+    '\n'
+    '# The Postgres files.\n'
+    '[[scanning.test.targets]]\n'
+    'name = "pkg/postgres"\n'
+    'groups = ["default", "postgres"]\n'
+    'cwd = "pkg"\n'
+    'command = "../tools/run-checks.sh target postgres"\n'
+    '\n'
+    '[scanning.docs]\n'
+    'directories = ["docs"]\n';
+
+/// A one-job workflow that runs `elspais checks --run-tests --targets
+/// [targets]`. [jobEnv] is the job's `env:` block (empty for none); [stepEnv]
+/// is the step's.
 String _workflow({
-  String workingDir = 'pkg',
-  String jobEnv = '    env:\n      PG_TEST_URL: postgres://x\n',
+  String targets = 'postgres',
+  String jobEnv = '    env:\n      $_pgUrlVar: postgres://x\n',
   String stepEnv = '',
 }) =>
     'jobs:\n'
     '  postgres:\n'
     '$jobEnv'
     '    steps:\n'
-    '      - name: Listed\n'
-    '        run: flutter test test/listed_test.dart\n'
-    '        working-directory: $workingDir\n'
+    '      - name: Tests\n'
+    '        run: elspais checks --run-tests --lenient --targets $targets\n'
     '$stepEnv';
