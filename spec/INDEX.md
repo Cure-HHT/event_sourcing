@@ -43,7 +43,7 @@
 | EVS-DEV-causal-parents                     | Causal parents within an aggregate                           | causal-history.md                       | e2eee9c4 |
 | EVS-DEV-chain-verification                 | Storage and origin chain verification                        | causal-history.md                       | 201d5630 |
 | EVS-DEV-containment-resolver               | Containment-chain walk via TableProjections                  | scoped-permissions.md                   | aa0359a8 |
-| EVS-DEV-converging-view-reads              | Reads of a converging view                                   | dev-converging-view-reads.md            | e95c070e |
+| EVS-DEV-converging-view-reads              | Reads of a converging view                                   | dev-converging-view-reads.md            | 0bf00f14 |
 | EVS-DEV-delivery-channel                   | Delivery channel sender mechanics                            | delivery-continuity.md                  | 29357550 |
 | EVS-DEV-delivery-receiver                  | Delivery channel receiver mechanics                          | delivery-continuity.md                  | d37b43bb |
 | EVS-DEV-delivery-resume                    | Channel resume and new generation                            | delivery-continuity.md                  | ae74fe21 |

@@ -50,9 +50,9 @@ Open design questions to settle when it is built:
 
 ## View fingerprints that cover code
 
-**Baseline.** A view is stored per fingerprint of its definition (EVS-DEV-view-convergence), and the fingerprint covers what the library can read of the definition: its shape, its declared event types and derived fields, its interest's declared sets and the registered entry-type versions. An interest predicate, and a table view's row-key and row-data functions, are code the library cannot digest, so two builds that differ only there share one copy, and the equality a read reports holds only while they agree (EVS-DEV-converging-view-reads). A deployment that changes only such a function runs `rebuildView` once no build with the other function still serves the database.
+**Baseline.** A view is stored per fingerprint of its definition (EVS-DEV-view-convergence), and the fingerprint covers what the library can read of the definition: its shape, its declared event types and derived fields, its interest's declared sets and the registered entry-type versions. An interest predicate is code the library cannot digest, so two builds that differ only there share one copy, and the equality a read reports holds only while they agree (EVS-DEV-converging-view-reads). A table view's row-key and row-data extractors are closed sets the fingerprint covers with their parameters, so they are not part of this gap. A deployment that changes only a predicate runs `rebuildView` once no build with the other predicate still serves the database.
 
-**Remaining.** Make a change to such a function a new copy: a revision the definition declares and the fingerprint covers, or named functions from a registry the library can identify, so that a changed function is caught up like any other changed definition.
+**Remaining.** Make a change to a predicate a new copy: a revision the definition declares and the fingerprint covers, or named predicates from a registry the library can identify, so that a changed predicate is caught up like any other changed definition.
 
 ## Value-rewriting promoter primitives
 

@@ -17,7 +17,7 @@ B. A read of a view that is converging for the instance SHALL return no row that
 
 C. A read by key of a view that is converging for the instance SHALL report as pending, distinct from a row and from an absent row, each requested key whose row it does not report as settled.
 
-D. Where every build registering the instance's copy of a view defines the view's interest predicate, and for a table view its row-key and row-data functions, as the instance does, every row a read reports as settled SHALL equal the row that a replay of the log, as of the read's transaction, produces for its key under the instance's registered definitions.
+D. Where every build registering the instance's copy of a view defines the view's interest predicate as the instance does, every row a read reports as settled SHALL equal the row that a replay of the log, as of the read's transaction, produces for its key under the instance's registered definitions.
 
 E. An `AggregateMode` subscription on a view that is converging for the instance SHALL deliver no row that is not settled, SHALL report as pending each aggregate it names whose row is not settled, and SHALL end its initial replay with a marker carrying the view's state.
 
@@ -43,7 +43,7 @@ K. <RETIRED> A caller awaits a set of views becoming current.
 
 **Why withhold unsettled rows rather than return them flagged (assertions B, C and E)?** An unsettled row lacks events the log holds, and a consumer handed a row with a flag it overlooks shows data that no replay produces. Withholding it, and naming the key as pending, makes the lag visible and the data trustworthy: what a read returns as a row is a replay's row. The rule forbids serving an unsettled row, not withholding a settled one, so a backend that cannot cheaply tell which aggregates lie past the watermark may report every requested key pending. The cost is visible: a screen backed by a converging view shows its rows as pending while the copy catches up, and a table view returns nothing until it is current. A read never writes, so a read does not fold a pending row itself.
 
-**What does the equality rest on (assertion D)?** The fingerprint covers what the library can read of a definition. An interest predicate, and a table view's row-key and row-data functions, are code the library cannot digest, so two builds that differ only there share a copy, and the rows one folds are not those the other's replay produces. That is a consumer precondition stated in the assertion; closing it is on the roadmap (`spec/roadmap/projections.md`). A deployment that changes only such a function runs `rebuildView` once no build with the other function still serves the database.
+**What does the equality rest on (assertion D)?** The fingerprint covers what the library can read of a definition. An interest predicate is code the library cannot digest, so two builds that differ only there share a copy, and the rows one folds are not those the other's replay produces. A table view's row-key and row-data extractors are closed sets the fingerprint covers with their parameters, so a build that changes one of those gets a copy of its own. That is a consumer precondition stated in the assertion; closing it is on the roadmap (`spec/roadmap/projections.md`). A deployment that changes only a predicate runs `rebuildView` once no build with the other predicate still serves the database.
 
 **Why deliver pending rows before reporting current (assertion G)?** A subscription that received only the settled rows and then heard "current" would hold an incomplete set it believes complete; delivering what it lacks first keeps a subscriber's state a replay's whenever it is reported current. A subscriber sees a pending row once the view is current; a copy is converging only while an event it folds lies past its watermark, and its catch-up folds such events within one short transaction of their store.
 
@@ -53,6 +53,7 @@ K. <RETIRED> A caller awaits a set of views becoming current.
 
 ## Changelog
 
+- 2026-10-02 | 0bf00f14 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-25 | e95c070e | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-26 | - | - | Michael Lewis (<michael@anspar.org>) | Terms: a copy is current when no event past its watermark is one its definition folds, so another build's events outside the definition never make a view converging. Retire F (periodic redelivery of settled rows) and K (await with a deadline; callers read the state with J). Rationale: the cost of another build's appends is one short catch-up, symmetric between the builds. No code or test references these assertions
 - 2026-09-25 | ca7ebe32 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
@@ -60,9 +61,10 @@ K. <RETIRED> A caller awaits a set of views becoming current.
 - 2026-09-26 | - | - | Michael Lewis (<michael@anspar.org>) | Rewrite for view copies (all letters reassigned; no code or test references them): a view is current when the instance's copy is current, and a row is settled when no event past the copy's watermark folds into it. Retire the counts-for-instance rule (old A, now a term). Amend the equality (D): its precondition is that the builds sharing a copy define its functions alike. Merge old H and M into F: a live subscription delivers newly settled rows at least once a second. Refusal (H) no longer mentions conflicted rows
 - 2026-09-25 | ce6623ff | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: sync changelog hash
 - 2026-09-25 | - | - | Michael Lewis (<michael@anspar.org>) | Rationale of I: a conflicted settled row refuses the same decisions until reconciled
+- 2026-10-02 | - | - | Michael Lewis (<michael@anspar.org>) | Amend D: the equality rests on the interest predicate alone. A table view's row-key and row-data extractors are closed sets the fingerprint covers with their parameters, so they were never a precondition on the consumer
 - 2026-09-25 | ce6623ff | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-25 | - | - | Michael Lewis (<michael@anspar.org>) | Amend the settled-row term, A and H: no rounds, a row is settled when no counting gap covers it. Merge I and J into I: the refusal is decided in the transaction that would read the rows. Re-letter K-N to J-M (no code or test references them)
 - 2026-09-25 | 316a834c | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-24 | - | - | Michael Lewis (<michael@anspar.org>) | Add A-N: a converging view serves only settled rows and reports its state with every read; the library's own decisions refuse or wait, with a deadline, while a view they read converges
 
-*End* *Reads of a converging view* | **Hash**: e95c070e
+*End* *Reads of a converging view* | **Hash**: 0bf00f14
