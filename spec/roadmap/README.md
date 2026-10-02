@@ -24,7 +24,7 @@ names, frozen semantics).
   guard and the drain lock trust, keeping or removing `readEventsReverse`.
 - `permissions.md` — permission-model extensions.
 - `projections.md` — projection/materializer primitives; view
-  fingerprints that cover code.
+  fingerprints that cover code; value-rewriting promoter primitives.
 - `sync.md` — sync/destination layer: inbound tombstone propagation,
   detecting undeclared delivery-configuration changes, a recovery that
   skips the wedged item, rebuilding a destination in one call, storing
