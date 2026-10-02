@@ -108,9 +108,9 @@ Promoter steps are already constrained by major and minor
 to the next minor and every transform in it must be a `DefaultField`,
 while a step across majors must lead to minor 0 of the next major. A
 value-deriving member is not a `DefaultField`, so it can only appear on
-a step across majors. The design states that placement rather than
-leaving an implementer to discover it, and says what a consumer does
-when the change it needs is not worth a major.
+a step across majors. A consumer for whom the change is not worth a
+major does not rewrite the value at all: it leaves the recorded form
+alone and reads both forms, which is the recomputation case below.
 
 ### Obligations any value-deriving member inherits
 
@@ -159,10 +159,10 @@ callback: a callback lives in the consumer's build rather than in the
 log, which is what the closed-under-events model refuses.
 
 A pattern-matching notation carries two further obligations. Pattern
-dialects differ between runtimes while `EVS-PRD-portability` requires
-byte-identical behaviour on every platform the substrate runs on, so an
-accepted subset is specified normatively rather than inherited from
-whatever engine the host provides. And constructs whose evaluation may
+dialects differ between runtimes while `EVS-PRD-portability`/C requires
+identical observable behaviour across supported runtimes for any given
+input, so an accepted subset is specified normatively rather than
+inherited from whatever engine the host provides. And constructs whose evaluation may
 fail to terminate are excluded, since a promotion that does not return
 stalls the catch-up of the copy it runs in.
 
