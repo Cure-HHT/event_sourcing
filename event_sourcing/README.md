@@ -31,13 +31,20 @@ which are recorded:
 state(N) = fold( events[0..N], projection_specs, promoter_specs, lib_version )
 ```
 
-Nothing else participates. There is no author-supplied fold function, no
-host callback invoked during materialization, no app-supplied
-authorization policy, and no ambient input — not the clock, not the
-locale, not the device's time zone. Projections and promoters are
-declarative **data**, composed from closed sets of library primitives
-whose semantics are frozen once shipped. The library version under which
-the log was written is itself recorded in the log.
+There is no author-supplied fold function, no app-supplied authorization
+policy, and no ambient input — not the clock, not the locale, not the
+device's time zone. Projections and promoters are declarative **data**,
+composed from closed sets of library primitives whose semantics are
+frozen once shipped. The library version under which the log was written
+is itself recorded in the log.
+
+One escape hatch is worth naming rather than glossing. A projection's
+interest may carry an optional **predicate** — a host-supplied function
+refining which events the view folds. A definition's fingerprint does
+not cover a predicate's behaviour, so two builds differing only there
+share a view copy, and the equality a read reports holds only while they
+agree. Closing that is a recorded roadmap item. Everything else about a
+projection, and every promoter, is data the library can read.
 
 The library does not merely promise this; it is how views are built. A
 view's rows live in a copy keyed by a fingerprint of its definition —
@@ -55,7 +62,7 @@ originally produced it.
 Most event-sourcing stacks let you write the fold, and the upcaster, as
 ordinary functions. Those live in your codebase, not in the log, so
 "replay the log" silently means "replay the log with that exact build".
-This substrate refuses that trade. It is why the primitive sets are
+This substrate refuses that trade for the fold and for promotion. It is why the primitive sets are
 small, closed, and append-only, and why extending them is a change to
 the library rather than something an application can do on its own.
 
