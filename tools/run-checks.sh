@@ -48,6 +48,8 @@ set -o pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SELF="$ROOT/tools/run-checks.sh"
 DURATIONS_FILE="$ROOT/.check-durations"
+# The test targets' folders: [scanning.test] output_root of .elspais.toml.
+RESULTS_DIR="$ROOT/.results"
 
 # event_sourcing's throughput guard: gated on Postgres like the other files,
 # run by its own target (the postgres targets leave it out).
@@ -291,11 +293,10 @@ is_flutter_package() { grep -q 'sdk: flutter' "$ROOT/$1/pubspec.yaml"; }
 
 # The failing tests a target's results files record, as "file: test name".
 failing_results() {
-  local name="$1" cwd results
-  cwd="$(target_field "$name" cwd)"
+  local name="$1" results
   results="$(target_field "$name" results)"
   [ -n "$results" ] || return 0
-  python3 - "$ROOT/$cwd" "$results" "$ROOT" <<'PY'
+  python3 - "$RESULTS_DIR/$name" "$results" "$ROOT" <<'PY'
 import glob, json, os, sys
 base, pattern, root = sys.argv[1:4]
 seen = set()
@@ -437,11 +438,12 @@ merge_lcov_dir() {
   mv "$dir/lcov.info.tmp.$$" "$dir/lcov.info"
 }
 
-# Every package's coverage/<suite>/lcov/ directory, merged (CI's gate job runs
-# this after downloading every job's fragments).
+# Every target folder's lcov/ directory, merged (CI's gate job runs this after
+# downloading every job's fragments).
 merge_all_coverage() {
   local d
-  find "$ROOT" -type d -path '*/coverage/*/lcov' ! -path '*/.dart_tool/*' ! -path '*/build/*' |
+  [ -d "$RESULTS_DIR" ] || return 0
+  find "$RESULTS_DIR" -mindepth 2 -maxdepth 2 -type d -name lcov |
     while IFS= read -r d; do
       merge_lcov_dir "$(dirname "$d")"
       echo "merged $(rel "$(dirname "$d")")/lcov.info"
@@ -469,12 +471,20 @@ target_signal() {
 }
 
 # Sets TLOG (this target's log directory) and PKG (the package, relative to
-# the repository root).
+# the repository root). A target writes its results and coverage into the
+# folder elspais names in ELSPAIS_TARGET_OUTPUT, which elspais has emptied and
+# which holds the run's fingerprint.
 target_setup() {
   local kind="$1"
   PKG="${PWD#"$ROOT"/}"
   if [ "$PKG" = "$PWD" ]; then
     echo "target $kind must run from a package directory under $ROOT (got $PWD)" >&2
+    exit 2
+  fi
+  if [ -z "${ELSPAIS_TARGET_OUTPUT:-}" ]; then
+    echo "target $kind writes into the folder ELSPAIS_TARGET_OUTPUT names: run it with" \
+      "\`elspais checks --run-tests --targets <name>\`, or begin the run with" \
+      "\`elspais fingerprint start <name>\`" >&2
     exit 2
   fi
   local base="${LOGDIR:-$ROOT/.check-logs/$(new_runid)}"
@@ -525,8 +535,7 @@ unit_timing_files() {
 
 target_unit() {
   target_setup unit
-  local out="coverage/unit" n="$UNIT_PIECES" i rc failed=0 pid
-  rm -rf "$out"
+  local out="$ELSPAIS_TARGET_OUTPUT" n="$UNIT_PIECES" i rc failed=0 pid
   mkdir -p "$out/lcov"
   local timingfiles=()
   while IFS= read -r f; do [ -n "$f" ] && timingfiles+=("$f"); done < <(unit_timing_files)
@@ -605,9 +614,7 @@ target_unit() {
 
 target_desktop() {
   target_setup desktop
-  local out="coverage/desktop" rc=0
-  rm -rf "$out"
-  mkdir -p "$out"
+  local out="$ELSPAIS_TARGET_OUTPUT" rc=0
   if [ "$(uname -s)" != "Linux" ]; then
     echo "SKIP  $PKG desktop: the desktop integration test runs on Linux only" >&2
     return 0
@@ -818,8 +825,7 @@ record_durations() {
 target_postgres() {
   local kind="$1"
   target_setup "$kind"
-  local out="coverage/$kind" start=$SECONDS
-  rm -rf "$out"
+  local out="$ELSPAIS_TARGET_OUTPUT" start=$SECONDS
   mkdir -p "$out/lcov" "$TLOG/plan"
   postgres_target_files "$kind" >"$TLOG/files"
   if [ ! -s "$TLOG/files" ]; then
@@ -1210,10 +1216,12 @@ run_gate() {
 }
 
 # Strict about result ingestion alone: the checks tests.results (some result
-# ingested, none failed), tests.ingestion_fault (every results and coverage
-# file a target names was read) and tests.partial_read must pass. A lenient
-# gate only reports them, and `elspais checks --check` narrows the report but
-# not the exit status, so this reads elspais's JSON report.
+# ingested, none failed), tests.ingestion_fault (every target has results, and
+# every results and coverage file it names was read) and tests.partial_read
+# must pass. `--expect default` names every target, so a target with no
+# results is a fault rather than one not run. A lenient gate only reports
+# some of these, and `elspais checks --check` narrows the report but not the
+# exit status, so this reads elspais's JSON report.
 results_ingested() {
   local bin json rc=0
   if ! bin="$(find_elspais)"; then
@@ -1221,8 +1229,10 @@ results_ingested() {
     return 2
   fi
   json="$(mktemp "${TMPDIR:-/tmp}/evs-checks.XXXXXX")"
-  (cd "$ROOT" && "$bin" --spec-dir spec checks --lenient --format json -o "$json") >/dev/null 2>"$json.err" || rc=$?
-  if [ "$rc" -ne 0 ]; then
+  (cd "$ROOT" && "$bin" --spec-dir spec checks --lenient --expect default --format json -o "$json") >/dev/null 2>"$json.err" || rc=$?
+  # Exit 1 is a check that failed, and the report below says which; any other
+  # failure, or no report, means the report cannot be read.
+  if { [ "$rc" -ne 0 ] && [ "$rc" -ne 1 ]; } || [ ! -s "$json" ]; then
     cat "$json.err" >&2
     rm -f "$json" "$json.err"
     echo "elspais checks failed (exit $rc) before the ingestion could be read" >&2

@@ -75,4 +75,6 @@ checks--*.json
 # Local check runner (tools/run-checks.sh): per-run logs and the per-file
 # Postgres durations that balance its shards.
 .check-logs/
+# Test target output: [scanning.test] output_root of .elspais.toml.
+/.results/
 .check-durations

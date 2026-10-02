@@ -86,7 +86,32 @@ implements = ["DEV", "OPS", "PRD"]
 # File scanning configuration
 
 [scanning]
-skip = ["node_modules", ".git", "__pycache__", "*.pyc", ".venv", ".env", ".dart_tool", "build", ".flutter-plugins", ".flutter-plugins-dependencies"]
+# Paths no scan reads, and that are not a test target's inputs. A target's
+# inputs are every other file in the working tree, ignored or not, so this list
+# holds everything .gitignore does: what a build, `flutter pub get`, a test run
+# or tools/run-checks.sh writes, and local working files. An unlisted one makes
+# a result read as stale -- on the machine that wrote it during the run, and on
+# every machine that lacks it, such as CI's gate job, which builds nothing. A
+# directory entry is a path from the repository root, so one that occurs in
+# each package is written `**/<name>`; a file entry is a bare file name.
+skip = [
+  # Repository and tool state
+  ".git", ".elspais", ".venv", ".check-logs", ".superpowers", "docs/superpowers",
+  ".idea", ".history", ".atom", ".buildlog", ".vscode",
+  # Build and dependency output
+  "**/node_modules", "**/__pycache__", "**/.dart_tool", "**/build", "**/coverage", "**/doc/api",
+  "**/linux/flutter/ephemeral", "**/macos/Flutter/ephemeral", "**/windows/flutter/ephemeral",
+  "**/android/.gradle",
+  # Files
+  "*.pyc", ".env", ".DS_Store", "*.iml", "*.swp", ".check-durations",
+  ".flutter-plugins", ".flutter-plugins-dependencies", "pubspec.lock", "pubspec_overrides.yaml",
+  "generated_plugin_registrant.cc", "generated_plugin_registrant.h", "generated_plugins.cmake",
+  "GeneratedPluginRegistrant.swift", "GeneratedPluginRegistrant.h", "GeneratedPluginRegistrant.m",
+  "Generated.xcconfig", "Flutter.podspec", "local.properties",
+  "elspais-refines-coverage-propagation-repro.md", "checks--*.json",
+  "traceability.html", "traceability.md", "traceability.csv", "traceability_view.html",
+  "traceability_matrix.csv", "traceability_matrix.html", "traceability_matrix.md",
+]
 
 [scanning.spec]
 directories = ["spec"]
@@ -125,6 +150,9 @@ file_patterns = ["*_test.dart", "test_*.dart", "*_conformance.dart"]
 skip_files = []
 skip_dirs = []
 enabled = true
+# Each target writes its results and coverage into <output_root>/<name>/,
+# whose absolute path its command reads from $ELSPAIS_TARGET_OUTPUT.
+output_root = ".results"
 prescan_command = ""
 reference_keyword = "Verifies"
 reference_patterns = []
@@ -144,13 +172,15 @@ reference_patterns = []
 #
 # flutter-machine is a stdout channel: under `--run-tests` elspais parses the
 # command's captured stdout, not the `results` files. Each command therefore
-# prints the machine JSON on stdout and also persists it under the target's
-# `results` glob, which every command that does not run the tests (a plain
-# `elspais checks`, `trace`, `viewer`, and CI's gate job over the downloaded
-# artifacts) reads instead. Every target writes its results and coverage to
-# paths no other target writes, so any set of targets can run at once. The
-# daemon does not watch these files: after producing results, run a check with
-# `elspais --spec-dir spec checks` (a local build) or restart the daemon.
+# prints the machine JSON on stdout and also writes it, with its lcov, into the
+# target's own folder, .results/<name>/, whose absolute path elspais passes in
+# ELSPAIS_TARGET_OUTPUT; `results` and `coverage` are paths inside that folder.
+# Every command that does not run the tests (a plain `elspais checks`,
+# `trace`, `viewer`, and CI's gate job over the downloaded artifacts) reads
+# them there. No two targets share a folder, so any set of targets can run at
+# once. The folder also holds the fingerprint of the inputs the run saw, so a
+# result reads as stale once an input changes; the global `skip` above keeps
+# what runs and builds write out of those inputs.
 #
 # Commands run with --no-pub (resolve dependencies first: `make` and CI do),
 # and in each package at most one target builds the test assets (the widget
@@ -191,10 +221,10 @@ throughput = "The throughput guard: the current tree's Postgres append and inges
 name = "provenance"
 groups = ["default", "unit"]
 cwd = "provenance"
-command = "env -u PG_TEST_URL -u PG_TEST_URLS -u PG_TEST_URL_OTHER_SERVER -u EVS_THROUGHPUT_TEST flutter test --no-pub --machine --coverage --file-reporter=json:coverage/machine.jsonl"
+command = "env -u PG_TEST_URL -u PG_TEST_URLS -u PG_TEST_URL_OTHER_SERVER -u EVS_THROUGHPUT_TEST flutter test --no-pub --machine --coverage --file-reporter=json:$ELSPAIS_TARGET_OUTPUT/machine.jsonl --coverage-path=$ELSPAIS_TARGET_OUTPUT/lcov.info"
 reporter = "flutter-machine"
-results = "coverage/machine.jsonl"
-coverage = "coverage/lcov.info"
+results = "machine.jsonl"
+coverage = "lcov.info"
 match = "source"
 credit_coverage = "verified"
 
@@ -202,10 +232,10 @@ credit_coverage = "verified"
 name = "canonical_json_jcs"
 groups = ["default", "unit"]
 cwd = "canonical_json_jcs"
-command = "env -u PG_TEST_URL -u PG_TEST_URLS -u PG_TEST_URL_OTHER_SERVER -u EVS_THROUGHPUT_TEST flutter test --no-pub --machine --coverage --file-reporter=json:coverage/machine.jsonl"
+command = "env -u PG_TEST_URL -u PG_TEST_URLS -u PG_TEST_URL_OTHER_SERVER -u EVS_THROUGHPUT_TEST flutter test --no-pub --machine --coverage --file-reporter=json:$ELSPAIS_TARGET_OUTPUT/machine.jsonl --coverage-path=$ELSPAIS_TARGET_OUTPUT/lcov.info"
 reporter = "flutter-machine"
-results = "coverage/machine.jsonl"
-coverage = "coverage/lcov.info"
+results = "machine.jsonl"
+coverage = "lcov.info"
 match = "source"
 credit_coverage = "verified"
 
@@ -213,21 +243,21 @@ credit_coverage = "verified"
 name = "reaction"
 groups = ["default", "unit"]
 cwd = "reaction"
-command = "env -u PG_TEST_URL -u PG_TEST_URLS -u PG_TEST_URL_OTHER_SERVER -u EVS_THROUGHPUT_TEST flutter test --no-pub --machine --coverage --file-reporter=json:coverage/machine.jsonl"
+command = "env -u PG_TEST_URL -u PG_TEST_URLS -u PG_TEST_URL_OTHER_SERVER -u EVS_THROUGHPUT_TEST flutter test --no-pub --machine --coverage --file-reporter=json:$ELSPAIS_TARGET_OUTPUT/machine.jsonl --coverage-path=$ELSPAIS_TARGET_OUTPUT/lcov.info"
 reporter = "flutter-machine"
-results = "coverage/machine.jsonl"
-coverage = "coverage/lcov.info"
+results = "machine.jsonl"
+coverage = "lcov.info"
 match = "source"
 credit_coverage = "verified"
 
 [[scanning.test.targets]]
-name = "reaction/example"
+name = "reaction-example"
 groups = ["default", "unit", "demos"]
 cwd = "reaction/example"
-command = "env -u PG_TEST_URL -u PG_TEST_URLS -u PG_TEST_URL_OTHER_SERVER -u EVS_THROUGHPUT_TEST flutter test --no-pub --machine --coverage --file-reporter=json:coverage/machine.jsonl"
+command = "env -u PG_TEST_URL -u PG_TEST_URLS -u PG_TEST_URL_OTHER_SERVER -u EVS_THROUGHPUT_TEST flutter test --no-pub --machine --coverage --file-reporter=json:$ELSPAIS_TARGET_OUTPUT/machine.jsonl --coverage-path=$ELSPAIS_TARGET_OUTPUT/lcov.info"
 reporter = "flutter-machine"
-results = "coverage/machine.jsonl"
-coverage = "coverage/lcov.info"
+results = "machine.jsonl"
+coverage = "lcov.info"
 match = "source"
 credit_coverage = "verified"
 
@@ -235,10 +265,10 @@ credit_coverage = "verified"
 name = "reaction_widgets"
 groups = ["default", "unit"]
 cwd = "reaction_widgets"
-command = "env -u PG_TEST_URL -u PG_TEST_URLS -u PG_TEST_URL_OTHER_SERVER -u EVS_THROUGHPUT_TEST flutter test --no-pub --machine --coverage --file-reporter=json:coverage/machine.jsonl"
+command = "env -u PG_TEST_URL -u PG_TEST_URLS -u PG_TEST_URL_OTHER_SERVER -u EVS_THROUGHPUT_TEST flutter test --no-pub --machine --coverage --file-reporter=json:$ELSPAIS_TARGET_OUTPUT/machine.jsonl --coverage-path=$ELSPAIS_TARGET_OUTPUT/lcov.info"
 reporter = "flutter-machine"
-results = "coverage/machine.jsonl"
-coverage = "coverage/lcov.info"
+results = "machine.jsonl"
+coverage = "lcov.info"
 match = "source"
 credit_coverage = "verified"
 
@@ -246,10 +276,10 @@ credit_coverage = "verified"
 name = "reaction_widgets_testing"
 groups = ["default", "unit"]
 cwd = "reaction_widgets_testing"
-command = "env -u PG_TEST_URL -u PG_TEST_URLS -u PG_TEST_URL_OTHER_SERVER -u EVS_THROUGHPUT_TEST flutter test --no-pub --machine --coverage --file-reporter=json:coverage/machine.jsonl"
+command = "env -u PG_TEST_URL -u PG_TEST_URLS -u PG_TEST_URL_OTHER_SERVER -u EVS_THROUGHPUT_TEST flutter test --no-pub --machine --coverage --file-reporter=json:$ELSPAIS_TARGET_OUTPUT/machine.jsonl --coverage-path=$ELSPAIS_TARGET_OUTPUT/lcov.info"
 reporter = "flutter-machine"
-results = "coverage/machine.jsonl"
-coverage = "coverage/lcov.info"
+results = "machine.jsonl"
+coverage = "lcov.info"
 match = "source"
 credit_coverage = "verified"
 
@@ -261,90 +291,90 @@ groups = ["default", "unit"]
 cwd = "event_sourcing"
 command = "../tools/run-checks.sh target unit"
 reporter = "flutter-machine"
-results = "coverage/unit/*.jsonl"
-coverage = "coverage/unit/lcov.info"
+results = "*.jsonl"
+coverage = "lcov.info"
 match = "source"
 credit_coverage = "verified"
 
 [[scanning.test.targets]]
-name = "event_sourcing/example"
+name = "event_sourcing-example"
 groups = ["default", "unit", "demos"]
 cwd = "event_sourcing/example"
-command = "env -u PG_TEST_URL -u PG_TEST_URLS -u PG_TEST_URL_OTHER_SERVER -u EVS_THROUGHPUT_TEST flutter test --no-pub --machine --coverage --file-reporter=json:coverage/machine.jsonl"
+command = "env -u PG_TEST_URL -u PG_TEST_URLS -u PG_TEST_URL_OTHER_SERVER -u EVS_THROUGHPUT_TEST flutter test --no-pub --machine --coverage --file-reporter=json:$ELSPAIS_TARGET_OUTPUT/machine.jsonl --coverage-path=$ELSPAIS_TARGET_OUTPUT/lcov.info"
 reporter = "flutter-machine"
-results = "coverage/machine.jsonl"
-coverage = "coverage/lcov.info"
+results = "machine.jsonl"
+coverage = "lcov.info"
 match = "source"
 credit_coverage = "verified"
 
 [[scanning.test.targets]]
-name = "event_sourcing/example_action_permissions"
+name = "event_sourcing-example_action_permissions"
 groups = ["default", "unit", "demos"]
 cwd = "event_sourcing/example_action_permissions"
-command = "env -u PG_TEST_URL -u PG_TEST_URLS -u PG_TEST_URL_OTHER_SERVER -u EVS_THROUGHPUT_TEST flutter test --no-pub --machine --coverage --concurrency=1 --file-reporter=json:coverage/machine.jsonl"
+command = "env -u PG_TEST_URL -u PG_TEST_URLS -u PG_TEST_URL_OTHER_SERVER -u EVS_THROUGHPUT_TEST flutter test --no-pub --machine --coverage --concurrency=1 --file-reporter=json:$ELSPAIS_TARGET_OUTPUT/machine.jsonl --coverage-path=$ELSPAIS_TARGET_OUTPUT/lcov.info"
 reporter = "flutter-machine"
-results = "coverage/machine.jsonl"
-coverage = "coverage/lcov.info"
+results = "machine.jsonl"
+coverage = "lcov.info"
 match = "source"
 credit_coverage = "verified"
 
 [[scanning.test.targets]]
-name = "event_sourcing/example_clinical_scopes"
+name = "event_sourcing-example_clinical_scopes"
 groups = ["default", "unit", "demos"]
 cwd = "event_sourcing/example_clinical_scopes"
-command = "env -u PG_TEST_URL -u PG_TEST_URLS -u PG_TEST_URL_OTHER_SERVER -u EVS_THROUGHPUT_TEST flutter test --no-pub --machine --coverage --file-reporter=json:coverage/machine.jsonl"
+command = "env -u PG_TEST_URL -u PG_TEST_URLS -u PG_TEST_URL_OTHER_SERVER -u EVS_THROUGHPUT_TEST flutter test --no-pub --machine --coverage --file-reporter=json:$ELSPAIS_TARGET_OUTPUT/machine.jsonl --coverage-path=$ELSPAIS_TARGET_OUTPUT/lcov.info"
 reporter = "flutter-machine"
-results = "coverage/machine.jsonl"
-coverage = "coverage/lcov.info"
+results = "machine.jsonl"
+coverage = "lcov.info"
 match = "source"
 credit_coverage = "verified"
 
 # The browser suite: @TestOn('browser') files on sembast_web over IndexedDB.
 # No coverage: the Chrome platform collects none.
 [[scanning.test.targets]]
-name = "event_sourcing/web"
+name = "event_sourcing-web"
 groups = ["default", "web"]
 cwd = "event_sourcing"
-command = "flutter test --no-pub --no-test-assets --machine --platform chrome --file-reporter=json:coverage/web/machine.jsonl test/web/"
+command = "flutter test --no-pub --no-test-assets --machine --platform chrome --file-reporter=json:$ELSPAIS_TARGET_OUTPUT/machine.jsonl test/web/"
 reporter = "flutter-machine"
-results = "coverage/web/machine.jsonl"
+results = "machine.jsonl"
 match = "source"
 
 # The dual-pane integration test on a Linux desktop build under xvfb-run.
 # Elsewhere (macOS, or without xvfb-run) it prints why on stderr and runs
 # nothing.
 [[scanning.test.targets]]
-name = "event_sourcing/example/desktop"
+name = "event_sourcing-example-desktop"
 groups = ["default", "desktop", "demos"]
 cwd = "event_sourcing/example"
 command = "../../tools/run-checks.sh target desktop"
 reporter = "flutter-machine"
-results = "coverage/desktop/*.jsonl"
+results = "*.jsonl"
 match = "source"
 
 # Every Postgres-gated file of event_sourcing (PG_TEST_URL, testPostgresUrl(
 # or test_postgres_url.dart in a _test.dart file), the throughput guard
 # excluded, sharded across the Postgres servers.
 [[scanning.test.targets]]
-name = "event_sourcing/postgres"
+name = "event_sourcing-postgres"
 groups = ["default", "postgres"]
 cwd = "event_sourcing"
 command = "../tools/run-checks.sh target postgres"
 reporter = "flutter-machine"
-results = "coverage/postgres/*.jsonl"
-coverage = "coverage/postgres/lcov.info"
+results = "*.jsonl"
+coverage = "lcov.info"
 match = "source"
 credit_coverage = "verified"
 
 # Every Postgres-gated file of example_action_permissions.
 [[scanning.test.targets]]
-name = "event_sourcing/example_action_permissions/postgres"
+name = "event_sourcing-example_action_permissions-postgres"
 groups = ["default", "postgres", "demos"]
 cwd = "event_sourcing/example_action_permissions"
 command = "../../tools/run-checks.sh target postgres"
 reporter = "flutter-machine"
-results = "coverage/postgres/*.jsonl"
-coverage = "coverage/postgres/lcov.info"
+results = "*.jsonl"
+coverage = "lcov.info"
 match = "source"
 credit_coverage = "verified"
 
@@ -352,12 +382,12 @@ credit_coverage = "verified"
 # a temporary worktree, so it needs the full git history. It measures, so it
 # collects no coverage.
 [[scanning.test.targets]]
-name = "event_sourcing/throughput"
+name = "event_sourcing-throughput"
 groups = ["default", "throughput"]
 cwd = "event_sourcing"
 command = "../tools/run-checks.sh target throughput"
 reporter = "flutter-machine"
-results = "coverage/throughput/*.jsonl"
+results = "*.jsonl"
 match = "source"
 
 [scanning.docs]

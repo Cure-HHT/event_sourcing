@@ -4,9 +4,14 @@
 # The test suites are the [[scanning.test.targets]] of .elspais.toml; this
 # workflow lists no test command. Each job runs its targets through
 # `elspais checks --run-tests --targets <group or target>` (lenient: the
-# checks of one job see only its own results), uploads the results and
-# coverage files the targets wrote, and the traceability job downloads every
-# job's files and runs `elspais checks` once over all of them as the gate.
+# checks of one job see only its own results) and uploads each target's folder
+# under .results/: its results, its coverage and the fingerprint of the inputs
+# it ran against (a dotfile, hence include-hidden-files). The traceability job
+# downloads every job's folders and runs `elspais checks --expect default` once
+# over all of them as the gate, so a target with no results fails it. The
+# postgres parts write into one folder per target; each part's fingerprint
+# replaces the last, and they agree, because every part runs the same commit
+# and .elspais.toml skips everything a job writes.
 #
 # Jobs:
 #   unit        — per package (matrix): its analyzer (`flutter analyze
@@ -53,35 +58,35 @@ permissions:
 
 jobs:
   unit:
-    name: ${{ matrix.target }} analyze + test
+    name: ${{ matrix.package }} analyze + test
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        # target: the .elspais.toml unit target, which runs in the package
-        # directory of the same name. id: its artifact name.
+        # package: the package directory. target: its .elspais.toml unit
+        # target, which runs there and writes into .results/<target>/.
         include:
-          - target: event_sourcing
-            id: event_sourcing
-          - target: event_sourcing/example
-            id: event_sourcing-example
-          - target: event_sourcing/example_action_permissions
-            id: event_sourcing-example_action_permissions
-          - target: event_sourcing/example_clinical_scopes
-            id: event_sourcing-example_clinical_scopes
-          - target: reaction
-            id: reaction
-          - target: reaction/example
-            id: reaction-example
-          - target: reaction_widgets
-            id: reaction_widgets
-          - target: reaction_widgets_testing
-            id: reaction_widgets_testing
-          - target: provenance
-            id: provenance
-          - target: canonical_json_jcs
-            id: canonical_json_jcs
+          - package: event_sourcing
+            target: event_sourcing
+          - package: event_sourcing/example
+            target: event_sourcing-example
+          - package: event_sourcing/example_action_permissions
+            target: event_sourcing-example_action_permissions
+          - package: event_sourcing/example_clinical_scopes
+            target: event_sourcing-example_clinical_scopes
+          - package: reaction
+            target: reaction
+          - package: reaction/example
+            target: reaction-example
+          - package: reaction_widgets
+            target: reaction_widgets
+          - package: reaction_widgets_testing
+            target: reaction_widgets_testing
+          - package: provenance
+            target: provenance
+          - package: canonical_json_jcs
+            target: canonical_json_jcs
     steps:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
@@ -96,7 +101,7 @@ jobs:
           . .github/versions.env
           python -m pip install "elspais==${ELSPAIS_VERSION}"
       - name: Resolve deps
-        working-directory: ${{ matrix.target }}
+        working-directory: ${{ matrix.package }}
         run: |
           if grep -q 'sdk: flutter' pubspec.yaml; then
             flutter pub get
@@ -104,7 +109,7 @@ jobs:
             dart pub get
           fi
       - name: Analyze
-        working-directory: ${{ matrix.target }}
+        working-directory: ${{ matrix.package }}
         run: |
           if grep -q 'sdk: flutter' pubspec.yaml; then
             flutter analyze --no-pub
@@ -119,12 +124,12 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: results-unit-${{ matrix.id }}
+          name: results-unit-${{ matrix.target }}
           # .elspais.toml pins the artifact's root to the repository root, so
           # the gate job restores every file to its own path.
           path: |
             .elspais.toml
-            ${{ matrix.target }}/coverage/
+            .results/${{ matrix.target }}/
             .check-logs/
           include-hidden-files: true
           if-no-files-found: error
@@ -159,7 +164,7 @@ jobs:
           name: results-web
           path: |
             .elspais.toml
-            event_sourcing/coverage/
+            .results/event_sourcing-web/
             .check-logs/
           include-hidden-files: true
           if-no-files-found: error
@@ -199,7 +204,7 @@ jobs:
           name: results-desktop
           path: |
             .elspais.toml
-            event_sourcing/example/coverage/
+            .results/event_sourcing-example-desktop/
             .check-logs/
           include-hidden-files: true
           if-no-files-found: error
@@ -277,8 +282,8 @@ jobs:
           name: results-postgres-${{ matrix.part }}
           path: |
             .elspais.toml
-            event_sourcing/coverage/
-            event_sourcing/example_action_permissions/coverage/
+            .results/event_sourcing-postgres/
+            .results/event_sourcing-example_action_permissions-postgres/
             .check-logs/
           include-hidden-files: true
           if-no-files-found: error
@@ -339,7 +344,7 @@ jobs:
           name: results-throughput
           path: |
             .elspais.toml
-            event_sourcing/coverage/
+            .results/event_sourcing-throughput/
             .check-logs/
           include-hidden-files: true
           if-no-files-found: error
@@ -371,7 +376,7 @@ jobs:
       # --spec-dir (the configured one) builds the graph in this process
       # rather than through a daemon, which does not watch the results files.
       - name: elspais checks (the gate)
-        run: elspais --spec-dir spec checks --lenient
+        run: elspais --spec-dir spec checks --lenient --expect default
       - name: Every target's results ingested (strict)
         run: tools/run-checks.sh results-ingested
       - name: Coverage summary
