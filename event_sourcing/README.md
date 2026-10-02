@@ -19,6 +19,50 @@ vocabulary; the substrate brings the bookkeeping. It aligns with FDA
 > authoritative narrative for everything below. Normative requirements
 > live in [`spec/`](../spec).
 
+## State is reconstructable from the log alone
+
+This is the property the rest of the library exists to protect, and the
+one that most distinguishes it.
+
+The state of a view at sequence N is a function of four things, all of
+which are recorded:
+
+```text
+state(N) = fold( events[0..N], projection_specs, promoter_specs, lib_version )
+```
+
+Nothing else participates. There is no author-supplied fold function, no
+host callback invoked during materialization, no app-supplied
+authorization policy, and no ambient input — not the clock, not the
+locale, not the device's time zone. Projections and promoters are
+declarative **data**, composed from closed sets of library primitives
+whose semantics are frozen once shipped. The library version under which
+the log was written is itself recorded in the log.
+
+The library does not merely promise this; it is how views are built. A
+view's rows live in a copy keyed by a fingerprint of its definition —
+its shape, its declared types, and the registered version of every entry
+type it folds. Change the definition and the fingerprint changes, so the
+library creates a fresh empty copy and brings it up to date by replaying
+the log into it. There is no separate migration path that could drift
+from a replay, because replaying *is* the path.
+
+The consequence is that a replay is not an approximation of history. Two
+observers holding the same events, on different platforms, reconstruct
+byte-identical state — and can do so years later without the build that
+originally produced it.
+
+Most event-sourcing stacks let you write the fold, and the upcaster, as
+ordinary functions. Those live in your codebase, not in the log, so
+"replay the log" silently means "replay the log with that exact build".
+This substrate refuses that trade. It is why the primitive sets are
+small, closed, and append-only, and why extending them is a change to
+the library rather than something an application can do on its own.
+
+The guarantee is precisely scoped: the Layer 1 facts are absolute, while
+the interpretation applied on top of them is the library's own default.
+See [Two layers of trust](#two-layers-of-trust).
+
 ## What it provides
 
 - An append-only event log with strong ordering and hash-chain integrity.
