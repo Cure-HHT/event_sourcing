@@ -185,6 +185,36 @@ vocabulary makes that more likely, and whether such an event should
 instead be admitted and kept out of only the view that cannot promote
 it, is open.
 
+### What shipping it costs
+
+Adding the member leaves stored data alone. Each existing primitive
+encodes into a view's fingerprint the same way whether or not a fourth
+exists, so no stored fingerprint changes, no view copy is invalidated,
+and a deployment that does not use the member replays nothing.
+
+It is nonetheless a source-breaking change in one narrow way. The
+primitive set is closed to subtyping, and exhaustiveness checking
+reaches across library boundaries, so a consumer that switches over the
+set exhaustively stops compiling when a member is added. No consumer has
+reason to do so — a consumer composes chains and the library interprets
+them — but the decision belongs in the release rather than in a
+surprise: either the member ships in a major library release, or the set
+is documented as one a consumer composes and does not switch over.
+
+The cost of *using* it falls on the deployment that does. A
+value-deriving member sits on a step across majors, so adopting one bumps
+an entry type's major, which changes the fingerprint of every view that
+folds that entry type, which gives each a fresh copy to bring up to date
+by replaying the log. That work is bounded per transaction and resumes
+from a watermark, so it is incremental rather than a stall, but it is a
+replay of the whole log for each affected view.
+
+A deployment running more than one instance pays one more cost. Two
+instances whose shared entry type carries different majors hold
+conflicting generations and may not serve one database at the same time
+(`EVS-DEV-version-compatibility`/F), so adopting the member rolls out
+with standby and takeover rather than side by side.
+
 ### What remains out of reach
 
 A derivation whose inputs are not all present in the event cannot be a
