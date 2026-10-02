@@ -441,6 +441,12 @@ identifier_form = "error"
 no_assertions_severity = "error"
 no_traceability_severity = "error"
 
+# A test citation binds only to the test that encloses it or to the test or
+# group declared directly below it; one written anywhere else credits nothing.
+# Every citation binds today, so a new unbound one fails the gate.
+[rules.severity]
+"tests.unbound_citation" = "error"
+
 [rules.hierarchy]
 allow_structural_orphans = true
 

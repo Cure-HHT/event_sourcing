@@ -1,15 +1,3 @@
-// Verifies: EVS-PRD-action-submitter/C
-// server side of POST /actions
-//   that RemoteActionSubmitter calls into; round-trips
-//   ActionSubmission -> DispatchResult.
-// Verifies: EVS-PRD-cross-process-event-transport/A
-// wire codec
-//   round-trip through the route handler.
-// Verifies: EVS-DEV-converging-view-reads/H
-// a ViewConvergingRefusal
-//   from the dispatcher answers 503 + view_converging body +
-//   Retry-After, not an untyped 500.
-
 import 'dart:convert';
 
 import 'package:event_sourcing/event_sourcing.dart';

@@ -1,14 +1,3 @@
-// Verifies: EVS-PRD-destinations/C
-// (FIFO order — drain attempts rows in
-//   sequence_in_queue order; SendOk advances to the next head; a wedged head
-//   halts the pass; trail rows are never sent ahead of a wedged head)
-// Verifies: EVS-PRD-destinations/D
-// (durable queue — rows enqueued on a file-backed database survive closing
-//   the backend and are drained, in order, by a backend reopened over the
-//   same file)
-// Verifies: EVS-PRD-destinations/E
-// (pluggable delivery — every test calls
-//   drain() via FakeDestination.send, the application-supplied transport)
 @TestOn('vm')
 library;
 
@@ -86,6 +75,8 @@ void main() {
       expect(dest.sent, isEmpty);
     });
 
+    // Verifies: EVS-PRD-destinations/E
+    // the queued item is handed to the application-supplied send.
     test('SendOk marks head sent and advances to the next head', () async {
       await _enqueueRow(backend, 'fake', eventId: 'e1', sequenceNumber: 1);
       final dest = FakeDestination(script: [const SendOk()]);
@@ -384,6 +375,7 @@ void main() {
     // drain attempts rows in sequence_in_queue order. Three successful
     // SendOks prove the ordering: the payloads land in the destination
     // in the same order the rows were enqueued.
+    // Verifies: EVS-PRD-destinations/C
     test('strict FIFO — drain attempts e1, e2, e3 in enqueue order', () async {
       var seq = 0;
       for (final id in ['e1', 'e2', 'e3']) {
@@ -610,6 +602,7 @@ void main() {
   // A queue on a file-backed database outlives the backend that wrote it:
   // rows enqueued before the backend closes are drained, in order, by a
   // fresh backend opened over the same file.
+  // Verifies: EVS-PRD-destinations/D
   test('queued rows survive closing and reopening the database', () async {
     final dir = await Directory.systemTemp.createTemp('drain-restart-');
     addTearDown(() => dir.delete(recursive: true));

@@ -1,7 +1,4 @@
 // reaction/test/e2e/action_test.dart
-// Verifies: EVS-PRD-action-submitter/C+D+E
-// (round-trip with each
-// DispatchResult variant; bearer header; source-identical behavior).
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:reaction/reaction.dart';
@@ -28,6 +25,9 @@ void main() {
   });
   tearDown(() => h.close());
 
+  // Verifies: EVS-PRD-action-submitter/C+D
+  // the remote submitter POSTs with the session bearer credential (the
+  //   server authorizes only a credentialed request) and decodes the result.
   test('say_hello action dispatches and returns Success', () async {
     final result = await h.scope.actionSubmitter.submit(
       const ActionSubmission(actionName: 'say_hello', rawInput: {'name': 'A'}),

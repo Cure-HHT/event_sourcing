@@ -1,13 +1,4 @@
-// Verifies: EVS-PRD-ingest/A
-// ingest path admits events from another
-//   deployment into the local log (system audit events bridged cross-hop)
-// Verifies: EVS-PRD-ingest/B
-// upstream identity preserved; the stored copy
-//   of an ingested audit keeps the originator's event id, aggregate,
-//   initiator and provenance entries, and the receiver hop it appends
-//   records the upstream event hash as its arrival hash
-//
-//   path that lands a wire-side audit event in `event_log` and stamps
+// Ingest is the path that lands a wire-side audit event in `event_log` and stamps
 //   receiver provenance on it. It SHALL NOT mutate the receiver's
 //   `DestinationRegistry`, the receiver's `EntryTypeRegistry`, or any
 //   per-destination FIFO state. Configuration on the receiver remains
@@ -177,6 +168,7 @@ Future<void> _queueNotes(
 // ---------------------------------------------------------------------------
 
 void main() {
+  // Verifies: EVS-PRD-ingest/A
   group('EventStore ingest path — receiver-stays-passive invariant '
       '(-E', () {
     //   `system.destination_registered` audit MUST NOT add a destination
@@ -186,6 +178,7 @@ void main() {
     //   its own local `addDestination` calls. The audit MUST still be
     //   stored in the receiver's `event_log` (-F admission +
     //   ingest-path write).
+    // Verifies: EVS-PRD-ingest/B
     test('ingesting system.destination_registered does NOT '
         'mutate DestinationRegistry on the receiver', () async {
       final originator = await _bootstrapDatastore(

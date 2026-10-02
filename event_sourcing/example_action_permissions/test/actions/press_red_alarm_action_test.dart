@@ -1,7 +1,3 @@
-// Verifies: EVS-PRD-action-dispatch/A+B+C
-// Verifies: EVS-PRD-permissions-as-events/B
-// Verifies: EVS-PRD-action-dispatch/D
-//                         enforcement by dispatcher tested at integration level),
 import 'package:action_permissions_demo/server/actions/press_red_alarm_action.dart';
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';

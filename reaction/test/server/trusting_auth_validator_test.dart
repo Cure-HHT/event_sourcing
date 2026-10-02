@@ -1,15 +1,9 @@
-// Verifies: EVS-PRD-auth-session/C
-// PrincipalAuthValidator.authenticate
-//   interface contract (return Principal, throw AuthenticationDenied).
-// Verifies: EVS-PRD-auth-session/F
-// TrustingAuthValidator reference
-//   impl: accepts non-empty credential as Principal.userId.
-
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:reaction/reaction.dart';
 
 void main() {
+  // Verifies: EVS-PRD-auth-session/C+F
   test('accepts non-empty credential as Principal userId', () async {
     final v = TrustingAuthValidator(defaultActiveRole: 'install');
     final p = await v.authenticate('user-123');
@@ -27,6 +21,7 @@ void main() {
     expect(p.roles, {'StudyCoordinator'});
   });
 
+  // Verifies: EVS-PRD-auth-session/C
   test('rejects empty credential with AuthenticationDenied', () async {
     final v = TrustingAuthValidator(defaultActiveRole: 'install');
     await expectLater(

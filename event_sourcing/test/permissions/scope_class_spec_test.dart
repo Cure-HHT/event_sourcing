@@ -1,6 +1,3 @@
-// Verifies: EVS-PRD-permissions-as-events
-// (scope-class registration shape)
-
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:test/test.dart';
 

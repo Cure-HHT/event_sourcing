@@ -1,13 +1,3 @@
-// Verifies: EVS-PRD-ingest/B
-// upstream identity preserved; batch reconstruction
-//   (strip receiver hop + restore arrival_hash) yields the original wire bytes
-// Verifies: EVS-PRD-ingest/C
-// batch_context on each stored event enables
-//   reconstruction of the originating batch envelope for auditors
-// Verifies: EVS-PRD-hash-chain-integrity/D
-// JCS encoding is stable across
-//   the sembast storage round-trip (reconstructed sha256 == batchWireBytesHash)
-
 import 'package:crypto/crypto.dart';
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -84,6 +74,7 @@ Object? _rekey(Object? value) {
 // ---------------------------------------------------------------------------
 
 void main() {
+  // Verifies: EVS-PRD-ingest/C
   group('Batch reconstruction (design §2.3)', () {
     test('all stored events from an ingested batch agree on batchId and '
         'batchWireBytesHash', () async {
@@ -207,6 +198,7 @@ void main() {
       }
     });
 
+    // Verifies: EVS-PRD-ingest/B, EVS-PRD-hash-chain-integrity/D
     test('full round-trip: strip receiver hop → re-encode → '
         'sha256 matches batchWireBytesHash (Risk 7 resolved)', () async {
       // This test performs the complete reconstruction to confirm that

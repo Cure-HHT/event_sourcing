@@ -1,9 +1,3 @@
-// Verifies: EVS-PRD-reaction-widget-contract/D+G
-// the subscription's errors reach
-//   onError when supplied; absent it, a converging refusal (transient) is
-//   dropped and any other error is reported to FlutterError, none left
-//   uncaught in the zone.
-
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -29,6 +23,7 @@ Future<void> _settleStream(WidgetTester tester) async {
 }
 
 void main() {
+  // Verifies: EVS-PRD-reaction-widget-contract/D+G
   testWidgets('fires onUpdate without rebuilding child', (tester) async {
     final fake = FakeReaction();
     final updates = <Update<_Row>>[];
@@ -126,6 +121,7 @@ void main() {
     );
   });
 
+  // Verifies: EVS-PRD-reaction-widget-contract/G
   testWidgets('child renders without decoration (headless)', (tester) async {
     final fake = FakeReaction();
 

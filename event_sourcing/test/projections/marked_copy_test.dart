@@ -1,20 +1,3 @@
-// Verifies: EVS-DEV-view-convergence/T
-// a copy marked for deletion, or whose record is gone, is treated as
-//   absent by both the read path and the append fold: neither serves or
-//   folds into it, and the unmarked copy of the fingerprint is found or
-//   created instead.
-// Verifies: EVS-DEV-view-convergence/Q
-// a catch-up attempt that has no unmarked copy of its fingerprint yet
-//   still backs off on failure, keyed by the fingerprint, instead of
-//   retrying in a tight loop.
-// Verifies: EVS-DEV-converging-view-reads/A
-// Verifies: EVS-DEV-converging-view-reads/H
-// Verifies: EVS-DEV-view-convergence/W
-// a backoff entry recorded under a key another instance's write makes
-//   stale -- the fingerprint once a copy exists, or a copy id once it is
-//   gone -- is cleared or pruned rather than lingering with a
-//   `nextAttemptAt` in the past forever.
-
 import 'dart:async';
 
 import 'package:event_sourcing/event_sourcing.dart';
@@ -84,7 +67,9 @@ Future<StoredEvent> _appendNote(EventStore store, String aggregateId) async =>
     ))!;
 
 void main() {
+  // Verifies: EVS-DEV-view-convergence/T
   group('a copy marked for deletion, or whose record is gone', () {
+    // Verifies: EVS-DEV-converging-view-reads/A+H
     test('is never served as current or folded into, and a read never '
         'throws once its record is gone', () async {
       final manualTimers = ManualTimers();
@@ -182,6 +167,7 @@ void main() {
       );
     });
 
+    // Verifies: EVS-DEV-view-convergence/Q
     test('a catch-up of a missing copy backs off on failure instead of '
         "spinning, and the view's progress reports the failure", () async {
       final backend = await _openBackend();
@@ -362,7 +348,6 @@ void main() {
   });
 
   group('a backoff entry left under a key another instance makes stale', () {
-    // Verifies: EVS-DEV-view-convergence/W
     // Verifies: EVS-DEV-view-convergence/Q
     test('recorded under the fingerprint while no copy existed is cleared '
         'once another instance creates the copy, so recovery never spins '
@@ -495,7 +480,6 @@ void main() {
       );
     });
 
-    // Verifies: EVS-DEV-view-convergence/W
     // Verifies: EVS-DEV-view-convergence/Q
     test('recorded under a copy id that another instance deletes before '
         'this instance discovers it marked is pruned once the discovery '

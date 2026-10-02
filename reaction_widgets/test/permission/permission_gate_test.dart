@@ -1,6 +1,3 @@
-// Verifies: EVS-PRD-reaction-widget-contract/G
-// (permission-gate sub-clause)
-
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -29,6 +26,8 @@ Future<void> _settleStream(WidgetTester tester) async {
 }
 
 void main() {
+  // Verifies: EVS-PRD-reaction-widget-contract/G
+  // (permission-gate sub-clause)
   group('PermissionGate', () {
     testWidgets('renders child when active Principal holds permission', (
       tester,

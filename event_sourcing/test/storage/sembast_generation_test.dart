@@ -1,7 +1,3 @@
-// Verifies: EVS-DEV-version-compatibility/H
-// a Sembast database outside the browser is used by one process: its
-//   registration with the incompatible-generation guard holds nothing, and
-//   two conflicting generations register on it in turn and at once.
 @TestOn('vm')
 library;
 
@@ -18,6 +14,9 @@ GenerationDescriptor _descriptor(int major) => GenerationDescriptor(
 );
 
 void main() {
+  // Verifies: EVS-DEV-version-compatibility/H
+  // a Sembast database outside the browser is used by one process: its
+  //   registration with the incompatible-generation guard holds nothing.
   test('registerGeneration on io returns a registration that holds '
       'nothing', () async {
     final backend = SembastBackend(

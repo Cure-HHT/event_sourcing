@@ -1,16 +1,3 @@
-// Verifies: EVS-PRD-destinations/V
-// two demo server instances booted the way the server boots share one
-//   Postgres database, each in its own isolate with its own sessions: one
-//   delivery cycle drains and the other stands by; once the draining
-//   instance closes its cycle, the other takes over and delivers.
-// Verifies: EVS-PRD-destinations/U
-// a halt requested through the standing-by instance's registry is honoured
-//   by the draining instance, which wedges the head for an operator halt.
-// Verifies: EVS-PRD-destinations/S+T
-// the standing-by instance reads the wedge from the default
-//   destination-wedges view and its delivery status, and its recovery
-//   removes the row; delivery resumes on the draining instance.
-//
 // Gated on PG_TEST_URL. Drops the demo schema and runs the demo's deployment
 // step, so it runs one file at a time like every Postgres test; the
 // instances connect as the declared runtime role.
@@ -199,6 +186,13 @@ void main() {
     return;
   }
 
+  // Verifies: EVS-PRD-destinations/S+T+U+V
+  // V: one delivery cycle drains and the other stands by; once the draining
+  //   instance closes its cycle, the other takes over and delivers.
+  // U: a halt requested through the standing-by instance is honoured by the
+  //   draining instance, which wedges the head for an operator halt.
+  // S+T: the standing-by instance reads the wedge from the default
+  //   destination-wedges view, and its recovery removes the row.
   test('one instance drains and the other stands by; a halt and a recovery '
       'issued through the standing-by instance are honoured by the drainer; '
       'closing the drainer hands delivery over', () async {

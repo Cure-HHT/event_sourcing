@@ -1,8 +1,3 @@
-// Verifies: EVS-PRD-auth-session/D
-// the library SHALL NOT impose a
-// format on the credential string; format selection SHALL be
-// delegated entirely to the consumer-supplied `PrincipalAuthValidator`.
-//
 // This is a negative-existential structural assertion. The library can
 // be SHOWN to not impose a format by exercising the interface with
 // credentials of multiple shapes (opaque session id, JWT-like dotted
@@ -21,6 +16,7 @@ import 'package:reaction/reaction.dart';
 T _asContracted<T>(T value) => value;
 
 void main() {
+  // Verifies: EVS-PRD-auth-session/D
   group('AuthSession credential format opacity', () {
     test('AuthSession.setCredential signature is String? (no format type)', () {
       // Compile-time proof: the parameter type is `String?` with no

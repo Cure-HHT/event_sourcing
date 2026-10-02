@@ -1,10 +1,3 @@
-// Verifies: EVS-PRD-ingest/F
-// IngestOutcome distinguishes a stored event, a stored event with findings,
-//   a held duplicate and a record kept in a finding, confirming the
-//   idempotency semantics contract
-// Verifies: EVS-DEV-chain-verification/I
-// a chain verification verdict is valid exactly when it lists no finding
-
 import 'package:event_sourcing/src/ingest/ingest_result.dart';
 import 'package:event_sourcing/src/security/security_finding.dart';
 import 'package:event_sourcing/src/verification/chain_verification_verdict.dart';
@@ -23,6 +16,7 @@ void main() {
   });
 
   group('ChainVerificationVerdict', () {
+    // Verifies: EVS-DEV-chain-verification/I
     test('is valid exactly when it lists no finding', () {
       const valid = ChainVerificationVerdict(
         from: 1,

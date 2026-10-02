@@ -1,9 +1,3 @@
-// Verifies: EVS-PRD-destinations/C+D
-// exercises the historical replay a first
-// activation requests: setStartDate records the request and the next fill
-// enqueues every matching event in FIFO order (C), committing the items, the
-// advanced position and the cleared request together so batches survive
-// restart without duplication (D).
 import 'package:event_sourcing/src/destinations/subscription_filter.dart';
 import 'package:event_sourcing/src/event_store.dart';
 import 'package:event_sourcing/src/lifecycle/lib_version.dart';
@@ -122,6 +116,7 @@ void main() {
     // the same transaction and enqueues every matching historical event as
     // batches identical in shape to fillBatch output (using the
     // destination's canAddToBatch and transform).
+    // Verifies: EVS-PRD-destinations/C
     test('setStartDate with past date batches all matching '
         'historical events', () async {
       // Seed 5 events, all inside the last hour.
@@ -168,6 +163,7 @@ void main() {
     // No replay runs for a future startDate. Events accumulate in the
     // event_log and stay out of the FIFO until the wall-clock crosses
     // startDate (then fillBatch picks them up).
+    // Verifies: EVS-PRD-destinations/C
     test('setStartDate in the future leaves FIFO empty', () async {
       // Seed 3 events "now".
       final ts = DateTime.now();
@@ -201,6 +197,7 @@ void main() {
     // more events; run fillBatch — those 2 are enqueued by the live path. No
     // event_id appears in more than one FIFO row; every event is covered
     // exactly once.
+    // Verifies: EVS-PRD-destinations/C
     test('events appended after replay start land via live '
         'fillBatch, not duplicated', () async {
       // Seed 3 events well inside the past-start window.

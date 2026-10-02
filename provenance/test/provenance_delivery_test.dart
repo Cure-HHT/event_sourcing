@@ -1,9 +1,3 @@
-// Verifies: EVS-PRD-provenance/A
-// a receiver-hop entry carries an optional delivery object naming the
-//   channel and the delivery number the event arrived in.
-// Verifies: EVS-PRD-provenance/C
-// the delivery object serializes and deserializes without loss, and an
-//   entry without it encodes no delivery key.
 import 'dart:convert';
 
 import 'package:provenance/provenance.dart';
@@ -39,11 +33,13 @@ ProvenanceEntry _entry({ProvenanceDelivery? delivery}) => ProvenanceEntry(
 
 void main() {
   group('ProvenanceEntry delivery', () {
+    // Verifies: EVS-PRD-provenance/C
     test('encodes exactly the channel and the delivery number', () {
       expect(_delivery.toJson(), _deliveryJson());
       expect(_entry(delivery: _delivery).toJson()['delivery'], _deliveryJson());
     });
 
+    // Verifies: EVS-PRD-provenance/C
     test('round-trips through JSON', () {
       final entry = _entry(delivery: _delivery);
       final decoded = ProvenanceEntry.fromJson(
@@ -54,6 +50,7 @@ void main() {
       expect(decoded.toJson(), entry.toJson());
     });
 
+    // Verifies: EVS-PRD-provenance/C
     test('an entry without it encodes no delivery key and re-encodes '
         'byte-identically', () {
       final entry = _entry();

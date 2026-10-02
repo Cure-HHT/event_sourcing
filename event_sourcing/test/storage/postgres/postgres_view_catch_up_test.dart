@@ -4,24 +4,6 @@
 // time across instances, and the generation guard's live view-fingerprint
 // registrations that spare a serving instance's copy from a canary's boot.
 // Gated on PG_TEST_URL.
-//
-// Verifies: EVS-DEV-view-convergence/C
-// a view's fingerprint is registered with the generation guard's live
-//   components from before the boot transaction until the store closes.
-// Verifies: EVS-DEV-view-convergence/D (live registrations)
-// the boot marks for deletion only a stored copy whose fingerprint neither
-//   the opening build nor a live registration of another instance names.
-// Verifies: EVS-DEV-view-convergence/L
-// a catch-up transaction's first statement locks backend_state in SHARE
-//   mode, before any read of its copy, and an append waits for it.
-// Verifies: EVS-DEV-view-convergence/K
-// a copy caught up through the buffered catch-up, with its batched row
-//   writes, equals an event-by-event replay of the log through the fold
-//   step appends use.
-// Verifies: EVS-DEV-view-convergence/M (Postgres advisory)
-// a catch-up transaction takes a transaction-scoped advisory lock on its
-//   copy without waiting, and a second instance's catch-up transaction on
-//   the same copy ends without writing while the first holds it.
 
 @TestOn('vm')
 library;
@@ -162,7 +144,6 @@ void main() {
     backends.clear();
   });
 
-  // Verifies: EVS-DEV-view-convergence/K
   group('catch-up equivalence', () {
     if (db == null) return;
     runCatchUpEquivalenceConformance(

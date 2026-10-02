@@ -1,36 +1,3 @@
-// Verifies: EVS-DEV-view-convergence/G
-// no catch-up transaction runs before EventStore.open returns to its
-//   caller.
-// Verifies: EVS-DEV-view-convergence/H
-// no catch-up transaction begins once EventStore.close has been called.
-// Verifies: EVS-DEV-view-convergence/I
-// close awaits the catch-up transaction in flight before it returns.
-// Verifies: EVS-DEV-view-convergence/J
-// the instance keeps running catch-up transactions on a copy while it is
-//   behind.
-// Verifies: EVS-DEV-view-convergence/K
-// a catch-up transaction folds each event through the fold step appends
-//   use, promoting an older event through the view's registered promoter
-//   chain.
-// Verifies: EVS-DEV-view-convergence/M (isolate-local lock)
-// a copy whose lock is held elsewhere in the isolate ends the attempt
-//   without opening a transaction, leaving the copy untouched.
-// Verifies: EVS-DEV-view-convergence/N
-// a catch-up transaction begins no further step once its clock shows 200 ms
-//   have passed.
-// Verifies: EVS-DEV-view-convergence/O
-// a catch-up transaction performs at least one step.
-// Verifies: EVS-DEV-view-convergence/Q
-// a throwing step is logged, recorded in the copy's progress, and retried
-//   after a delay starting at 1 s and doubling, without stopping the
-//   catch-up of the instance's other copies.
-// Verifies: EVS-DEV-view-convergence/S
-// a copy marked for deletion has its rows deleted up to 500 per step, then
-//   its own record.
-// Verifies: EVS-DEV-view-convergence/T
-// an instance that finds no unmarked copy of a fingerprint it registers
-//   creates one before folding into it again.
-
 import 'dart:async';
 
 import 'package:event_sourcing/event_sourcing.dart';

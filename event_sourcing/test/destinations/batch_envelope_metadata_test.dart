@@ -1,4 +1,3 @@
-// Verifies: EVS-PRD-destinations/E
 // exercises BatchEnvelopeMetadata: the envelope fields a queue item of a
 // destination that serializes natively persists, so the drainer rebuilds
 // its delivery from them and the events the item names; verifies

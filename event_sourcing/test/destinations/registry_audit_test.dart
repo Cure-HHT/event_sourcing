@@ -1,13 +1,3 @@
-// Verifies: EVS-PRD-destinations/A
-// every DestinationRegistry mutation (addDestination, setStartDate,
-//   setEndDate, deactivateDestination, deleteDestination,
-//   tombstoneAndRefill) that configures a destination emits a system audit
-//   event carrying the configuration it applied.
-// Verifies: EVS-DEV-destination-drain/H
-// every kind of destination audit carries its
-//   own event type, distinct from every other kind's and never the generic
-//   `finalized`.
-
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
@@ -255,6 +245,7 @@ void main() {
     // types, each the same for every audit of its kind. The kinds are read
     // from the reserved entry-type ids, so a destination audit kind the
     // library adds fails this test until the fixture appends one of it.
+    // Verifies: EVS-DEV-destination-drain/H
     test('destination audits carry pairwise distinct event types and none '
         'is finalized', () async {
       await ds.destinations.addDestination(

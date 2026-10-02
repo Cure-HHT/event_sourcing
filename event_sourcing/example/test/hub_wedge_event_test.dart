@@ -1,10 +1,3 @@
-// Verifies: EVS-PRD-destinations/P
-// in the hub demo, a destination whose
-//   connection rejects every send wedges its queue head, and the wedge event
-//   is appended with it and shown in the hub's event stream.
-// Verifies: EVS-PRD-destinations/Q
-// the wedge event records the cause of a
-//   rejection: a permanent refusal.
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing_demo/app_state.dart';
 import 'package:event_sourcing_demo/demo_destination.dart';
@@ -17,6 +10,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
 void main() {
+  // Verifies: EVS-PRD-destinations/P+Q
   testWidgets('a rejecting connection wedges its head and the wedge event '
       'appears in the event stream', (tester) async {
     late SembastBackend backend;

@@ -1,10 +1,3 @@
-// Verifies: EVS-PRD-destinations/A+D
-// verifies that every destination
-// mutation audit (add, setStartDate, setEndDate, deactivate, delete,
-// tombstoneAndRefill)
-// stamps aggregateId = source.identifier so the per-install audit stream is
-// a single hash-chained system aggregate (A) persisted atomically with the
-// mutation (D).
 // Verifies the system-aggregate consolidation rule for destination
 // mutation audits: every reserved-system audit emitted by
 // DestinationRegistry SHALL stamp `aggregateId = source.identifier`
@@ -12,9 +5,6 @@
 // `data.id`. This makes the destination-registry audit stream a
 // per-install hash-chained system aggregate, while preserving "all
 // audits about destination X" queries via `entry_type` + `data.id`.
-// Verifies: EVS-DEV-destination-drain/H
-// the audits in the one per-install system
-//   aggregate are told apart by event type: each kind carries its own.
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -80,6 +70,7 @@ void main() {
 
     // destination_registered audit stamps aggregateId = source.identifier;
     // the destination identity moves into data.id.
+    // Verifies: EVS-DEV-destination-drain/H
     test('destination_registered audit uses source.identifier as '
         'aggregateId; destination identity in data.id', () async {
       final dest = FakeDestination(id: 'primary', allowHardDelete: false);
@@ -107,6 +98,7 @@ void main() {
 
     // destination_start_date_set audit stamps aggregateId =
     // source.identifier; the destination identity stays in data.id.
+    // Verifies: EVS-DEV-destination-drain/H
     test('destination_start_date_set audit uses source.identifier '
         'as aggregateId', () async {
       await ds.destinations.addDestination(
@@ -129,6 +121,7 @@ void main() {
 
     // destination_end_date_set audit stamps aggregateId =
     // source.identifier; the destination identity stays in data.id.
+    // Verifies: EVS-DEV-destination-drain/H
     test('destination_end_date_set audit uses source.identifier '
         'as aggregateId', () async {
       await ds.destinations.addDestination(
@@ -156,6 +149,7 @@ void main() {
 
     // deactivateDestination appends the end-date audit, under
     // aggregateId = source.identifier and the end-date event type.
+    // Verifies: EVS-DEV-destination-drain/H
     test('deactivateDestination audit uses source.identifier as '
         'aggregateId', () async {
       await ds.destinations.addDestination(
@@ -176,6 +170,7 @@ void main() {
 
     // destination_deleted audit stamps aggregateId = source.identifier;
     // the destination identity stays in data.id.
+    // Verifies: EVS-DEV-destination-drain/H
     test('destination_deleted audit uses source.identifier as '
         'aggregateId', () async {
       await ds.destinations.addDestination(
@@ -194,6 +189,7 @@ void main() {
 
     // destination_wedge_recovered audit stamps aggregateId =
     // source.identifier; the destination identity stays in data.id.
+    // Verifies: EVS-DEV-destination-drain/H
     test('destination_wedge_recovered audit uses source.identifier '
         'as aggregateId', () async {
       final dest = FakeDestination(id: 'wedged');

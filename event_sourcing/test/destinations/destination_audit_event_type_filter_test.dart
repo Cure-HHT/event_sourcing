@@ -1,4 +1,3 @@
-// Verifies: EVS-DEV-destination-drain/H
 // a declarative filter tells destination
 //   audits apart by event type: a filter that admits reserved system events
 //   and allow-lists one destination-audit event type admits that kind of
@@ -108,6 +107,7 @@ void main() {
     for (final kind in _eventTypeOf.entries) {
       test('a filter on ${kind.value} admits the ${kind.key} audit and '
           'rejects every other kind of destination audit', () async {
+        // Verifies: EVS-DEV-destination-drain/H
         final audits = await oneAuditOfEachKind();
         final filter = SubscriptionFilter(
           entryTypes: const <String>{},

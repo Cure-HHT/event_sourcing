@@ -1,7 +1,3 @@
-// Verifies: EVS-PRD-destinations/B
-// exercises SubscriptionFilter semantics:
-// allow-list matching by entry_type and event_type (null vs empty distinction),
-// predicate escape-hatch, AND composition, and default match-all behavior.
 import 'package:event_sourcing/src/destinations/subscription_filter.dart';
 import 'package:event_sourcing/src/lifecycle/lib_version.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
@@ -34,6 +30,7 @@ StoredEvent _mkEvent({
 );
 
 void main() {
+  // Verifies: EVS-PRD-destinations/B
   group('SubscriptionFilter', () {
     test('null lists match everything', () {
       const f = SubscriptionFilter();

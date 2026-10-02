@@ -1,10 +1,9 @@
-// Verifies: EVS-PRD-reaction-scope/B
-
 import 'package:flutter_test/flutter_test.dart';
 import 'package:reaction/reaction.dart';
 
 void main() {
   group('ConnectionStatus', () {
+    // Verifies: EVS-PRD-reaction-scope/B
     test('has three sealed variants', () {
       const ConnectionStatus a = Connected();
       const ConnectionStatus b = Reconnecting();
@@ -22,6 +21,7 @@ void main() {
       expect(const Connected(), isNot(equals(const Reconnecting())));
     });
 
+    // Verifies: EVS-PRD-reaction-scope/B
     test('exhaustive switch compiles for all three', () {
       String label(ConnectionStatus s) => switch (s) {
         Connected() => 'connected',

@@ -1,8 +1,4 @@
 // test/walkthroughs/walkthrough_06_identity_decoupling_test.dart
-// Verifies: EVS-PRD-event-log/A+B
-// Verifies: EVS-PRD-action-dispatch/A+C
-//
-// initiator userId AND role distinctly so audit can correlate by either.
 
 import 'package:action_permissions_demo/shared/wire_types.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -22,6 +18,7 @@ void main() {
   });
 
   group('Walkthrough 6: Identity decouples from role', () {
+    // Verifies: EVS-PRD-action-dispatch/A+C
     test(
       'two GreenTeam users editing notes -> two events, same role, distinct userIds',
       () async {

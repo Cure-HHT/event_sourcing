@@ -1,12 +1,4 @@
 // reaction/test/e2e/authz_test.dart
-// Verifies: EVS-PRD-cross-process-event-transport/E
-// (per-sub authz)
-// + mid-session permission-change handling (force-logout).
-// Verifies: EVS-DEV-authz-watcher/A
-// end-to-end: a role_unassigned for a connected user closes that user's WS
-//   with close code 4003 and reason permissions_changed, which the client
-//   observes on its socket and surfaces as an expired auth session.
-//
 // Active scenarios:
 //   1) view-level deny at subscribe time;
 //   2) role_unassigned mid-subscription closes the WS with 4003
@@ -62,6 +54,7 @@ void _expectPermissionsChangedClose(List<WebSocketChannel> channels) {
 void main() {
   // --- Subscribe-time authorization ---
 
+  // Verifies: EVS-PRD-cross-process-event-transport/E
   test(
     'subscribe to view without view-level perm gets subscription_denied',
     () async {
@@ -121,6 +114,10 @@ void main() {
   // RemoteAuthSession.handleAuthRejected, plus stale_data envelope
   // handling on the client.
 
+  // Verifies: EVS-DEV-authz-watcher/A
+  // end-to-end: a role_unassigned for a connected user closes that user's WS
+  //   with close code 4003 and reason permissions_changed, which the client
+  //   observes on its socket and surfaces as an expired auth session.
   test('role_unassigned mid-subscription closes WS with 4003', () async {
     final h = await ReactionRemoteTestHarness.open();
     addTearDown(h.close);

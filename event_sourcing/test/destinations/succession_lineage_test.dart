@@ -1,12 +1,3 @@
-// Verifies: EVS-DEV-sender-succession/G
-// the library offers a read of the succession lineage of a sender database
-//   identity, derived solely from the succession events the log holds: the
-//   predecessors it succeeded, transitively, and its successor, if any.
-// Verifies: EVS-DEV-resume-event/H
-// the succession event is declared as a reserved destination audit entry
-//   type, system.destination_sender_succeeded, with an event type of its
-//   own — a crafted event of that shape is admitted and read back as a
-//   succession event.
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing/src/ingest/sender_succession.dart';
 import 'package:flutter_test/flutter_test.dart';

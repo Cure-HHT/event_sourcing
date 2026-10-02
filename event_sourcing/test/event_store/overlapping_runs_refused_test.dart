@@ -1,9 +1,3 @@
-// Verifies: EVS-PRD-subscription/E
-// a backend that starts a second run of a
-//   transaction body while the first is still in progress breaks the
-//   sequential-runs contract of StorageBackend.transaction; the event store
-//   refuses it, so the transaction commits nothing and nothing is published.
-
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart' show newDatabaseFactoryMemory;
@@ -26,6 +20,7 @@ class _OverlappingSembastBackend extends SembastBackend {
 }
 
 void main() {
+  // Verifies: EVS-PRD-subscription/E
   test('overlapping runs of one body are refused; nothing commits or '
       'is published', () async {
     final db = await newDatabaseFactoryMemory().openDatabase(

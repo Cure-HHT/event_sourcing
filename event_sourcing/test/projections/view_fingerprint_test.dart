@@ -1,4 +1,3 @@
-// Verifies: EVS-DEV-view-convergence/A (fingerprint term)
 import 'package:event_sourcing/src/entry_type_definition.dart';
 import 'package:event_sourcing/src/entry_type_registry.dart';
 import 'package:event_sourcing/src/projections/primitives/row_data.dart';

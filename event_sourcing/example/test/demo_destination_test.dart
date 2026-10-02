@@ -1,7 +1,3 @@
-// Verifies: EVS-PRD-destinations/A+E
-// Verifies: EVS-PRD-destinations/B
-// Verifies: EVS-PRD-destinations/E
-// Verifies: EVS-PRD-destinations/E
 import 'dart:convert';
 
 import 'package:event_sourcing/event_sourcing.dart';

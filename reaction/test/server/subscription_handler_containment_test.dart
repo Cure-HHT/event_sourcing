@@ -1,17 +1,3 @@
-// Verifies: EVS-PRD-cross-process-event-transport/E
-// row-level
-//   narrowing of a subscription when a principal's scope assignment is
-//   an ANCESTOR-class BoundScope of the view's scope class. These tests
-//   exercise the injected `DescendantExpansion` callback path: an
-//   assignment of `BoundScope('site', 'site-A')` on a 'participant'-
-//   scoped view expands (via the substrate `ScopeDescendantExpander`,
-//   stubbed here) into the descendant aggregate IDs the principal may
-//   see, rather than conservatively under-granting.
-// Verifies: EVS-DEV-converging-view-reads/H
-// a converging containment view read while computing the scoped
-//   aggregate set refuses the subscription with an ErrorMsg naming the
-//   view rather than subscribing with a narrowed set or crashing.
-
 import 'dart:async';
 import 'dart:convert';
 
@@ -210,6 +196,7 @@ void main() {
     projectionLookup: (_) => _StubDescriptor(),
   );
 
+  // Verifies: EVS-PRD-cross-process-event-transport/E
   test(
     'site BoundScope on participant view expands to its participants',
     () async {

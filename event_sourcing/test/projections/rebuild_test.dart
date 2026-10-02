@@ -1,21 +1,3 @@
-// Verifies: EVS-DEV-view-convergence/U
-// rebuildView marks the fingerprint's current unmarked copy for deletion,
-//   resolved from stored state rather than a cached copy id, and creates
-//   an empty copy of the same fingerprint, in one transaction: the copy id
-//   changes and the old copy's rows are gone once catch-up has run. It
-//   does not throw when another instance already rebuilt or marked the
-//   copy.
-// Verifies: EVS-DEV-view-convergence/T
-// finding no unmarked copy of the fingerprint stored (another instance
-//   marked it without replacing it), rebuildView creates one.
-// Verifies: EVS-DEV-view-convergence/V
-// rebuildView returns once the new copy is current for the instance, and
-//   throws ViewConvergenceTimeout, naming the view and the copy's
-//   progress, once the caller-supplied deadline passes first.
-// Verifies: EVS-PRD-materializer/B
-// the rows a rebuild's replacement copy converges to equal the rows the
-//   log already derived.
-
 @Tags(['timing'])
 library;
 
@@ -133,6 +115,8 @@ void main() {
       await testBackendOf(store).close();
     });
 
+    // Verifies: EVS-DEV-view-convergence/U+V
+    // Verifies: EVS-PRD-materializer/B
     test('rebuild replaces the copy: rows match, copy id changed, old copy '
         'gone after catch-up', () async {
       final store = await _openStore();
@@ -161,6 +145,7 @@ void main() {
       await testBackendOf(store).close();
     });
 
+    // Verifies: EVS-DEV-view-convergence/U
     test('a garbage row not derivable from the log does not survive the '
         'replacement copy', () async {
       final store = await _openStore();
@@ -187,6 +172,7 @@ void main() {
       await testBackendOf(store).close();
     });
 
+    // Verifies: EVS-DEV-view-convergence/V
     test('a deadline that passes before the copy converges throws '
         'ViewConvergenceTimeout naming the view and its progress', () async {
       // A registered major of 1 with a stray event stamped at major 2:
@@ -292,6 +278,7 @@ void main() {
       await testBackendOf(store).close();
     });
 
+    // Verifies: EVS-DEV-view-convergence/U
     test('rebuildView resolves the copy by fingerprint, not the stale '
         'in-memory copy id: it does not throw when another instance already '
         'rebuilt the view', () async {
@@ -336,6 +323,7 @@ void main() {
       await testBackendOf(store).close();
     });
 
+    // Verifies: EVS-DEV-view-convergence/T
     test('rebuildView creates a replacement when another instance already '
         'marked the copy without creating one', () async {
       final store = await _openStore();

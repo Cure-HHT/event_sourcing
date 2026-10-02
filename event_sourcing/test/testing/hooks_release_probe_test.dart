@@ -1,7 +1,3 @@
-// Verifies: EVS-DEV-destination-drain-lock/F
-// Verifies: EVS-DEV-storage-capability/K
-// Verifies: EVS-PRD-storage-barrier/J
-//
 // The test-only open refuses without assertions: the probe calls
 // `EventStore.openForTest` over a fresh in-memory database, which without
 // assertions throws `StateError` before touching it (the database holds no
@@ -96,6 +92,7 @@ void main() {
     return result;
   }
 
+  // Verifies: EVS-DEV-destination-drain-lock/F, EVS-DEV-storage-capability/K, EVS-PRD-storage-barrier/J
   test(
     'without assertions (dart run --no-enable-asserts) no seam fires',
     () async {
@@ -112,6 +109,7 @@ void main() {
     },
   );
 
+  // Verifies: EVS-DEV-destination-drain-lock/F, EVS-DEV-storage-capability/K, EVS-PRD-storage-barrier/J
   test('a compiled executable ignores installed seams', () async {
     final temp = await Directory.systemTemp.createTemp('hooks_probe_');
     try {

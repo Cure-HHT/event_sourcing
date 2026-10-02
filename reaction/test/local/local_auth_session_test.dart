@@ -1,15 +1,10 @@
-// Verifies: EVS-PRD-auth-session/A+B+G
-// LocalAuthSession honors
-// the AuthSession interface (A: current/stream/setCredential/
-// principal), the AuthStatus sealed-type variants exposed via state
-// transitions (B), and the rule that the active Principal flows
-// through to consumers via `session.principal` (G).
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:reaction/src/interfaces/auth_session.dart';
 import 'package:reaction/src/local/local_auth_session.dart';
 
 void main() {
+  // Verifies: EVS-PRD-auth-session/A
   group('LocalAuthSession', () {
     late LocalAuthSession session;
 
@@ -45,6 +40,7 @@ void main() {
       expect(session.principal, isNull);
     });
 
+    // Verifies: EVS-PRD-auth-session/B
     test('stream emits on every status change', () async {
       final events = <AuthStatus>[];
       final sub = session.stream.listen(events.add);

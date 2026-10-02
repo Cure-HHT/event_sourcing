@@ -1,13 +1,3 @@
-// Verifies: EVS-PRD-storage-barrier/A
-// Verifies: EVS-PRD-storage-barrier/G
-// Verifies: EVS-PRD-storage-barrier/H
-// Verifies: EVS-PRD-storage-barrier/I
-// Verifies: EVS-DEV-storage-capability/A
-// Verifies: EVS-DEV-storage-capability/B
-// Verifies: EVS-DEV-storage-capability/E
-// Verifies: EVS-DEV-storage-capability/J
-// Verifies: EVS-DEV-storage-capability/L
-//
 // Storage descriptions on the native runtime: the library opens the
 // storage a Sembast description names with a factory it selects, closes it
 // when the event store closes and when the open fails after it opened it,
@@ -68,6 +58,7 @@ Future<List<StoredEvent>> _notes(EventStore store) =>
 
 void main() {
   group('a Sembast memory description', () {
+    // Verifies: EVS-PRD-storage-barrier/A+H, EVS-DEV-storage-capability/A+B+L
     test('opens and appends; close releases it, so the delete succeeds and '
         'a reopen is empty', () async {
       final storage = _uniqueMemory();
@@ -86,6 +77,7 @@ void main() {
       expect(await _notes(reopened), isEmpty);
     });
 
+    // Verifies: EVS-DEV-storage-capability/L
     test('while a store holds it open, the delete refuses with StateError '
         'and the data survives', () async {
       final storage = _uniqueMemory();
@@ -103,6 +95,7 @@ void main() {
       expect(await _notes(store), hasLength(2));
     });
 
+    // Verifies: EVS-PRD-storage-barrier/I
     test('a boot refusal closes the storage it opened before the error '
         'reaches the caller', () async {
       final storage = _uniqueMemory();
@@ -124,6 +117,7 @@ void main() {
       await deleteSembastDatabase(storage);
     });
 
+    // Verifies: EVS-PRD-storage-barrier/I
     test('a failure inside bootstrapEventStore after the open closes the '
         'storage before the error reaches the caller', () async {
       final storage = _uniqueMemory();
@@ -142,6 +136,7 @@ void main() {
     });
   });
 
+  // Verifies: EVS-PRD-storage-barrier/A, EVS-DEV-storage-capability/A+B+L
   test('a Sembast file description writes the database file at its path '
       'with the native file factory', () async {
     final dir = await Directory.systemTemp.createTemp('storage_description_');
@@ -160,6 +155,7 @@ void main() {
     expect(File(path).existsSync(), isFalse);
   });
 
+  // Verifies: EVS-PRD-storage-barrier/G, EVS-DEV-storage-capability/J
   test('an application-supplied backend stays open after the store over it '
       'closes', () async {
     final db = await newDatabaseFactoryMemory().openDatabase('supplied.db');
@@ -197,6 +193,7 @@ void main() {
       await deleteSembastDatabase(storage);
     });
 
+    // Verifies: EVS-DEV-storage-capability/E
     test('is a separate read-only object: no writing type, no writing '
         'member at run time', () async {
       final event = (await _appendNote(bundle.eventStore))!;

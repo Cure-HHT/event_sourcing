@@ -1,9 +1,3 @@
-// Verifies: EVS-PRD-cross-process-event-transport/H
-// RemoteScope.reconnect()
-//   and RemoteConnection.reconnect() manually trigger the same re-auth +
-//   re-issue path as the auto-reconnect loop, re-authenticating with the
-//   CURRENT credential and re-issuing every active subscribe.
-
 import 'dart:async';
 import 'dart:convert';
 
@@ -63,6 +57,7 @@ void main() {
       }
     });
 
+    // Verifies: EVS-PRD-cross-process-event-transport/H
     test(
       're-sends AuthMessage and re-issues active subscribe on reconnect',
       () async {
@@ -266,6 +261,7 @@ void main() {
       },
     );
 
+    // Verifies: EVS-PRD-cross-process-event-transport/H
     test('re-auths with the CURRENT credential after setCredential', () async {
       final factory = FakeWsFactory();
       final conn = RemoteConnection(
@@ -326,6 +322,7 @@ void main() {
   });
 
   group('RemoteScope.reconnect()', () {
+    // Verifies: EVS-PRD-cross-process-event-transport/H
     test('delegates to connection; re-auth + re-issue on active sub', () async {
       final factory = FakeWsFactory();
       final scope = RemoteScope(

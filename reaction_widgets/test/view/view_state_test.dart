@@ -1,5 +1,3 @@
-// Verifies: EVS-PRD-reaction-widget-contract/I
-
 import 'package:flutter_test/flutter_test.dart';
 import 'package:reaction/reaction.dart';
 import 'package:reaction_widgets/reaction_widgets.dart';
@@ -10,6 +8,7 @@ const _denial = SubscriptionDenied(
 );
 
 void main() {
+  // Verifies: EVS-PRD-reaction-widget-contract/I
   group('ViewState', () {
     test('six sealed variants instantiate at the declared type', () {
       const ViewState<int> a = Loading<int>();

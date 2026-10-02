@@ -7,17 +7,6 @@
 // watcher/G; on an expanding one (permission_granted) it over-notifies,
 // per EVS-DEV-converging-view-reads/H. Neither lets the unawaited
 // fan-out's error escape uncaught.
-//
-// Verifies: EVS-DEV-authz-watcher/G
-// on permission_revoked, a
-//   connected user whose role cannot be determined (a
-//   ViewConvergingRefusal, or any other error) is force-closed along
-//   with every confirmed holder of the revoked role, without aborting
-//   the fan-out for later users or leaking an uncaught async error.
-// Verifies: EVS-DEV-converging-view-reads/H
-// on permission_granted, a
-//   connected user whose role cannot be determined is over-notified
-//   with stale_data rather than skipped.
 
 import 'dart:async';
 

@@ -1,12 +1,4 @@
 // test/permissions/event_seed_applier_test.dart
-// Verifies: EVS-PRD-permissions-as-events/A
-// the applier emits
-//   permission_granted events into the event log for each seed grant, so
-//   all grants are recorded as first-class events.
-// Verifies: EVS-PRD-permissions-as-events/C
-// idempotent re-runs emit no
-//   new events, confirming that the event log alone suffices to reconstruct
-//   permission state across restarts; drift is reported, not auto-revoked.
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -65,6 +57,7 @@ void main() {
       },
     );
 
+    // Verifies: EVS-PRD-permissions-as-events/A
     test(
       'reports drift (grant in view not in seed) without revoking',
       () async {

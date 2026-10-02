@@ -1,14 +1,3 @@
-// Verifies: EVS-DEV-storage-capability/B
-// in the browser a Sembast browser description is opened with the browser
-//   (IndexedDB) factory the library selects: another tab's independent
-//   IndexedDB factory reads what the event store wrote.
-// Verifies: EVS-DEV-storage-capability/L
-// the delete of a browser database refuses while an event store of this
-//   isolate holds it open, and deletes it once the store closed.
-// Verifies: EVS-PRD-storage-barrier/H
-// closing the event store closes the IndexedDB database the library opened,
-//   so its deletion is not blocked.
-
 @TestOn('browser')
 library;
 
@@ -50,6 +39,16 @@ Future<int> _notesSeenByAnotherTab(String name) async {
 }
 
 void main() {
+  // Verifies: EVS-DEV-storage-capability/B
+  // in the browser a Sembast browser description is opened with the browser
+  //   (IndexedDB) factory the library selects: another tab's independent
+  //   IndexedDB factory reads what the event store wrote.
+  // Verifies: EVS-DEV-storage-capability/L
+  // the delete of a browser database refuses while an event store of this
+  //   isolate holds it open, and deletes it once the store closed.
+  // Verifies: EVS-PRD-storage-barrier/H
+  // closing the event store closes the IndexedDB database the library opened,
+  //   so its deletion is not blocked.
   test('a browser description opens an IndexedDB database the library '
       'closes and deletes', () async {
     final name = 'storage-description-${DateTime.now().microsecondsSinceEpoch}';

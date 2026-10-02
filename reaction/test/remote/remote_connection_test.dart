@@ -1,25 +1,3 @@
-// Verifies: EVS-PRD-cross-process-event-transport/A
-// Update<T> envelope
-//   round-trip through openSubscription.
-// Verifies: EVS-PRD-cross-process-event-transport/B
-// sequence +
-//   subscriptionId carried on every routed envelope.
-// Verifies: EVS-PRD-cross-process-event-transport/D
-// multiplex multiple
-//   subscriptions over a single WebSocket.
-// Verifies: EVS-PRD-cross-process-event-transport/F
-// bearer credential
-//   injection on HTTP POST + WS auth message.
-// Verifies: EVS-PRD-cross-process-event-transport/K
-// a view_converging
-//   error frame naming a subscriptionId surfaces a typed
-//   ViewConvergingRefusal on that subscription's stream.
-// Verifies: EVS-PRD-cross-process-event-transport/L
-// a subscription
-//   refused with view_converging recovers from its caller's single
-//   openSubscription() call, with no bound on the number of retries;
-//   cancelling the subscription stops the retries.
-
 import 'dart:async';
 import 'dart:convert';
 
@@ -207,6 +185,7 @@ void main() {
     expect(conn.wsUrl.path, '/subscriptions');
   });
 
+  // Verifies: EVS-PRD-cross-process-event-transport/A+B
   test(
     'openSubscription returns a stream that receives routed envelopes',
     () async {

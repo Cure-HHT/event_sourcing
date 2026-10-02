@@ -1,11 +1,3 @@
-// Verifies: EVS-PRD-destinations/V
-// the refusal of a second delivery cycle is keyed by the database: two
-//   Sembast databases in one isolate each run a cycle and deliver, closing
-//   one leaves the other delivering, and a cycle in another isolate over
-//   another database is unaffected.
-// Verifies: EVS-DEV-destination-drain-lock/A
-// on Sembast the drain lock's scope is one open database handle in one
-//   isolate.
 import 'dart:isolate';
 
 import 'package:event_sourcing/event_sourcing.dart';
@@ -67,6 +59,10 @@ Future<void> _otherIsolate(SendPort out) async {
 }
 
 void main() {
+  // Verifies: EVS-PRD-destinations/V, EVS-DEV-destination-drain-lock/A
+  // the refusal of a second delivery cycle is keyed by the database: on
+  //   Sembast the drain lock's scope is one open database handle in one
+  //   isolate.
   test('two databases in one isolate each run a cycle', () async {
     final first = await _pane('one-drainer-a.db');
     final second = await _pane('one-drainer-b.db');
@@ -97,6 +93,7 @@ void main() {
     expect(b.state, SyncCycleState.running);
   });
 
+  // Verifies: EVS-PRD-destinations/V, EVS-DEV-destination-drain-lock/A
   test('a cycle in another isolate over another database', () async {
     final pane = await _pane('this-isolate.db');
     final cycle = await SyncCycle.start(

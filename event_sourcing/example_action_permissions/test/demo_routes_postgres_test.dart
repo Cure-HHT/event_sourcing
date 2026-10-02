@@ -1,8 +1,3 @@
-// Verifies: EVS-DEV-postgres-backend/D — demo routes (session/start,
-//   dispatch, healthz, inspect) run against PostgresBackend, satisfying
-//   the conformance harness alongside the sembast flavor in
-//   demo_routes_test.dart.
-//
 // The operator routes under /demo/delivery/ (delivery_routes_test.dart) run
 // here against Postgres too: status, halt, cancellation, recovery, the 409
 // refusals and the 403 with nothing written.

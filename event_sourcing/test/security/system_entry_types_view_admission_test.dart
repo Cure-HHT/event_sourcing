@@ -3,9 +3,6 @@
 // projection that does not opt in sees none of them; one that opts in sees
 // them. Nothing in the substrate makes an event unviewable — an audit view is
 // a legitimate consumer of exactly these events.
-//
-// Verifies: EVS-PRD-event-log/F
-// Verifies: EVS-PRD-event-log/A
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
@@ -52,6 +49,9 @@ Future<List<Map<String, dynamic>>> _bootAndRead({
 
 void main() {
   group('library-generated events reach a view only when it opts in', () {
+    // Verifies: EVS-PRD-event-log/F
+    // the exclude half: a filter that does not opt in sees no
+    //   library-generated event.
     test(
       'a projection that does not opt in materializes none of them',
       () async {

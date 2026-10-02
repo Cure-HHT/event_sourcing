@@ -1,8 +1,3 @@
-// Verifies: EVS-PRD-action-submitter/A
-// the library defines an
-// `ActionSubmitter` interface whose `submit(ActionSubmission)` returns
-// a `Future<DispatchResult<Object?>>`.
-//
 // Structural interface-shape assertion. The test body is intentionally
 // tautological at runtime: the assertion is that this file COMPILES,
 // proving the library exposes `ActionSubmitter` through the public
@@ -33,6 +28,7 @@ T _asContracted<T>(T value) => value;
 
 void main() {
   group('ActionSubmitter interface shape', () {
+    // Verifies: EVS-PRD-action-submitter/A
     test('reachable through the public barrel and has '
         'submit(ActionSubmission) -> Future<DispatchResult<Object?>>', () {
       // Compile-time proof: the tear-off type-checks against the

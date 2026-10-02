@@ -1,5 +1,4 @@
 // test/permissions/current_view_rows_test.dart
-// Verifies: EVS-DEV-converging-view-reads/H
 // currentViewRows is the one adapter feeding ContainmentResolver and
 //   ScopeDescendantExpander a converging-aware read: it throws
 //   ViewConvergingRefusal naming the view while the view's copy converges
@@ -124,6 +123,7 @@ final _registry = ScopeClassRegistry(
 );
 
 void main() {
+  // Verifies: EVS-DEV-converging-view-reads/H
   group('currentViewRows: a converging containment view refuses transiently '
       'for every walker built on the adapter', () {
     test('ContainmentResolver.resolve throws ViewConvergingRefusal naming '

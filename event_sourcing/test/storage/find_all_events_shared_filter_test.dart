@@ -1,10 +1,5 @@
-// Verifies: EVS-DEV-find-all-events-extended-filters/D
-// the reference
-//   SembastBackend SHALL realize the composed filter via a SINGLE shared
-//   helper (`_composeFindAllEventsFilter`) used by BOTH the out-of-transaction
-//   (`findAllEvents`) and in-transaction (`findAllEventsInTxn`) code paths.
-//
-// This assertion is structural — it constrains HOW the backend is built, not
+// That SembastBackend composes the findAllEvents filter through one shared
+// helper is structural — it constrains HOW the backend is built, not
 // observable output — so it cannot be verified by the backend-agnostic
 // conformance harness (which only sees behavior). The harness's behavioral
 // A/B/C tests confirm both paths filter identically; this test confirms they
@@ -31,6 +26,7 @@ void main() {
   const decl = 'Filter? _composeFindAllEventsFilter(';
   const call = '_composeFindAllEventsFilter(';
 
+  // Verifies: EVS-DEV-find-all-events-extended-filters/D
   test('SembastBackend declares exactly one _composeFindAllEventsFilter '
       'helper', () {
     final declCount = decl.allMatches(source).length;
@@ -43,6 +39,7 @@ void main() {
     );
   });
 
+  // Verifies: EVS-DEV-find-all-events-extended-filters/D
   test('both findAllEvents and findAllEventsInTxn delegate to the shared '
       'helper', () {
     final declIndex = source.indexOf(decl);

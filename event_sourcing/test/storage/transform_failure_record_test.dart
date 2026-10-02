@@ -1,11 +1,10 @@
-// Verifies: EVS-DEV-destination-drain/Y
-// the transform failure record's persisted form round-trips its failure
-//   times and the batch's sequence range, and refuses a malformed record.
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   group('TransformFailureRecord', () {
+    // Verifies: EVS-DEV-destination-retry-budget/B
+    // the transform failure record keeps the time of each recorded failure.
     test('round-trips every field', () {
       final record = TransformFailureRecord(
         failureTimes: [

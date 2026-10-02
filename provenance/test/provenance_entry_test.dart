@@ -1,11 +1,3 @@
-// Verifies: EVS-PRD-provenance/A (ProvenanceEntry value type shape,
-//   required and optional fields, value equality, identity shapes)
-// Verifies: EVS-PRD-provenance/C
-// (toJson/fromJson round-trip without
-//   loss, timezone-offset validation, ingest and origin fields)
-// Verifies: EVS-DEV-event-record/C
-// (received_at in the shared timestamp form)
-
 import 'package:provenance/provenance.dart';
 import 'package:test/test.dart';
 
@@ -13,6 +5,7 @@ import 'timestamp_cases.dart';
 
 void main() {
   group('ProvenanceEntry', () {
+    // Verifies: EVS-PRD-provenance/A
     test('construct with all required fields; getters round-trip', () {
       final receivedAt = DateTime.utc(2026, 4, 21, 10, 30, 0);
       final entry = ProvenanceEntry(
@@ -29,6 +22,7 @@ void main() {
       expect(entry.transformVersion, isNull);
     });
 
+    // Verifies: EVS-PRD-provenance/A
     test('construct with transformVersion; getter returns value', () {
       final entry = ProvenanceEntry(
         hop: 'control-server',
@@ -41,6 +35,7 @@ void main() {
       expect(entry.transformVersion, 'fhir-r4-v1');
     });
 
+    // Verifies: EVS-PRD-provenance/C
     test('toJson emits snake_case keys including null transform_version', () {
       final entry = ProvenanceEntry(
         hop: 'mobile-device',
@@ -58,6 +53,7 @@ void main() {
       });
     });
 
+    // Verifies: EVS-PRD-provenance/C
     test('toJson emits non-null transform_version when set', () {
       final entry = ProvenanceEntry(
         hop: 'control-server',
@@ -70,6 +66,7 @@ void main() {
       expect(entry.toJson()['transform_version'], 'fhir-r4-v1');
     });
 
+    // Verifies: EVS-PRD-provenance/C
     test('toJson/fromJson round-trip preserves all fields', () {
       final original = ProvenanceEntry(
         hop: 'relay-server',
@@ -84,6 +81,7 @@ void main() {
       expect(roundTripped, equals(original));
     });
 
+    // Verifies: EVS-PRD-provenance/C
     test('round-trip preserves null transform_version', () {
       final original = ProvenanceEntry(
         hop: 'mobile-device',
@@ -98,6 +96,7 @@ void main() {
       expect(roundTripped, equals(original));
     });
 
+    // Verifies: EVS-PRD-provenance/C
     test('received_at serializes with timezone offset (Z for UTC)', () {
       final entry = ProvenanceEntry(
         hop: 'mobile-device',
@@ -228,6 +227,7 @@ void main() {
       });
     });
 
+    // Verifies: EVS-PRD-provenance/A
     group('identity shapes', () {
       test('accepts a mobile-device hop with a device UUID identifier', () {
         final entry = ProvenanceEntry(
@@ -265,6 +265,7 @@ void main() {
       });
     });
 
+    // Verifies: EVS-PRD-provenance/A
     group('value equality', () {
       test('equal fields produce equal entries and equal hashCodes', () {
         final a = ProvenanceEntry(
@@ -336,6 +337,7 @@ void main() {
       expect(entry.batchContext, isNull);
     });
 
+    // Verifies: EVS-PRD-provenance/C
     test('non-null ingest fields round-trip through JSON', () {
       final entry = ProvenanceEntry(
         hop: 'control-server',
@@ -408,6 +410,7 @@ void main() {
       expect(entry.originSequenceNumber, isNull);
     });
 
+    // Verifies: EVS-PRD-provenance/C
     test('non-null originSequenceNumber round-trips through JSON', () {
       final entry = ProvenanceEntry(
         hop: 'relay-server',

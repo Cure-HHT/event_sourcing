@@ -1,14 +1,3 @@
-// Verifies: EVS-PRD-cross-process-event-transport/H
-// auto-reconnect
-//   with exponential backoff on non-auth WS drops; re-issues every
-//   active subscribe on successful reconnect; transitions to Disconnected
-//   after maxAttempts; 4001/4003 carve-outs do NOT enter the cycle.
-// Verifies: EVS-PRD-cross-process-event-transport/I
-// ConnectionStatus
-//   transitions are driven by observable WS lifecycle events (initial
-//   open success, drop, reconnect success, retry-exhausted), not by
-//   synthesized pings or polling.
-
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -18,7 +7,9 @@ import 'package:reaction/src/remote/remote_connection.dart';
 import 'test_support/fake_ws.dart';
 
 void main() {
+  // Verifies: EVS-PRD-cross-process-event-transport/H
   group('RemoteConnection auto-reconnect', () {
+    // Verifies: EVS-PRD-cross-process-event-transport/I
     test('on non-auth WS close, transitions Reconnecting then Connected '
         'on success', () async {
       final transitions = <ConnectionStatus>[];
@@ -68,6 +59,7 @@ void main() {
       await conn.dispose();
     });
 
+    // Verifies: EVS-PRD-cross-process-event-transport/I
     test('on retry-exhausted, transitions to Disconnected', () async {
       final transitions = <ConnectionStatus>[];
       // Allow the FIRST connect to succeed (so we have a subscription
@@ -108,6 +100,7 @@ void main() {
       await conn.dispose();
     });
 
+    // Verifies: EVS-PRD-cross-process-event-transport/I
     test('4001 auth_rejected does NOT enter Reconnecting cycle', () async {
       final transitions = <ConnectionStatus>[];
       final factory = FakeWsFactory();
@@ -148,6 +141,7 @@ void main() {
       await conn.dispose();
     });
 
+    // Verifies: EVS-PRD-cross-process-event-transport/I
     test(
       '4003 permissions_changed does NOT enter Reconnecting cycle',
       () async {

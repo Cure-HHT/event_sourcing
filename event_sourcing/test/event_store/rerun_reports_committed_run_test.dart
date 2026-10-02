@@ -1,11 +1,3 @@
-// Verifies: EVS-PRD-event-log/G
-// when the storage layer runs a write more
-//   than once before one run commits, the dispatcher's result and its
-//   idempotency record, and the receiver's answer to a delivery and the
-//   accepted-delivery audit it records, reflect only the committed run: no
-//   event id, decision or outcome of the rolled-back run is returned or
-//   recorded.
-//
 // RerunningSembastBackend runs every transaction body twice on the VM,
 // rolling the first run back and committing the second, as Postgres does
 // after a serialization conflict and sembast_web does after another tab
@@ -111,6 +103,7 @@ class _DenyFirstThenAllowPolicy extends AuthorizationPolicy {
 }
 
 void main() {
+  // Verifies: EVS-PRD-event-log/G
   group('ActionDispatcher under a re-run dispatch transaction', () {
     test("returns and records only the committed run's event ids", () async {
       final (store, backend) = await _openRerunningStore();
@@ -202,6 +195,7 @@ void main() {
     );
   });
 
+  // Verifies: EVS-PRD-event-log/G
   group('a delivery under a re-run transaction', () {
     test('is answered and audited once, as the committed run', () async {
       final origDb = await newDatabaseFactoryMemory().openDatabase(

@@ -1,14 +1,3 @@
-// Verifies: EVS-PRD-reaction-widget-contract/I
-// every error of a ViewBuilder's
-//   subscription reaches its builder as a ViewState variant, none left
-//   uncaught: a ViewConvergingRefusal as Converging naming the view, which
-//   returns to Loading and Ready as the recovered subscription's rows
-//   arrive; a SubscriptionDenied as Rejected; any other error as Errored.
-//   Rejected and Errored are terminal, whatever the connection does next.
-// Verifies: EVS-PRD-reaction-widget-contract/K
-// the semantics value token names
-//   the converging, rejected and errored states.
-
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -72,6 +61,7 @@ const _denial = SubscriptionDenied(
 );
 
 void main() {
+  // Verifies: EVS-PRD-reaction-widget-contract/I
   group('ViewBuilder subscription errors', () {
     // Verifies: EVS-PRD-reaction-widget-contract/M
     testWidgets('a denial surfaces Rejected carrying the typed denial, and '
@@ -215,6 +205,7 @@ void main() {
     });
   });
 
+  // Verifies: EVS-PRD-reaction-widget-contract/K
   group('semanticIdentifier tokens for error states', () {
     Future<String?> tokenAfter(
       WidgetTester tester,

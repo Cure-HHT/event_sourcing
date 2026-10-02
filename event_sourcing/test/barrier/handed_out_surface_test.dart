@@ -1,8 +1,3 @@
-// Verifies: EVS-DEV-storage-capability/C
-// Verifies: EVS-DEV-storage-capability/D
-// Verifies: EVS-DEV-storage-capability/F
-// Verifies: EVS-DEV-storage-capability/I
-//
 // The members accessible outside their declaring Dart library, on every
 // type whose instances the library hands to application code, are exactly
 // those of the committed list (handed_out_surface.txt), by name and
@@ -71,6 +66,7 @@ void main() {
   });
 
   group('the handed-out surface', () {
+    // Verifies: EVS-DEV-storage-capability/C+D
     test('equals the committed list, by name and signature', () {
       final actual = handedOutSurface(libraries);
       final differences = surfaceDifferences(
@@ -86,6 +82,7 @@ void main() {
       );
     });
 
+    // Verifies: EVS-DEV-storage-capability/F
     test('no transaction handle type yields an engine transaction, session '
         'or database through a member reachable outside its library', () {
       final handles = transactionHandleClasses(libraries);
@@ -101,6 +98,7 @@ void main() {
       ], isEmpty);
     });
 
+    // Verifies: EVS-DEV-storage-capability/I
     test('no public constructor in the security or Postgres storage code '
         'builds a store over storage the library opened', () {
       expect(

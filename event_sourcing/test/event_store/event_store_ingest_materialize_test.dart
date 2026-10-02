@@ -1,9 +1,3 @@
-// Verifies: EVS-PRD-ingest/E
-// the ingest path projects ingested events into
-//   materialized views identically to local-appended events. The projection
-//   interpreter on the ingest path is symmetric with the interpreter on the
-//   append path (same gates, same atomicity, same throw-rolls-back semantics).
-
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
@@ -75,6 +69,7 @@ Future<_Fixture> _openDatastore({
 // ---------------------------------------------------------------------------
 
 void main() {
+  // Verifies: EVS-PRD-ingest/E
   group('EventStore ingest path projection interpreter', () {
     //   projection interpreter per-event with the same gates as local-append.
     test('ingestEvent populates toy_view '

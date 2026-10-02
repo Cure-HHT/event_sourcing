@@ -1,16 +1,13 @@
-// Verifies: EVS-PRD-destinations/Q
-// this build wedges with exactly its five causes (a permanent failure,
-//   an exhausted retry budget, an operator halt, an acceptance carrying no
-//   receiver record and a transform that kept failing), each with its
-//   recorded string.
-// Verifies: EVS-DEV-destination-drain/I
-// the wedge record's persisted form
-//   round-trips every field and refuses a malformed record.
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   group('WedgeCause', () {
+    // Verifies: EVS-PRD-destinations/Q
+    // this build wedges with exactly its five causes (a permanent failure,
+    //   an exhausted retry budget, an operator halt, an acceptance carrying
+    //   no receiver record and a transform that kept failing), each with its
+    //   recorded string.
     test('has the five recorded causes', () {
       expect(
         <String, WedgeCause>{for (final c in WedgeCause.values) c.wire: c},
@@ -49,6 +46,10 @@ void main() {
   });
 
   group('WedgeRecord', () {
+    // Verifies: EVS-DEV-destination-drain/I
+    // the wedge record's persisted form names the item, the wedge event, the
+    //   cause and the halt purpose, and keeps the drain epoch and the
+    //   fingerprint beside the wedge.
     test('round-trips every field', () {
       const minimal = WedgeRecord(
         rowId: 'r',

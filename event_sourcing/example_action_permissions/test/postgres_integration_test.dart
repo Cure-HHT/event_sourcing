@@ -1,9 +1,3 @@
-// Verifies: EVS-DEV-postgres-backend/D
-// end-to-end PostgresBackend exercise
-//   via the action_permissions demo server. Action dispatch over HTTP
-//   writes an event into the `events` table and the role-permission
-//   matrix view rows into `view_rows` on a Postgres instance.
-//
 // Gated on PG_TEST_URL. Drops the demo schema and runs the demo's deployment
 // step in setUp, so each test runs against a deterministic empty database
 // opened as the declared runtime role.

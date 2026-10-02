@@ -1,11 +1,3 @@
-// Verifies: EVS-PRD-auth-session/A — RemoteAuthSession exposes current,
-//   stream, setCredential, principal.
-// Verifies: EVS-PRD-auth-session/B
-// AuthStatus sealed-type variants.
-// Verifies: EVS-PRD-auth-session/E
-// HTTP 401 from GET /me and
-//   WS close-frame 4001 / 4003 both transition to Expired.
-
 import 'dart:async';
 import 'dart:convert';
 
@@ -52,6 +44,7 @@ RemoteConnection connWithClient(http.Client client) => RemoteConnection(
 );
 
 void main() {
+  // Verifies: EVS-PRD-auth-session/A
   test('starts NotAuthenticated', () {
     final session = RemoteAuthSession(
       connection: connWithClient(_Client((_) => http.Response('', 200))),
@@ -59,6 +52,7 @@ void main() {
     expect(session.current, isA<NotAuthenticated>());
   });
 
+  // Verifies: EVS-PRD-auth-session/A+B
   test('setCredential(cred) on 200 transitions to Authenticated', () async {
     final session = RemoteAuthSession(
       connection: connWithClient(
@@ -88,6 +82,7 @@ void main() {
     expect(p.activeRole, 'install');
   });
 
+  // Verifies: EVS-PRD-auth-session/B+E
   test('setCredential(cred) on 401 transitions to Expired', () async {
     final session = RemoteAuthSession(
       connection: connWithClient(_Client((_) => http.Response('', 401))),
@@ -96,6 +91,7 @@ void main() {
     expect(session.current, isA<Expired>());
   });
 
+  // Verifies: EVS-PRD-auth-session/A
   test('setCredential(null) transitions to NotAuthenticated', () async {
     final session = RemoteAuthSession(
       connection: connWithClient(

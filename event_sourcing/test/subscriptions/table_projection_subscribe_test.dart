@@ -1,8 +1,3 @@
-// Verifies: EVS-PRD-subscription/A+B
-// subscribe(AggregateMode) over a
-//   TableProjectionSpec view replays existing rows as Snapshots and delivers
-//   live Deltas, exactly as it does for AggregateProjectionSpec views.
-//
 // Regression guard for the view-row-shape asymmetry where TableFold persisted
 // only the extracted rowData (omitting `aggregateId` / `sequence`). That broke
 // every consumer following the documented view-row contract — most visibly the
@@ -80,6 +75,9 @@ Future<void> _assign(EventStore store, String aggId, String user) =>
     );
 
 void main() {
+  // Verifies: EVS-PRD-subscription/A+B
+  // subscribe(AggregateMode) over a TableProjectionSpec view replays
+  //   existing rows as Snapshots and delivers live Deltas.
   test(
     'replays TableProjectionSpec rows with aggregateId + sequence',
     () async {

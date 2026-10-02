@@ -1,8 +1,3 @@
-// Verifies: EVS-PRD-destinations/K
-// Verifies: EVS-DEV-event-store-open/A
-// the test-only EventStore.openForTest, called from a consumer's
-//   production code, is reported by the analyzer.
-//
 // Out-of-package analysis: a consumer package that depends on
 // event_sourcing by path, with `invalid_use_of_internal_member` as an
 // error, is reported for every use of an internal member -- on the
@@ -208,6 +203,10 @@ Future<_Findings> _analyzeFixtures() async {
 }
 
 void main() {
+  // Verifies: EVS-PRD-destinations/K
+  // Verifies: EVS-DEV-event-store-open/A
+  // the test-only EventStore.openForTest, called from a consumer's
+  //   production code, is reported by the analyzer.
   test('a consumer package is reported for each internal use, through the '
       "barrel, a src import or a third-party backend's annotated override, "
       'and not for the public reads, transaction or close', () async {

@@ -1,12 +1,3 @@
-// Verifies: EVS-PRD-event-log/C
-// originatorHop exposes provenance[0] for
-//   per-aggregate-per-authority discrimination; StateError on missing/empty
-//   provenance signals a malformed event record.
-// Verifies: EVS-DEV-chain-verification/A
-// a copy's originating database, sealed hash and origin position read the
-//   same at every holder: from the copy itself when its provenance holds
-//   one entry, otherwise from its first and second entries.
-
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -69,6 +60,10 @@ void main() {
     expect(() => event.originatorHop, throwsStateError);
   });
 
+  // Verifies: EVS-DEV-chain-verification/A
+  // a copy's originating database, sealed hash and origin position read the
+  //   same at every holder: from the copy itself when its provenance holds
+  //   one entry, otherwise from its first and second entries.
   group('origin of a copy', () {
     final originator = <String, Object?>{
       'hop': 'mobile-device',

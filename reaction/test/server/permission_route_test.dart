@@ -1,14 +1,3 @@
-// Verifies: EVS-PRD-permission-source/C
-// server side of
-//   GET /permissions/snapshot that RemotePermissionSource fetches.
-// Verifies: EVS-PRD-cross-process-event-transport/A
-// EffectiveAuthorization
-//   codec round-trip through the route.
-// Verifies: EVS-DEV-converging-view-reads/H
-// a ViewConvergingRefusal
-//   from the policy answers 503 + view_converging body + Retry-After,
-//   not an untyped 500.
-
 import 'dart:convert';
 
 import 'package:event_sourcing/event_sourcing.dart';

@@ -1,22 +1,3 @@
-// Verifies: EVS-PRD-action-submitter/C
-// RemoteActionSubmitter submits
-//   via HTTP POST /actions and decodes the DispatchResult.
-// Verifies: EVS-PRD-action-submitter/D
-// bearer credential on every
-//   outbound POST.
-// Verifies: EVS-PRD-cross-process-event-transport/A+F
-// codec
-//   round-trip + bearer-credential carriage.
-// Verifies: EVS-PRD-cross-process-event-transport/K
-// a 503
-//   view_converging response delivers a typed ViewConvergingRefusal
-//   naming the view to the caller, not TransportException('http
-//   503'), immediately with no retry by default; the opt-in
-//   automatic-retry option re-sends the unchanged submission with a
-//   bounded backoff and a bounded number of attempts, surfacing the
-//   refusal on `convergingStream` meanwhile, and throws the refusal
-//   once the bound is reached.
-
 import 'dart:async';
 import 'dart:convert';
 
@@ -225,6 +206,7 @@ void main() {
     expect(client.actionsCallCount, 1);
   });
 
+  // Verifies: EVS-PRD-action-submitter/C
   test('opt-in retry re-sends the unchanged submission and succeeds once '
       'the server stops refusing', () async {
     // Verifies: EVS-PRD-cross-process-event-transport/K

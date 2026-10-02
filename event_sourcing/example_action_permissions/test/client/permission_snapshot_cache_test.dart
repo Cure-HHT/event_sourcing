@@ -1,5 +1,4 @@
 // test/client/permission_snapshot_cache_test.dart
-// Verifies: EVS-PRD-permissions-as-events/B+C
 import 'package:action_permissions_demo/client/permission_snapshot_cache.dart';
 import 'package:flutter_test/flutter_test.dart';
 

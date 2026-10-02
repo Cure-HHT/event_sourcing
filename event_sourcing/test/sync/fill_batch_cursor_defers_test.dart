@@ -1,16 +1,3 @@
-// Verifies: EVS-PRD-destinations/B
-// (per-destination filter — fill_cursor
-//   advances past permanently-rejected events (subscription mismatch,
-//   client_timestamp < startDate) but NOT past events deferred by the upper
-//   bound (client_timestamp > min(endDate, now())). The upper bound is
-//   non-monotonic because endDate is mutable; the window has not yet opened
-//   (future startDate) or is malformed (startDate > endDate). When endDate is
-//   in the past with startDate <= endDate, fillBatch still scans in-window
-//   events.)
-// Verifies: EVS-PRD-destinations/C
-// (FIFO order — cursor advances to
-//   batch.last.sequenceNumber so deferred events remain re-evaluable and are
-//   enqueued in sequence order when the window widens)
 import 'package:event_sourcing/src/destinations/destination_schedule.dart';
 import 'package:event_sourcing/src/destinations/subscription_filter.dart';
 import 'package:event_sourcing/src/lifecycle/lib_version.dart';
@@ -79,6 +66,7 @@ void main() {
 
   tearDown(() async => backend.close());
 
+  // Verifies: EVS-PRD-destinations/C
   group('cursor advance respects rejection reason', () {
     // An event whose client_timestamp exceeds the current upper bound
     // (min(endDate, now())) is deferred. fill_cursor SHALL NOT advance
@@ -169,6 +157,7 @@ void main() {
     // the cursor advances past permanently-rejected events (subscription
     // mismatch) but stops at the first deferred event (upper-bound
     // rejection).
+    // Verifies: EVS-PRD-destinations/B
     test('inWindow.isEmpty path — cursor advances past permanent '
         'rejection but stops at first deferred event', () async {
       final t0 = DateTime.utc(2026, 4, 15, 12);
@@ -374,6 +363,7 @@ void main() {
     // Events not matching the destination's SubscriptionFilter are
     // permanently rejected. The cursor MAY advance past them (filter
     // is stable).
+    // Verifies: EVS-PRD-destinations/B
     test('subscription-rejected events advance cursor', () async {
       final t0 = DateTime.utc(2026, 4, 15, 12);
       final schedule = DestinationSchedule(
@@ -468,6 +458,7 @@ void main() {
     });
   });
 
+  // Verifies: EVS-PRD-destinations/C
   group('window-state short-circuits', () {
     // A future startDate causes fillBatch to return immediately. No
     // FIFO writes, no cursor advance.

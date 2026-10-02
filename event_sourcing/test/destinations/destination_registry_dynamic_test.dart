@@ -1,8 +1,3 @@
-// Verifies: EVS-PRD-destinations/A+D+F
-// exercises the full dynamic lifecycle
-// of DestinationRegistry: dormant-seed on add (A), schedule persistence and
-// cold-restart recovery (D), and monotonic-backward setStartDate + gap-replay
-// semantics supporting dynamic re-configuration (F).
 import 'package:event_sourcing/src/destinations/destination_schedule.dart';
 import 'package:event_sourcing/src/event_store.dart';
 import 'package:event_sourcing/src/lifecycle/lib_version.dart';
@@ -46,6 +41,7 @@ void main() {
     });
 
     // first addDestination lands a dormant schedule, and all() returns it.
+    // Verifies: EVS-PRD-destinations/A
     test('addDestination registers and seeds a dormant schedule', () async {
       final d = FakeDestination(id: 'primary');
       await registry.addDestination(d, initiator: _testInit);
@@ -87,6 +83,7 @@ void main() {
 
     // read of the registry (no freeze). Subsequent addDestination after
     // all() succeeds.
+    // Verifies: EVS-PRD-destinations/F
     test('registry does NOT freeze on first read; subsequent '
         'addDestination succeeds', () async {
       await registry.addDestination(
@@ -104,6 +101,7 @@ void main() {
     });
 
     // The schedule reflects the new startDate and persists to the backend.
+    // Verifies: EVS-PRD-destinations/A
     test('setStartDate assigns a startDate and persists it', () async {
       await registry.addDestination(
         FakeDestination(id: 'primary'),
@@ -306,6 +304,7 @@ void main() {
     // Verifies: EVS-DEV-destination-drain/A
     // the deletion reads the head in its
     //   transaction and retires the queue.
+    // Verifies: EVS-PRD-destinations/F
     test('deleteDestination retires a wedged queue and drops the schedule '
         'when allowHardDelete is true', () async {
       final d = FakeDestination(id: 'purgeable', allowHardDelete: true);

@@ -1,11 +1,4 @@
 // test/walkthroughs/walkthrough_09_user_provisioning_test.dart
-// Verifies: EVS-PRD-permissions-as-events/A+B
-// Verifies: EVS-PRD-action-dispatch/A+C
-// Verifies: EVS-PRD-permissions-as-events/B
-// Verifies: EVS-PRD-event-log/A+C
-//
-//           projects user_provisioned events into the in-memory directory
-//           inside the EventStore transaction;
 
 import 'package:action_permissions_demo/shared/wire_types.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -24,7 +17,9 @@ void main() {
     await harness.stop();
   });
 
+  // Verifies: EVS-PRD-action-dispatch/A
   group('Walkthrough 9: User provisioning end-to-end', () {
+    // Verifies: EVS-PRD-permissions-as-events/B, EVS-PRD-action-dispatch/C
     test(
       'admin provisions green-user-3 -> directory updated -> new user can edit green notes',
       () async {

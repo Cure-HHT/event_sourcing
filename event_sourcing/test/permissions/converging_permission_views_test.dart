@@ -1,20 +1,4 @@
 // test/permissions/converging_permission_views_test.dart
-// Verifies: EVS-DEV-converging-view-reads/H
-// a submission the policy would decide from a converging role-assignment,
-//   permission-grant, or containment view is refused with the typed,
-//   transient ViewConvergingRefusal naming the view; the dispatcher appends
-//   no event, and the same submission succeeds once the view is current.
-//   PermissionSeedApplier.apply and bootstrapRoleAssignments never decide
-//   from a converging read either: a read taken converging after their
-//   wait already reported the view current is discarded and they wait
-//   again, so a role-permission-grants or user-role-scopes view that
-//   converges in that narrow window still yields no duplicate event.
-// Verifies: EVS-DEV-converging-view-reads/I
-// bootstrapRoleAssignments waits until the view it reads is current before
-//   reading it, succeeding once the copy catches up within the caller's
-//   deadline, and throws ViewConvergenceTimeout naming the view and its
-//   copy's progress once the deadline passes first. PermissionSeedApplier
-//   .apply does the same for role_permission_grants.
 
 import 'dart:async';
 
@@ -304,6 +288,7 @@ ActionDispatcher _scopedDispatcher(EventStore store) => ActionDispatcher(
 );
 
 void main() {
+  // Verifies: EVS-DEV-converging-view-reads/H
   group('converging permission views: authorization refuses transiently', () {
     test('refuses with ViewConvergingRefusal naming the view, appends no '
         'event, and leaves the log unchanged', () async {
@@ -387,6 +372,7 @@ void main() {
     });
   });
 
+  // Verifies: EVS-DEV-converging-view-reads/I
   group('converging permission views: bootstrap waits with a deadline', () {
     test('bootstrapRoleAssignments waits and succeeds once the copy '
         'catches up within the deadline', () async {
@@ -497,6 +483,7 @@ void main() {
 
   group('converging permission views: containment and grant reads refuse '
       'transiently', () {
+    // Verifies: EVS-DEV-converging-view-reads/H
     test('a converging containment view the resolver reads while matching '
         'a scoped permission refuses with ViewConvergingRefusal naming it, '
         'and appends no event', () async {
@@ -546,6 +533,7 @@ void main() {
       expect(afterCount, beforeCount);
     });
 
+    // Verifies: EVS-DEV-converging-view-reads/H
     test('the same submission succeeds once the containment view is '
         'current', () async {
       final db = await _openDb();
@@ -591,6 +579,7 @@ void main() {
       expect(result, isA<DispatchSuccess<Object?>>());
     });
 
+    // Verifies: EVS-DEV-converging-view-reads/H
     test('a converging role_permission_grants view refuses with '
         'ViewConvergingRefusal naming it, and appends no event', () async {
       final db = await _openDb();
@@ -628,6 +617,7 @@ void main() {
       expect(afterCount, beforeCount);
     });
 
+    // Verifies: EVS-DEV-converging-view-reads/I
     test('PermissionSeedApplier.apply throws ViewConvergenceTimeout naming '
         'role_permission_grants once the deadline passes first', () async {
       final db = await _openDb();
@@ -667,6 +657,7 @@ void main() {
     });
   });
 
+  // Verifies: EVS-DEV-converging-view-reads/I
   group('converging permission views: seed and bootstrap decide only from '
       'a current read', () {
     test('PermissionSeedApplier.apply does not re-grant an already-present '

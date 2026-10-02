@@ -1,8 +1,3 @@
-// Verifies: EVS-PRD-destinations/O
-// the hub's delete action is refused while
-//   the queue head is pending, and a deleted destination's delivered and
-//   recovered items stay visible in a read-only panel, refreshed by the
-//   queue watcher with no other trigger.
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing_demo/app_state.dart';
 import 'package:event_sourcing_demo/demo_destination.dart';
@@ -76,6 +71,8 @@ Future<void> _note(_Hub hub, String id) => hub.datastore.eventStore.append(
 );
 
 void main() {
+  // Verifies: EVS-PRD-destinations/O
+  // (deletion refused while the queue head is pending)
   test('delete is refused while the head is pending', () async {
     final hub = await _mkHub('hub-delete-refused.db');
     addTearDown(hub.state.stopDelivery);
@@ -104,6 +101,8 @@ void main() {
     );
   });
 
+  // Verifies: EVS-PRD-destinations/O
+  // (a deletion retains the delivered and wedged items)
   testWidgets('a deleted destination keeps its retained rows visible', (
     tester,
   ) async {

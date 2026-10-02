@@ -1,9 +1,4 @@
 // test/walkthroughs/walkthrough_08_audit_correlation_test.dart
-// Verifies: EVS-PRD-event-log/A+B
-// Verifies: EVS-PRD-action-dispatch/C+F
-//
-// `action_invocation_id` and stamps it onto every emitted event so the
-// audit log can trace one dispatch's full effects.
 
 import 'package:action_permissions_demo/shared/wire_types.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -23,6 +18,7 @@ void main() {
   });
 
   group('Walkthrough 8: Audit correlation by action_invocation_id', () {
+    // Verifies: EVS-PRD-action-dispatch/C
     test(
       'two dispatches -> events from each share an invocation_id; the two ids differ',
       () async {

@@ -1,12 +1,4 @@
 // test/permissions/bootstrap_role_assignments_test.dart
-// Verifies: EVS-PRD-permissions-as-events/A
-// bootstrapRoleAssignments
-//   emits role_assigned events for each seed entry, so user-role-scope
-//   assignments are recorded as first-class events in the same log.
-// Verifies: EVS-PRD-permissions-as-events/C
-// idempotent re-runs emit no
-//   new events; partial-overlap runs emit only the truly-missing entries;
-//   the event log alone suffices to reconstruct role-assignment state.
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -27,6 +19,7 @@ void main() {
       await harness.close();
     });
 
+    // Verifies: EVS-PRD-permissions-as-events/A
     test('emits role_assigned for every entry when view is empty', () async {
       const seed = RoleAssignmentSeed(
         entries: [

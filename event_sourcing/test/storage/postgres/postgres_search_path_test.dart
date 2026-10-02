@@ -1,16 +1,3 @@
-// Verifies: EVS-DEV-postgres-backend/Q
-// every statement the library runs on Postgres -- on its pool, on its lock
-//   session and for provisioning -- runs with the search path set, for its
-//   transaction only, to exactly the named schema, pg_catalog and pg_temp:
-//   a schema named after the connecting role, created by another role that
-//   can create schemas, shadows none of the library's tables for writes,
-//   reads or provisioning; the path in every kind of library transaction
-//   is exactly that one; the sessions keep the server's default path; and
-//   a name that needs quoting round-trips.
-// Verifies: EVS-DEV-postgres-backend/R
-// open refuses a schema that is not the current schema inside a library
-//   transaction, naming both schemas, before it registers a generation.
-//
 // Gated on PG_TEST_URL, whose role must be able to create roles; files
 // that reset the schema run one at a time.
 
@@ -164,6 +151,9 @@ void main() {
     });
   }
 
+  // Verifies: EVS-DEV-postgres-backend/Q
+  // a schema named after the connecting role shadows none of the library's
+  //   tables for writes, reads or provisioning.
   group('shadowing', () {
     test('a schema named after the runtime role takes no write and no '
         'read', () async {
@@ -256,6 +246,7 @@ void main() {
     });
   });
 
+  // Verifies: EVS-DEV-postgres-backend/Q
   test('every library transaction runs with exactly the pinned path, and the '
       "sessions keep the server's default", () async {
     await db.reset(provision: true);
@@ -302,6 +293,7 @@ void main() {
     );
   });
 
+  // Verifies: EVS-DEV-postgres-backend/R
   test('open refuses a schema that is not the current schema, naming both, '
       'and registers nothing', () async {
     await db.reset(provision: true);
@@ -345,6 +337,7 @@ void main() {
     });
   });
 
+  // Verifies: EVS-DEV-postgres-backend/Q
   test('a schema name that needs quoting round-trips', () async {
     final mixed = PostgresTestDatabase(
       db.adminUrl,

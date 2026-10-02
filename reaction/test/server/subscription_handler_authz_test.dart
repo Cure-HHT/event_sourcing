@@ -1,13 +1,3 @@
-// Verifies: EVS-PRD-cross-process-event-transport/E
-// row-level
-//   narrowing of a subscription via the view's scope binding. These
-//   tests exercise the REAL _expandAssignments path: they assert the
-//   AggregateMode.aggregates set the handler computes from a principal's
-//   EffectiveAuthorization.scopeAssignments, and prove that scope
-//   assignments for an UNRELATED scope class do not over-grant (the
-//   read path mirrors the write-path policy's class-and-ancestry
-//   matching).
-
 import 'dart:async';
 import 'dart:convert';
 
@@ -250,6 +240,7 @@ void main() {
     return store.capturedAggregates;
   }
 
+  // Verifies: EVS-PRD-cross-process-event-transport/E
   test(
     'ValueWildcardScope(site) on a patient view (no registry) NARROWS — '
     'not unrestricted; yields zero aggregates from that assignment',
@@ -265,6 +256,7 @@ void main() {
     },
   );
 
+  // Verifies: EVS-PRD-cross-process-event-transport/E
   test('ValueWildcardScope(patient) on a patient view (exact match) is '
       'unrestricted', () async {
     final captured = await runAndCapture(
@@ -275,6 +267,7 @@ void main() {
     expect(captured, isNull); // unrestricted
   });
 
+  // Verifies: EVS-PRD-cross-process-event-transport/E
   test(
     'ValueWildcardScope(site) on a patient view WITH registry where '
     'patient is contained in site is unrestricted (write-path parity)',
@@ -289,6 +282,7 @@ void main() {
     },
   );
 
+  // Verifies: EVS-PRD-cross-process-event-transport/E
   test('BoundScope(site, X) on a patient view does NOT authorize patient '
       'aggregate X (class mismatch filtered)', () async {
     final captured = await runAndCapture(
@@ -308,6 +302,7 @@ void main() {
     expect(captured, isEmpty);
   });
 
+  // Verifies: EVS-PRD-cross-process-event-transport/E
   test(
     'BoundScope(patient, p1) on a patient view authorizes exactly p1',
     () async {

@@ -1,27 +1,4 @@
 // test/permissions/table_backed_authorization_policy_test.dart
-// Verifies: EVS-PRD-permissions-as-events/B
-// TableBackedAuthorizationPolicy
-//   evaluates authorization decisions solely from the event-derived
-//   role_permission_grants, user_role_scopes, and containment projections.
-//   The match algorithm covers equality, value-wildcard, total-wildcard,
-//   and hierarchy containment with fail-closed semantics on missing rows.
-// Verifies: EVS-PRD-action-dispatch/B
-// Allow/Deny decisions surfaced to
-//   the dispatcher's authorize stage.
-// Verifies: EVS-PRD-scoped-permissions/D+F+G
-// projection-only evaluation;
-//   union-of-assignments match across equality / wildcard / containment;
-//   fail-closed propagation through missing containment rows.
-// Verifies: EVS-DEV-scoped-permissions-match-algorithm/A+B+C+D+E+F
-// full
-//   match-algorithm coverage: notGranted on missing role grant; xor invariant
-//   denial; unscoped shortcut; bound / value-wildcard / total-wildcard /
-//   containment match cases; fail-closed propagation; anonymous-principal
-//   denial.
-// Verifies: EVS-DEV-effective-permissions-shape/A+B+C+D
-// effectivePermissionsFor
-//   returns active role + permissions + scope assignments; returns
-//   EffectiveAuthorization.empty for non-user principals.
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -30,6 +7,7 @@ import 'test_support/policy_harness.dart';
 
 void main() {
   group('TableBackedAuthorizationPolicy match algorithm', () {
+    // Verifies: EVS-PRD-scoped-permissions/F, EVS-DEV-scoped-permissions-match-algorithm/D
     test('bound site assignment + patient-scoped permission via containment '
         '-> Allow when patient is at the assigned site', () async {
       final h = await PolicyHarness.create(
@@ -52,6 +30,7 @@ void main() {
       expect(decision, isA<Allow>());
     });
 
+    // Verifies: EVS-DEV-scoped-permissions-match-algorithm/E
     test('bound site assignment but patient is at a different site '
         '-> Deny(notGranted)', () async {
       final h = await PolicyHarness.create(
@@ -77,6 +56,7 @@ void main() {
       );
     });
 
+    // Verifies: EVS-PRD-scoped-permissions/F, EVS-DEV-scoped-permissions-match-algorithm/D
     test(
       'TotalWildcardScope assignment -> Allow on any scoped permission',
       () async {
@@ -101,6 +81,7 @@ void main() {
       },
     );
 
+    // Verifies: EVS-PRD-scoped-permissions/F, EVS-DEV-scoped-permissions-match-algorithm/D
     test('ValueWildcardScope(class=site) assignment -> Allow for any patient '
         'via containment (any site covers any patient at any site)', () async {
       final h = await PolicyHarness.create(
@@ -123,6 +104,7 @@ void main() {
       expect(decision, isA<Allow>());
     });
 
+    // Verifies: EVS-DEV-scoped-permissions-match-algorithm/E
     test('patient-scoped assignment cannot cover site-scoped permission '
         '(narrower than) -> Deny', () async {
       final h = await PolicyHarness.create(
@@ -145,6 +127,7 @@ void main() {
       expect(decision, isA<Deny>());
     });
 
+    // Verifies: EVS-PRD-scoped-permissions/G, EVS-DEV-scoped-permissions-match-algorithm/E
     test('containment lookup miss -> fail-closed Deny(notGranted)', () async {
       final h = await PolicyHarness.create(
         grants: [const Grant(role: 'SC', perm: 'patient.edit')],
@@ -169,6 +152,7 @@ void main() {
       );
     });
 
+    // Verifies: EVS-PRD-scoped-permissions/F, EVS-DEV-scoped-permissions-match-algorithm/D
     test('union within active role: U1 has SC at site A AND site B; '
         'P-42 is at B -> Allow', () async {
       final h = await PolicyHarness.create(
@@ -196,6 +180,7 @@ void main() {
       expect(decision, isA<Allow>());
     });
 
+    // Verifies: EVS-DEV-scoped-permissions-match-algorithm/A
     test('active role filter: U1 holds SC AND SUP, but activeRole=SC; '
         'SUP perms are ignored', () async {
       final h = await PolicyHarness.create(
@@ -256,6 +241,7 @@ void main() {
     // user_role_scopes assignment for the claimed activeRole. The
     // Principal's `roles`/`activeRole` fields are user-supplied
     // requests, not substrate-trusted assertions.
+    // Verifies: EVS-PRD-permissions-as-events/B, EVS-PRD-scoped-permissions/D, EVS-DEV-scoped-permissions-match-algorithm/C
     test('unscoped permission with role grant but principal holds no '
         'user_role_scopes row for activeRole -> Deny(notGranted)', () async {
       final h = await PolicyHarness.create(
@@ -293,6 +279,7 @@ void main() {
     // Same gate for the effectivePermissionsFor surface: a Principal
     // claiming an activeRole they don't hold sees empty permissions,
     // not the role's grants leaking through the unverified claim.
+    // Verifies: EVS-DEV-effective-permissions-shape/B
     test('effectivePermissionsFor returns empty for principal holding no '
         'user_role_scopes row under claimed activeRole', () async {
       final h = await PolicyHarness.create(
@@ -312,6 +299,7 @@ void main() {
       expect(eff, equals(EffectiveAuthorization.empty));
     });
 
+    // Verifies: EVS-DEV-scoped-permissions-match-algorithm/A
     test('unscoped permission without role grant -> Deny', () async {
       final h = await PolicyHarness.create(
         grants: const <Grant>[],
@@ -339,6 +327,7 @@ void main() {
     // fail-closed with scopeUnresolvable rather than silently grant
     // or evaluate against stale assignments.
 
+    // Verifies: EVS-PRD-scoped-permissions/E
     test('direct call with scoped permission + non-BoundScope scope value '
         '-> Deny(scopeUnresolvable)', () async {
       final h = await PolicyHarness.create(
@@ -368,6 +357,7 @@ void main() {
       );
     });
 
+    // Verifies: EVS-PRD-scoped-permissions/E
     test('direct call with BoundScope whose class disagrees with '
         'permission.scopeClass -> Deny(scopeUnresolvable)', () async {
       final h = await PolicyHarness.create(
@@ -399,6 +389,7 @@ void main() {
   });
 
   group('TableBackedAuthorizationPolicy.effectivePermissionsFor', () {
+    // Verifies: EVS-DEV-effective-permissions-shape/A+C
     test('returns active role permissions + user assignments for it', () async {
       final h = await PolicyHarness.create(
         grants: [
@@ -438,6 +429,7 @@ void main() {
       });
     });
 
+    // Verifies: EVS-DEV-effective-permissions-shape/B
     test('returns empty for AnonymousPrincipal', () async {
       final h = await PolicyHarness.create(
         grants: const <Grant>[],

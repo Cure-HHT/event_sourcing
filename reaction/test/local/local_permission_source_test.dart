@@ -1,10 +1,3 @@
-// Verifies: EVS-PRD-permission-source/B+E
-// LocalPermissionSource derives the snapshot from the substrate's
-// permissions projections via AuthorizationPolicy.effectivePermissionsFor
-// (B), and re-fetches + re-emits when the active Principal changes via
-// setActivePrincipal (E). Also exercises the current/stream getters,
-// dispose, and the snapshot-on-listen contract documented in the
-// interface.
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:reaction/src/local/local_permission_source.dart';
@@ -45,6 +38,7 @@ void main() {
       expect(source.current, isNull);
     });
 
+    // Verifies: EVS-PRD-permission-source/B
     test(
       'after setActivePrincipal(alice/greeter), current reflects greeter grants',
       () async {
@@ -65,6 +59,7 @@ void main() {
       },
     );
 
+    // Verifies: EVS-PRD-permission-source/B
     test('scopeAssignments surfaces on the snapshot', () async {
       // alice was seeded with role 'greeter' via seedRoleAssigned, which
       // defaults to a TotalWildcardScope. After effectivePermissionsFor
@@ -102,6 +97,7 @@ void main() {
       expect(source.current, isNull);
     });
 
+    // Verifies: EVS-PRD-permission-source/E
     test('stream emits when active principal changes', () async {
       final events = <EffectiveAuthorization?>[];
       final sub = source.stream.listen(events.add);
@@ -169,6 +165,7 @@ void main() {
       },
     );
 
+    // Verifies: EVS-PRD-permission-source/B
     test('principal claiming a role without user_role_scopes membership '
         'gets null snapshot (divergence-closing parity with Remote)', () async {
       // Carol claims the 'greeter' role — which has the say_hello grant —

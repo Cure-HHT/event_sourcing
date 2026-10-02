@@ -1,7 +1,3 @@
-// Verifies: EVS-PRD-destinations/C
-// Verifies: EVS-PRD-destinations/C+D
-// Verifies: EVS-PRD-ingest/A+F
-// Verifies: EVS-PRD-provenance/B+C
 import 'dart:math';
 
 import 'package:event_sourcing/event_sourcing.dart';
@@ -155,6 +151,7 @@ Future<void> _appendButtonEvent(_Pane pane, String entryType) async {
 // ---------------------------------------------------------------------------
 
 void main() {
+  // Verifies: EVS-PRD-destinations/C, EVS-PRD-ingest/A+C
   group('soak', () {
     test(
       '60s RGB soak with batched FIFOs',

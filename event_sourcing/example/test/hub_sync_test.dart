@@ -1,8 +1,3 @@
-// Verifies: EVS-PRD-destinations/B
-// Verifies: EVS-PRD-destinations/C
-// Verifies: EVS-PRD-destinations/E
-// Verifies: EVS-PRD-ingest/A+E
-// Verifies: EVS-PRD-provenance/B+C
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing_demo/demo_destination.dart';
 import 'package:event_sourcing_demo/demo_knobs.dart';
@@ -163,6 +158,7 @@ Future<void> _appendEvent(
 
 void main() {
   group('mobile -> hub one-way sync', () {
+    // Verifies: EVS-PRD-destinations/E, EVS-PRD-ingest/A+C
     test(
       'three demo_notes appended on mobile arrive in hub with hub-stamped provenance',
       () async {
@@ -215,6 +211,7 @@ void main() {
       },
     );
 
+    // Verifies: EVS-PRD-destinations/C
     test('one SyncCycle pass enqueues rows for NativeUser and NativeAudit '
         '(the cycle stamps native batches with the pane Source)', () async {
       final mobile = await _mkPane(
@@ -244,6 +241,7 @@ void main() {
       }
     });
 
+    // Verifies: EVS-PRD-destinations/B+C, EVS-PRD-ingest/A
     test("hub events outside the reverse link's filter do not reach mobile, "
         'while events inside it do', () async {
       final mobile = await _mkPane(

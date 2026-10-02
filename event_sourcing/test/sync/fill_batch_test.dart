@@ -1,15 +1,3 @@
-// Verifies: EVS-PRD-destinations/B
-// (per-destination filter — events not
-//   matching destination.filter are skipped; cursor advances past them;
-//   system events are admitted only when includeSystemEvents is true)
-// Verifies: EVS-PRD-destinations/C
-// (FIFO order — fill_cursor advances to
-//   batch.last.sequenceNumber on enqueue; canAddToBatch batching preserves
-//   sequence order; maxAccumulateTime hold keeps a lone event re-evaluable)
-// Verifies: EVS-PRD-destinations/D
-// (durable queue — enqueue and cursor
-//   advance run inside one transaction; idempotent repeat calls do not
-//   double-enqueue; post-tombstoneAndRefill recovery re-promotes in one pass)
 import 'package:event_sourcing/src/destinations/destination_schedule.dart';
 import 'package:event_sourcing/src/destinations/subscription_filter.dart';
 import 'package:event_sourcing/src/event_store.dart';
@@ -151,6 +139,7 @@ void main() {
 
     // fillBatch with a dormant schedule is a no-op: no FIFO rows are
     // enqueued, fill_cursor is unchanged, no transient state leaks.
+    // Verifies: EVS-PRD-destinations/C
     test('fillBatch with no new matching events is a no-op', () async {
       // Append events to the log so the dormant-schedule early-exit
       // is the only thing preventing a FIFO write (not vacuous).
@@ -190,6 +179,7 @@ void main() {
     // fillBatch with batchCapacity=3 produces one FIFO row covering the
     // first 3 events and advances the cursor to the 3rd event's
     // sequence_number.
+    // Verifies: EVS-PRD-destinations/C
     test('fillBatch respects canAddToBatch boundary', () async {
       final clientTs = DateTime.utc(2026, 4, 22, 10);
       final appended = <StoredEvent>[];
@@ -304,6 +294,7 @@ void main() {
 
     // Events before startDate are NOT enqueued. Fresher matching events
     // still flow through and the cursor advances past the skipped ones.
+    // Verifies: EVS-PRD-destinations/C
     test('fillBatch skips events with client_timestamp < startDate', () async {
       // Two events before startDate, one after.
       await _appendEvent(
@@ -342,6 +333,7 @@ void main() {
 
     // Events after endDate (or after now() when endDate is later than
     // now) are NOT enqueued.
+    // Verifies: EVS-PRD-destinations/C
     test('fillBatch skips events with client_timestamp > endDate', () async {
       await _appendEvent(
         backend,
@@ -483,6 +475,7 @@ void main() {
 
     // Events that do not match destination.filter are never enqueued,
     // and the cursor advances past them so they are not re-evaluated.
+    // Verifies: EVS-PRD-destinations/B+C
     test('non-matching events advance cursor but enqueue '
         'nothing', () async {
       // Filter only accepts entry_type='epistaxis_event'; append two
@@ -531,6 +524,7 @@ void main() {
     // A reserved system event is enqueued only for a destination whose
     // filter includes system events; a filter that does not skips it and
     // the cursor advances past it.
+    // Verifies: EVS-PRD-destinations/B+C
     test('a system event is enqueued only when the filter includes system '
         'events', () async {
       await _appendEvent(
@@ -672,6 +666,7 @@ void main() {
 
     // After tombstoneAndRefill, the next fillBatch promotes events that
     // arrived during the wedge in one pass against the rewound cursor.
+    // Verifies: EVS-PRD-destinations/C
     test('post-tombstoneAndRefill, fillBatch promotes wedge-era '
         'events in one pass', () async {
       // Setup: destination with batchCapacity=10 (so a single fillBatch
@@ -847,6 +842,7 @@ void main() {
     // does) is skipped, whatever the destination's filter, and the cursor
     // advances past it.
     // Verifies: EVS-DEV-destination-drain/V
+    // Verifies: EVS-PRD-destinations/C
     test('an ingested event matching the filter is not enqueued', () async {
       await _appendEvent(
         backend,
@@ -872,6 +868,7 @@ void main() {
     // filter for these events on native registrations.
     // Verifies: EVS-DEV-destination-drain/X
     // Verifies: EVS-PRD-delivery-channel/U
+    // Verifies: EVS-PRD-destinations/C
     test('a local security finding is enqueued on a native destination '
         'whose filter excludes system events', () async {
       await _appendFinding(
@@ -898,6 +895,7 @@ void main() {
     // natively, follows the ordinary filter: EVS-DEV-destination-drain/X
     // names natively serializing registrations only.
     // Verifies: EVS-DEV-destination-drain/X
+    // Verifies: EVS-PRD-destinations/B
     test('a non-native destination does not get a security finding unless '
         'its filter matches', () async {
       await _appendFinding(

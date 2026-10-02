@@ -1,13 +1,3 @@
-// Verifies: EVS-PRD-action-dispatch/A
-// (dispatcher accepts principal-submitted actions end-to-end)
-// Verifies: EVS-PRD-action-dispatch/B
-// (all five stages exercised across six scenarios)
-// Verifies: EVS-PRD-action-dispatch/C
-// (every scenario produces a recorded denial or success event in the log)
-// Verifies: EVS-PRD-action-dispatch/D
-// (idempotency replay scenario: second dispatch returns DispatchIdempotencyHit; no new events)
-// Verifies: EVS-PRD-library-charter/C
-// (authorization-checked dispatch pipeline; authorization failure recorded as authorization_denied event)
 // End-to-end integration test for the full 10-stage dispatcher pipeline.
 //
 // Uses flutter_test (not package:test) because EventStore depends on
@@ -138,6 +128,7 @@ void main() {
     // ------------------------------------------------------------------
     // 1. Happy path
     // ------------------------------------------------------------------
+    // Verifies: EVS-PRD-action-dispatch/A+B+C
     test(
       'E2E-1: success path — DispatchSuccess, event stamped, idempotency recorded',
       () async {
@@ -196,6 +187,7 @@ void main() {
     // ------------------------------------------------------------------
     // 2. Idempotency replay
     // ------------------------------------------------------------------
+    // Verifies: EVS-PRD-action-dispatch/D
     test(
       'E2E-2: idempotency replay — DispatchIdempotencyHit, no new events',
       () async {
@@ -252,6 +244,7 @@ void main() {
     // ------------------------------------------------------------------
     // 3. Parse failure
     // ------------------------------------------------------------------
+    // Verifies: EVS-PRD-action-dispatch/B+C
     test(
       'E2E-3: parse failure — DispatchParseDenied, parse_denied event recorded',
       () async {
@@ -292,6 +285,7 @@ void main() {
     // ------------------------------------------------------------------
     // 4. Validate failure
     // ------------------------------------------------------------------
+    // Verifies: EVS-PRD-action-dispatch/B+C
     test(
       'E2E-4: validate failure — DispatchValidationDenied, validation_denied event recorded',
       () async {
@@ -327,6 +321,7 @@ void main() {
     // ------------------------------------------------------------------
     // 5. Authorize failure
     // ------------------------------------------------------------------
+    // Verifies: EVS-PRD-action-dispatch/B+C, EVS-PRD-library-charter/C
     test(
       'E2E-5: authorize failure — DispatchAuthorizationDenied, authorization_denied event with permission_denied',
       () async {
@@ -364,6 +359,7 @@ void main() {
     // ------------------------------------------------------------------
     // 6. Idempotency required without key
     // ------------------------------------------------------------------
+    // Verifies: EVS-PRD-action-dispatch/C
     test(
       'E2E-6: idempotency required without key — DispatchParseDenied (MissingIdempotencyKeyError), parse_denied recorded',
       () async {

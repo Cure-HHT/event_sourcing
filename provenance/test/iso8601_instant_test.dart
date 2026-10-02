@@ -1,7 +1,3 @@
-// Verifies: EVS-DEV-event-record/A+C
-// (the shared timestamp form: a four-digit year, calendar fields within
-//   their ranges and an explicit offset)
-
 import 'package:provenance/provenance.dart';
 import 'package:test/test.dart';
 

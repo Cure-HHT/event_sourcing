@@ -1,12 +1,3 @@
-// Verifies: EVS-PRD-event-log/A
-// fromMap/toMap round-trips preserve every
-//   field of a stored record, so a record read back is the record written;
-//   malformed records throw FormatException.
-// Verifies: EVS-PRD-portability/C
-// toMap/fromMap produce identical results
-//   regardless of platform; pure-Dart serialisation.
-// Verifies: EVS-DEV-flow-token/D
-// flowToken is an opaque nullable String that round-trips; a non-string flow_token is rejected.
 import 'package:event_sourcing/src/lifecycle/lib_version.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
@@ -67,6 +58,8 @@ void main() {
       expect(ev.toMap()['initiator'], {'type': 'user', 'user_id': 'u'});
     });
 
+    // Verifies: EVS-DEV-flow-token/D
+    // the token is stored and read back verbatim, never parsed.
     test('flowToken is nullable and round-trips', () {
       final mapNull = _minimalMap();
       final ev1 = StoredEvent.fromMap(mapNull, 7);

@@ -1,9 +1,3 @@
-// Verifies: EVS-PRD-subscription/E
-// a committed transaction and a rolled-back one started together on one
-//   Sembast backend: the committed one's view change and queue status change
-//   reach their watchers exactly once, the rolled-back one's never, in both
-//   start orders.
-//
 // Sembast serializes transaction bodies, so the two bodies run one after
 // the other in the order they start; only their futures are pending
 // together. The two start orders are what make the test discriminating:
@@ -88,6 +82,7 @@ void main() {
     await backend.close();
   });
 
+  // Verifies: EVS-PRD-subscription/E
   group(
     'SembastBackend.watchView under a commit and a rollback started together',
     () {
@@ -119,6 +114,7 @@ void main() {
     },
   );
 
+  // Verifies: EVS-PRD-subscription/E
   group('SembastBackend.watchFifo status change under a commit and a '
       'rollback started together', () {
     for (final committedFirst in [true, false]) {

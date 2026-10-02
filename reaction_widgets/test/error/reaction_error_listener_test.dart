@@ -1,6 +1,3 @@
-// Verifies: EVS-PRD-reaction-widget-contract/G
-// (error-sink sub-clause)
-
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
@@ -27,6 +24,7 @@ Future<void> _settle(WidgetTester tester) async {
 
 void main() {
   group('ReActionErrorListener', () {
+    // Verifies: EVS-PRD-reaction-widget-contract/G
     testWidgets('fires onAuthExpired when AuthSession transitions to Expired', (
       tester,
     ) async {
@@ -65,6 +63,7 @@ void main() {
       expect(notAuthCount, 1);
     });
 
+    // Verifies: EVS-PRD-reaction-widget-contract/G
     testWidgets('fires onTransport callbacks on Reconnecting/Disconnected', (
       tester,
     ) async {
@@ -101,6 +100,7 @@ void main() {
       expect(disconnectedCount, 1);
     });
 
+    // Verifies: EVS-PRD-reaction-widget-contract/G
     testWidgets('does not rebuild child on auth/transport transitions', (
       tester,
     ) async {

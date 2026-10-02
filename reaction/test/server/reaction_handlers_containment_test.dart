@@ -1,20 +1,3 @@
-// Verifies: EVS-PRD-cross-process-event-transport/E
-// end-to-end proof
-//   that ReactionHandlers wires the PRODUCTION ScopeDescendantExpander
-//   into the subscription handler. A principal assigned an ancestor-class
-//   BoundScope (site-A) subscribing to a descendant-class view
-//   (participants) receives ONLY the descendant rows contained in that
-//   ancestor (P-1, P-2 at site-A) and NOT rows under a sibling ancestor
-//   (P-9 at site-C). The expansion is computed by querying a REAL
-//   in-memory containment index (participant_site_index), so this test
-//   exercises the production read-path expander, not a stub.
-// Verifies: EVS-DEV-converging-view-reads/H
-// a scoped subscription made while the containment view the expander
-//   reads is converging receives an ErrorMsg with code view_converging
-//   naming the view, and no rows, through the real ReactionHandlers /
-//   subscription-handler / wire path; the same subscription succeeds
-//   with the descendant rows once the view is current.
-
 import 'dart:convert';
 import 'dart:io';
 
@@ -346,6 +329,10 @@ void main() {
     await store.close();
   });
 
+  // Verifies: EVS-PRD-cross-process-event-transport/E
+  // The subscription is narrowed by the requesting principal's site-A
+  // assignment through the production ScopeDescendantExpander, which
+  // queries a real in-memory containment index.
   test(
     "site-A principal subscribing to 'participants' receives only "
     'descendant participants P-1 and P-2 (P-9 at site-C absent) — '

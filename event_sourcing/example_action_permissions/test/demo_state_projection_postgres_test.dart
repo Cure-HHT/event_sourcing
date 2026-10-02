@@ -1,9 +1,3 @@
-// Verifies: EVS-DEV-postgres-backend/D
-// demo state projection
-//   (matrix grants, directory, idempotency cache, events stream) runs
-//   against PostgresBackend, satisfying the conformance harness
-//   alongside the sembast flavor in demo_state_projection_test.dart.
-//
 // Gated on PG_TEST_URL. Drops the demo schema and runs the demo's deployment
 // step in the per-test factory, so each call returns a deterministic empty
 // database opened as the declared runtime role.
