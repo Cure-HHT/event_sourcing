@@ -28,7 +28,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import '../security/security_finding_conformance.dart' show expectedFindingId;
 import 'ingest_record_findings_conformance.dart' show sealedRecord;
-import 'manual_timers.dart' show neverFiringTimer;
+import 'manual_timers.dart' show ManualTimers, neverFiringTimer;
 import 'record_fixtures.dart';
 import 'version_compatibility_conformance.dart' show VersionTestDatabase;
 
@@ -241,6 +241,34 @@ Future<EventStore> openReceiverStore(
     source: source,
     projections: projections,
   );
+}
+
+/// Opens a store as [openReceiverStore] does, and returns it once its
+/// catch-up driver has parked: no catch-up transaction runs until the
+/// store closes.
+///
+/// The driver's first pass starts after `EventStore.open` returns and runs
+/// transactions of its own over the library's views, so a test counting the
+/// backend's transactions must wait it out. The store opens inside a zone
+/// whose `timerFactory` creates timers only the test could fire; the only
+/// library timer such a store creates is the driver's wait after a pass.
+/// Its creation is the signal: the pass is over, and nothing fires the wait.
+Future<EventStore> openReceiverStoreWithCatchUpParked(
+  VersionTestDatabase db,
+) async {
+  final timers = ManualTimers();
+  final store = await runWithDeliveryTestHooks(
+    DeliveryTestHooks(timerFactory: timers.create),
+    () => openReceiverStore(db),
+  );
+  for (var round = 0; timers.active.isEmpty; round++) {
+    if (round == 100) {
+      await store.close();
+      fail('the catch-up driver never parked in a wait');
+    }
+    await pumpEventQueue();
+  }
+  return store;
 }
 
 /// Runs the scenarios. [openDatabase] returns a fresh database; [skip]

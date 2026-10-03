@@ -76,7 +76,8 @@ void main() {
   // Verifies: EVS-DEV-delivery-receiver/N
   test('an unauthenticated pull is refused before any transaction', () async {
     final db = _SembastDatabase(await _memoryDatabase(), spying: true);
-    final store = await openReceiverStore(db);
+    // Every transaction the spy counts from here on is the test's own.
+    final store = await openReceiverStoreWithCatchUpParked(db);
     addTearDown(() async {
       await store.close();
       await db.close();
