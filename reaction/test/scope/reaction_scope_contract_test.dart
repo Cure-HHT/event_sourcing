@@ -1,11 +1,8 @@
-// Verifies: EVS-PRD-reaction-scope/E
-// (source-identical consumer code)
-//
 // Cross-impl contract test: runs the same assertions against both
-// LocalScope and RemoteScope to enforce source-identical behavior per
-// assertion E of the requirement declared above. The set of assertions is the
-// intersection of behaviours both impls must satisfy. Per-impl
-// behaviours live in `local_scope_test.dart` / the remote suite.
+// LocalScope and RemoteScope to enforce source-identical consumer code.
+// The set of assertions is the intersection of behaviours both impls
+// must satisfy. Per-impl behaviours live in `local_scope_test.dart` /
+// the remote suite.
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:reaction/reaction.dart';
@@ -22,6 +19,7 @@ class _ScopeFixture {
 }
 
 void main() {
+  // Verifies: EVS-PRD-reaction-scope/E
   group('ReactionScope contract', () {
     for (final entry in <(String, Future<_ScopeFixture> Function())>[
       ('LocalScope', _buildLocalScope),

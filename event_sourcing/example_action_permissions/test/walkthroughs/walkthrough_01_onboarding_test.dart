@@ -1,9 +1,4 @@
 // test/walkthroughs/walkthrough_01_onboarding_test.dart
-// Verifies: EVS-PRD-permissions-as-events/B
-// Verifies: EVS-PRD-permissions-as-events/B+C
-//
-// permissionsFor) — session-start endpoint shape.
-
 import 'package:flutter_test/flutter_test.dart';
 
 import 'test_support/demo_server_harness.dart';

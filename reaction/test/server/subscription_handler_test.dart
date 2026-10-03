@@ -1,17 +1,3 @@
-// Verifies: EVS-PRD-subscription remote-server side
-// WS subscription
-// state machine accepts AuthMessage first and emits AuthOkMsg; per-subscribe
-// view-level authorization rejects with subscription_denied on policy
-// deny. Snapshot/Delta relay covered in e2e tests where the
-// full substrate is exercised.
-//
-// Verifies: EVS-PRD-cross-process-event-transport/D+E
-// multiplex by
-//   subscriptionId and per-subscription authorization gating.
-// Verifies: EVS-PRD-auth-session/C+E
-// validator-driven auth on the
-//   first WS message; 4001 auth_rejected on AuthenticationDenied.
-
 import 'dart:async';
 import 'dart:convert';
 
@@ -183,6 +169,9 @@ void main() {
     return received.last;
   }
 
+  // Verifies: EVS-PRD-auth-session/C
+  // The handler authenticates the first message through the
+  // PrincipalAuthValidator and reports the Principal it returned.
   test('auth_ok on valid first message', () async {
     final pair = _Pair();
     addTearDown(pair.close);
@@ -205,6 +194,7 @@ void main() {
     expect(res['principalId'], 'alice');
   });
 
+  // Verifies: EVS-PRD-cross-process-event-transport/E
   test('subscription_denied when view-level perm fails', () async {
     final pair = _Pair();
     addTearDown(pair.close);

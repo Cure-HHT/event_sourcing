@@ -1,19 +1,3 @@
-// Verifies: EVS-PRD-delivery-channel/A
-// a channel is identified by the sending database, the destination, the
-//   registration and the generation.
-// Verifies: EVS-PRD-delivery-channel/B
-// the delivery hash covers the channel, the number, the link, the hash of
-//   every event carried and the delivery's attributes.
-// Verifies: EVS-DEV-delivery-channel/C
-// the delivery hash is the lowercase-hex SHA-256 of the canonical JSON of
-//   exactly channel, delivery_number, previous_delivery_hash, event_hashes
-//   and attributes, the attributes as carried.
-// Verifies: EVS-DEV-delivery-channel/K
-// the native batch envelope carries exactly its keys, batch format "3",
-//   at least one event and an attributes object.
-// Verifies: EVS-DEV-delivery-receiver/A
-// a batch that is not in the native format, one whose attributes is not an
-//   object and one that carries no event are refused by name.
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -106,6 +90,7 @@ Matcher _refusedWith(String reason) => throwsA(
 );
 
 void main() {
+  // Verifies: EVS-DEV-delivery-channel/C
   group('delivery hash', () {
     test('matches the golden vector', () {
       expect(
@@ -145,6 +130,7 @@ void main() {
       expect(envelope.eventHashes, <Object?>['h1', 'h2']);
     });
 
+    // Verifies: EVS-PRD-delivery-channel/B
     test('an unknown attribute key is covered by the hash', () {
       final envelope = _sealed(
         attributes: <String, Object?>{
@@ -158,6 +144,7 @@ void main() {
       expect(envelope.deliveryHash, isNot(_goldenHash));
     });
 
+    // Verifies: EVS-PRD-delivery-channel/B
     test('every hashed field changes the hash', () {
       final base = computeDeliveryHash(
         channel: _channel,
@@ -208,6 +195,7 @@ void main() {
   });
 
   group('envelope keys', () {
+    // Verifies: EVS-DEV-delivery-channel/K
     test('the envelope carries exactly its keys', () {
       final wire = _wire(_sealed());
       expect(wire.keys.toSet(), _envelopeKeys);
@@ -218,6 +206,7 @@ void main() {
       expect(DeliveryEnvelope.wireFormat, 'esd/batch@3');
     });
 
+    // Verifies: EVS-DEV-delivery-channel/K
     test('delivery 1 carries a null link under its key', () {
       final envelope = DeliveryEnvelope.seal(
         batchId: 'b',
@@ -235,6 +224,7 @@ void main() {
       expect(wire['previous_delivery_hash'], isNull);
     });
 
+    // Verifies: EVS-PRD-delivery-channel/A
     test('the channel is keyed by its four identifying fields', () {
       expect(_channel.toJson(), <String, Object?>{
         'sender_database_id': 'db-sender',
@@ -311,6 +301,7 @@ void main() {
       expect(decoded.recomputedDeliveryHash, isNot(_goldenHash));
     });
 
+    // Verifies: EVS-DEV-delivery-receiver/A
     test('a batch in another format is refused by name', () {
       // A batch in the data-format-2 batch format.
       final v2 = <String, Object?>{
@@ -335,6 +326,7 @@ void main() {
       );
     });
 
+    // Verifies: EVS-DEV-delivery-receiver/A
     test('attributes that are not an object are refused by name', () {
       for (final value in <Object?>[null, <Object?>[], 'x', 1]) {
         final wire = _wire(_sealed())..['attributes'] = value;
@@ -346,6 +338,7 @@ void main() {
       }
     });
 
+    // Verifies: EVS-DEV-delivery-receiver/A
     test('a batch that carries no event is refused by name', () {
       final wire = _wire(_sealed())..['events'] = <Object?>[];
       expect(
@@ -395,6 +388,7 @@ void main() {
       );
     });
 
+    // Verifies: EVS-DEV-delivery-channel/K
     test('sealing refuses a delivery without events', () {
       expect(
         () => _sealed(events: const <Map<String, Object?>>[]),

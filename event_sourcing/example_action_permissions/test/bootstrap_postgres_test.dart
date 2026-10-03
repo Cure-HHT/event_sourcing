@@ -1,13 +1,3 @@
-// Verifies: EVS-DEV-postgres-backend/D
-// demo bootstrap runs against
-//   PostgresBackend, satisfying the conformance harness alongside the
-//   sembast flavor in bootstrap_test.dart.
-// Verifies: EVS-PRD-destinations/V
-// two server instances booted the way the demo server boots share one
-//   database: each starts a delivery cycle over its registry, one drains
-//   and the other stands by; once the draining instance closes its cycle,
-//   another instance's cycle drains.
-//
 // Gated on PG_TEST_URL. Drops the demo schema and runs the demo's deployment
 // step in the per-test factory, so each call returns a deterministic empty
 // database opened as the declared runtime role.
@@ -51,6 +41,10 @@ void main() {
 
   runBootstrapTests(factory, label: 'postgres');
 
+  // Verifies: EVS-PRD-destinations/V
+  // Two server instances booted the way the demo server boots share one
+  // database: one drains and the other stands by; once the draining
+  // instance closes its cycle, another instance's cycle drains.
   test('two server instances: one drains, the other stands by', () async {
     final first = await factory();
     final a = await _boot(

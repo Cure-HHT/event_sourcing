@@ -1,11 +1,3 @@
-// Verifies: EVS-PRD-view-subscriber/A+E
-// the library defines a
-// `ViewSource` interface whose `watch<T>(viewName, mapper, filter,
-// aggregates)` returns `Stream<Update<T>>` (A), and the `Update<T>`
-// variant set is a stable, exhaustively-switchable contract so that
-// batched/cursor snapshot delivery can be added additively without
-// changing existing variant shapes or breaking consumers (E).
-//
 // Structural interface-shape assertion. The test body is intentionally
 // tautological at runtime: the assertion is that this file COMPILES,
 // proving the library exposes `ViewSource` through the public barrel
@@ -31,6 +23,7 @@ class _StubViewSource implements ViewSource {
 T _asContracted<T>(T value) => value;
 
 void main() {
+  // Verifies: EVS-PRD-view-subscriber/A
   group('ViewSource interface shape', () {
     test('reachable through the public barrel with the contracted '
         'generic watch<T>(...) signature', () {
@@ -62,10 +55,10 @@ void main() {
     });
   });
 
+  // Verifies: EVS-PRD-view-subscriber/E
   group('Update<T> variant set is a stable, additive-evolution contract', () {
     test('the sealed variant set is exhaustively switchable (E)', () {
-      // Assertion E of the view-subscriber requirement declared above:
-      // snapshot delivery MAY evolve
+      // Snapshot delivery MAY evolve
       // (chunking/paging/cursor resumption) only additively. The proof is
       // that Update<T> is a sealed union whose complete variant set is
       // Snapshot/EndOfReplay/Delta/Tombstone — this switch is compiler-

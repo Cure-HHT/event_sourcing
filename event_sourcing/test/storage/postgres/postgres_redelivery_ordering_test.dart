@@ -2,12 +2,6 @@
 // concurrent append on Postgres, where the redelivery read and the append
 // run on independent pooled connections instead of sharing one storage
 // lock. Gated on PG_TEST_URL.
-//
-// Verifies: EVS-PRD-subscription/C
-// sequence order is preserved: a live change published by an append that
-//   lands while `deliverBecameCurrent`'s redelivery read is in flight is
-//   buffered until the redelivered rows are emitted, so no redelivered
-//   Snapshot ever trails a newer Delta for the same aggregate.
 
 @TestOn('vm')
 library;
@@ -88,6 +82,8 @@ void main() {
   });
 
   // Verifies: EVS-PRD-subscription/C
+  // a live change published while the redelivery read is in flight is
+  //   buffered until the redelivered rows are emitted.
   test('an append that commits while the redelivery read is in flight is '
       "buffered: its Delta never precedes the redelivered aggregate's "
       'Snapshot in the subscription stream', () async {

@@ -1,4 +1,3 @@
-// Verifies: EVS-DEV-destination-drain/U
 // each destination-registry operation decides and writes inside one
 // transaction: a failure injected after an operation's audit append
 // (through the `failRegistryAuditAppend` test seam) rolls the whole
@@ -48,6 +47,7 @@ Future<void> _failing(String entryType, Future<void> Function() op) =>
     );
 
 void main() {
+  // Verifies: EVS-DEV-destination-drain/U
   group('DestinationRegistry mutation atomicity', () {
     late SembastBackend backend;
     late DestinationRegistry registry;

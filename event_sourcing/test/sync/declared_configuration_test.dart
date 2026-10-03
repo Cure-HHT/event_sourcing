@@ -1,9 +1,8 @@
-// Verifies: EVS-DEV-destination-drain/F
-// the declared configuration of a destination and its fingerprint: stable
-//   across the insertion order of the filter's sets; different for a
-//   change of any declared field (null and an empty set differ); equal for
-//   a change of the hard-delete opt-in alone, and for a change of code the
-//   library cannot read unless the configuration version changes.
+// The declared configuration of a destination and its fingerprint: stable
+// across the insertion order of the filter's sets; different for a change
+// of any declared field (null and an empty set differ); equal for a change
+// of the hard-delete opt-in alone, and for a change of code the library
+// cannot read unless the configuration version changes.
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 

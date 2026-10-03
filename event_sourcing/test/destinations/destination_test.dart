@@ -1,7 +1,3 @@
-// Verifies: EVS-PRD-destinations/B+E
-// exercises the Destination abstract
-// interface: filter dispatching (B) and the app-supplied delivery contract
-// (transform, send, SendResult variants — E).
 import 'dart:typed_data';
 
 import 'package:event_sourcing/src/destinations/destination.dart';
@@ -130,6 +126,7 @@ void main() {
 
     // WirePayload fields come straight from the subclass implementation. A
     // single-event batch is a batch of length one.
+    // Verifies: EVS-PRD-destinations/E
     test('transform returns subclass-produced WirePayload', () async {
       final dest = _EchoDestination(result: const SendOk());
       final payload = await dest.transform([_mkEvent('ev-abc')]);
@@ -138,6 +135,7 @@ void main() {
       expect(payload.transformVersion, 'echo-v1');
     });
 
+    // Verifies: EVS-PRD-destinations/E
     test('send returns SendOk when scripted', () async {
       final dest = _EchoDestination(result: const SendOk());
       final payload = await dest.transform([_mkEvent('ev-1')]);
@@ -166,6 +164,7 @@ void main() {
     });
 
     // subclass's SubscriptionFilter.
+    // Verifies: EVS-PRD-destinations/B
     test('filter dispatches to the subclass implementation', () {
       final dest = _EchoDestination(result: const SendOk());
       expect(dest.filter.matches(_mkEvent('ev-1')), isTrue);

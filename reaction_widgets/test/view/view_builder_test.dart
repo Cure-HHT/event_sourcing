@@ -1,5 +1,3 @@
-// Verifies: EVS-PRD-reaction-widget-contract/C+G+I+J+K
-
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -57,6 +55,7 @@ Future<List<ViewState<_Row>>> _pumpRecording(
 
 void main() {
   group('ViewBuilder (default mode)', () {
+    // Verifies: EVS-PRD-reaction-widget-contract/I+J
     testWidgets('starts Loading; Ready arrives only after EndOfReplay', (
       tester,
     ) async {
@@ -138,6 +137,7 @@ void main() {
       expect(ready.rows.single['title'], 'A-updated');
     });
 
+    // Verifies: EVS-PRD-reaction-widget-contract/J
     testWidgets(
       'default mode buffers a pre-EndOfReplay Delta/Tombstone and stays '
       'Loading until EndOfReplay',
@@ -287,7 +287,7 @@ void main() {
       expect(_aggregateIdOf(ready.rows.single), 'a');
     });
 
-    // Verifies: EVS-PRD-reaction-widget-contract/L
+    // Verifies: EVS-PRD-reaction-widget-contract/I+L
     testWidgets('ConnectionStatus.Reconnecting -> Stale retains rows', (
       tester,
     ) async {
@@ -427,6 +427,7 @@ void main() {
     });
   });
 
+  // Verifies: EVS-PRD-reaction-widget-contract/K
   group('semanticIdentifier hook', () {
     testWidgets('identifier surfaces with loading state token', (tester) async {
       final handle = tester.ensureSemantics();
@@ -542,6 +543,7 @@ void main() {
     });
   });
 
+  // Verifies: EVS-PRD-reaction-widget-contract/J
   group('ViewBuilder (isProgressive mode)', () {
     testWidgets('isProgressive mode emits Ready during snapshot replay', (
       tester,

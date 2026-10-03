@@ -1,5 +1,3 @@
-// Verifies: EVS-PRD-permissions-as-events/B
-//
 // Site-scoped end-to-end test against the demo bootstrap. Walks the
 // substrate's authorize path with the demo's role-permission matrix and
 // the demo's user-role-scope assignments seeded from tool/users.yaml.
@@ -52,6 +50,7 @@ users:
 ''';
 
 void main() {
+  // Verifies: EVS-PRD-permissions-as-events/B
   group('Site-scoped end-to-end binding', () {
     late DemoServerComponents components;
 

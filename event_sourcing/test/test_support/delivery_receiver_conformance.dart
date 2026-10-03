@@ -28,7 +28,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import '../security/security_finding_conformance.dart' show expectedFindingId;
 import 'ingest_record_findings_conformance.dart' show sealedRecord;
-import 'manual_timers.dart' show neverFiringTimer;
+import 'manual_timers.dart' show neverFiringTimer, openWithCatchUpParked;
 import 'record_fixtures.dart';
 import 'version_compatibility_conformance.dart' show VersionTestDatabase;
 
@@ -242,6 +242,11 @@ Future<EventStore> openReceiverStore(
     projections: projections,
   );
 }
+
+/// Opens a store as [openReceiverStore] does, and returns it once its
+/// catch-up driver has parked (see [openWithCatchUpParked]).
+Future<EventStore> openReceiverStoreWithCatchUpParked(VersionTestDatabase db) =>
+    openWithCatchUpParked(() => openReceiverStore(db));
 
 /// Runs the scenarios. [openDatabase] returns a fresh database; [skip]
 /// skips the group when set.

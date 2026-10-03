@@ -1,10 +1,4 @@
 // test/walkthroughs/walkthrough_04_idempotency_policies_test.dart
-// Verifies: EVS-PRD-action-dispatch/D
-// Verifies: EVS-PRD-action-dispatch/D
-// Verifies: EVS-PRD-action-dispatch/D
-// Verifies: EVS-PRD-event-log/A+C
-//
-//           required), and the dispatcher's behavior under each.
 
 import 'package:action_permissions_demo/shared/wire_types.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -78,6 +72,7 @@ void main() {
       },
     );
 
+    // Verifies: EVS-PRD-action-dispatch/D
     test(
       'Idempotency.optional: EditGreenNote with key + replay -> idempotencyHit',
       () async {
@@ -133,6 +128,7 @@ void main() {
       },
     );
 
+    // Verifies: EVS-PRD-action-dispatch/D
     test(
       'Idempotency.required: PressRedAlarm with key + replay -> idempotencyHit',
       () async {

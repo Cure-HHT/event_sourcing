@@ -1,8 +1,3 @@
-// Verifies: EVS-PRD-subscription/C
-// live subscribers of one event store receive its events in log order,
-//   however the continuations of concurrent committed transactions resume:
-//   concurrent appends on one store are delivered in sequence order, and
-//   so are the events of a transaction that appends several.
 import 'dart:async';
 
 import 'package:event_sourcing/event_sourcing.dart';
@@ -13,6 +8,7 @@ import 'package:sembast/sembast_memory.dart';
 import '../test_support/registry_with_audit.dart';
 
 void main() {
+  // Verifies: EVS-PRD-subscription/C
   test('concurrent appends on one store are delivered in log order', () async {
     final db = await newDatabaseFactoryMemory().openDatabase('pub-order.db');
     final backend = SembastBackend(database: db);
@@ -71,6 +67,7 @@ void main() {
     await backend.close();
   });
 
+  // Verifies: EVS-PRD-subscription/C
   test('a later commit whose continuation resumes first is delivered after '
       'the earlier one', () async {
     final db = await newDatabaseFactoryMemory().openDatabase('pub-late.db');
@@ -129,6 +126,7 @@ void main() {
     await backend.close();
   });
 
+  // Verifies: EVS-PRD-subscription/C
   test('the events of a transaction that appends several are delivered in '
       'log order, before a later commit whose continuation resumes '
       'first', () async {

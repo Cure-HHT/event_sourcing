@@ -1,5 +1,3 @@
-// Verifies: EVS-PRD-reaction-widget-contract/F
-
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -21,6 +19,7 @@ import 'package:flutter_test/flutter_test.dart';
 /// `eventStoreRef` and other identifiers containing the substring do
 /// not false-positive).
 void main() {
+  // Verifies: EVS-PRD-reaction-widget-contract/F
   test('no widget source references disallowed substrate-internal types', () {
     const disallowedTypes = {
       'EventStore',

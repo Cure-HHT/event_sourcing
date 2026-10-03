@@ -1,13 +1,9 @@
-// Verifies: EVS-PRD-action-dispatch/A
-// (ActionSubmission value type carries actionName, rawInput, idempotencyKey, flowToken into dispatch)
-// Verifies: EVS-DEV-flow-token/A
-// flowToken is optional, can be supplied on a submission, and round-trips.
-
 import 'package:event_sourcing/src/actions/action_submission.dart';
 import 'package:test/test.dart';
 
 void main() {
   group('ActionSubmission', () {
+    // Verifies: EVS-DEV-flow-token/A
     test('required fields are populated', () {
       const s = ActionSubmission(
         actionName: 'submit_note',
@@ -19,6 +15,7 @@ void main() {
       expect(s.flowToken, isNull);
     });
 
+    // Verifies: EVS-DEV-flow-token/A
     test('optional fields can be supplied', () {
       const s = ActionSubmission(
         actionName: 'submit_note',

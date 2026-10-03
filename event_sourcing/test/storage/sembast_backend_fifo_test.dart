@@ -1,10 +1,8 @@
-// Verifies: EVS-PRD-portability/D
-// these tests pin sembast-specific
-//   FIFO behaviors that are NOT part of the abstract StorageBackend
-//   contract: (a) the on-disk lockstep between the Sembast int store-key
-//   and the payload's `sequence_in_queue`; (b) sequence_in_queue's
-//   never-reused property after a raw `store.delete` bypassing the
-//   public API.
+// These tests pin sembast-specific FIFO behaviors that are NOT part of the
+// abstract StorageBackend contract: (a) the on-disk lockstep between the
+// Sembast int store-key and the payload's `sequence_in_queue`; (b)
+// sequence_in_queue's never-reused property after a raw `store.delete`
+// bypassing the public API.
 //
 // The abstract StorageBackend FIFO contract (enqueueFifoTxn,
 // readFifoHead, listFifoEntries, appendAttemptTxn, setFinalStatusTxn,

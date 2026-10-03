@@ -1,7 +1,3 @@
-// Verifies: EVS-PRD-cross-process-event-transport/A
-// round-trip codec
-//   for SubscriptionFilter (carried inside SubscribeMsg envelopes).
-
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:reaction/src/wire/filter_codec.dart';

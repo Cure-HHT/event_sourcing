@@ -1,5 +1,3 @@
-// Verifies: EVS-DEV-postgres-backend/O
-//
 // The setup for an application's own tables in the library's Postgres
 // database is documented beside the runtime role's privileges -- in the
 // doc comment of `postgresRuntimeRoleGrants` -- and in the package README's
@@ -58,6 +56,7 @@ String? ownTablesProblem(String document) {
 }
 
 void main() {
+  // Verifies: EVS-DEV-postgres-backend/O
   test('the doc comment of postgresRuntimeRoleGrants documents the '
       "application's own-table setup", () {
     final source = File(
@@ -66,6 +65,7 @@ void main() {
     expect(ownTablesProblem(source), isNull);
   });
 
+  // Verifies: EVS-DEV-postgres-backend/O
   test("the README's Postgres section documents the application's "
       'own-table setup', () {
     final readme = File('README.md').readAsStringSync();

@@ -1,6 +1,3 @@
-// Verifies: EVS-PRD-permissions-as-events
-// (Permission carries optional scopeClass identifier; legacy ScopeClass enum removed)
-
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:test/test.dart';
 

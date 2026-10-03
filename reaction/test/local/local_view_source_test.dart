@@ -1,8 +1,3 @@
-// Verifies: EVS-PRD-view-subscriber/B
-// LocalViewSource delegates
-// to EventStore.subscribe<T> with AggregateMode<T>: emits Snapshot/
-// EndOfReplay/Delta/Tombstone updates, applies the mapper, and
-// respects the aggregates allow-list.
 import 'dart:async';
 
 import 'package:event_sourcing/event_sourcing.dart';
@@ -12,6 +7,7 @@ import 'package:reaction/src/local/local_view_source.dart';
 import 'test_support/reaction_test_harness.dart';
 
 void main() {
+  // Verifies: EVS-PRD-view-subscriber/B
   group('LocalViewSource.watch', () {
     late ReactionTestHarness harness;
     late LocalViewSource source;

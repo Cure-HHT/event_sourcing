@@ -1,7 +1,3 @@
-// Verifies: EVS-PRD-portability/D
-// StorageException sealed hierarchy hides
-//   backend-specific error types; three-variant exhaustive pattern match
-//   enforced at compile time.
 import 'package:event_sourcing/src/storage/storage_exception.dart';
 import 'package:flutter_test/flutter_test.dart';
 

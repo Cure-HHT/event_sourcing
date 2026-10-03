@@ -1,8 +1,3 @@
-// Verifies: EVS-PRD-action-dispatch/C
-// (denial event factories produce correctly-shaped EventDrafts for every failure stage)
-// Verifies: EVS-PRD-action-dispatch/B
-// (one factory per stage maps directly to the B-stage taxonomy)
-
 import 'package:event_sourcing/src/actions/authorization_decision.dart'
     show DenyReason;
 import 'package:event_sourcing/src/actions/denial_events.dart';
@@ -11,6 +6,7 @@ import 'package:test/test.dart';
 
 void main() {
   group('denial event factories', () {
+    // Verifies: EVS-PRD-action-dispatch/C
     test('unknownAction draft has correct shape', () {
       final draft = denialUnknownAction(
         invocationId: 'inv-1',
@@ -25,6 +21,7 @@ void main() {
       expect(draft.metadata?['request_id'], 'r-1');
     });
 
+    // Verifies: EVS-PRD-action-dispatch/C
     test('parseDenied includes sanitized error message', () {
       final draft = denialParseDenied(
         invocationId: 'inv-1',
@@ -41,6 +38,7 @@ void main() {
       );
     });
 
+    // Verifies: EVS-PRD-action-dispatch/C
     test('validationDenied carries error class', () {
       final draft = denialValidationDenied(
         invocationId: 'inv-1',
@@ -62,6 +60,7 @@ void main() {
       expect(draft.data['field_path'], 'email');
     });
 
+    // Verifies: EVS-PRD-action-dispatch/C
     test('authorizationDenied includes permission and active role', () {
       final draft = denialAuthorizationDenied(
         invocationId: 'inv-1',
@@ -132,6 +131,7 @@ void main() {
       expect(draft.metadata?['request_id'], 'r-mm');
     });
 
+    // Verifies: EVS-PRD-action-dispatch/C
     test('executionFailed carries sanitized error', () {
       final draft = denialExecutionFailed(
         invocationId: 'inv-1',

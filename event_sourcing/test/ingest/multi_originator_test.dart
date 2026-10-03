@@ -1,19 +1,3 @@
-// Verifies: EVS-PRD-ingest/A
-// the ingest seam and deliveries admit events from
-//   multiple independent originators into a single local log
-// Verifies: EVS-PRD-ingest/B
-// originator identity preserved per event
-//   (aggregateId, sequenceNumber, arrival_hash, origin_sequence_number)
-// Verifies: EVS-PRD-ingest/C
-// Chain 2 ingest_sequence_number and
-//   previous_ingest_hash thread monotonically across interleaved originators
-// Verifies: EVS-PRD-hash-chain-integrity/B
-// the chain verification finds nothing over a multi-originator log, over
-//   the whole log and over each event's own range
-// Verifies: EVS-PRD-ingest/E
-// locally-ingested events from distinct
-//   originators participate in the same Chain 2 (unified ingest sequence)
-
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
@@ -79,10 +63,12 @@ Future<StoredEvent> _fetchStored(_Fixture fixture, String eventId) async {
 // ---------------------------------------------------------------------------
 
 void main() {
+  // Verifies: EVS-PRD-ingest/A+C, EVS-PRD-hash-chain-integrity/C+E
   group('Multi-originator ingest', () {
     // -----------------------------------------------------------------------
     // Test 1: per-event interleaved ingest from two originators
     // -----------------------------------------------------------------------
+    // Verifies: EVS-PRD-ingest/B
     test(
       'per-event interleaved ingest threads Chain 2 across two originators',
       () async {

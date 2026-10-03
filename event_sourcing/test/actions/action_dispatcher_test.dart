@@ -1,5 +1,3 @@
-// Verifies: EVS-PRD-action-dispatch/C
-// (every dispatched action produces a recorded denial event or DispatchSuccess with emittedEventIds)
 // Uses flutter_test (not package:test) because EventStore depends on
 // Sembast, which requires the Flutter test binding to run in this package.
 // All other tests in event_sourcing/ that touch EventStore use flutter_test
@@ -223,6 +221,7 @@ void main() {
       expect((r as DispatchUnknownAction<Object?>).requestedName, 'nope');
     });
 
+    // Verifies: EVS-PRD-action-dispatch/C
     test('unknown action emits unknown_action denial event', () async {
       await dispatcher.dispatch(
         const ActionSubmission(
@@ -297,6 +296,7 @@ void main() {
       expect(result, isA<DispatchParseDenied<Object?>>());
     });
 
+    // Verifies: EVS-PRD-action-dispatch/C
     test('parseInput failure emits parse_denied event', () async {
       await dispatcher.dispatch(
         const ActionSubmission(
@@ -704,6 +704,7 @@ void main() {
       expect(result, isA<DispatchValidationDenied<Object?>>());
     });
 
+    // Verifies: EVS-PRD-action-dispatch/C
     test('validate failure emits validation_denied event', () async {
       await dispatcher.dispatch(
         const ActionSubmission(
@@ -752,6 +753,7 @@ void main() {
       expect(denied.permission.name, 'test.hello');
     });
 
+    // Verifies: EVS-PRD-action-dispatch/C
     test('authz denial emits authorization_denied event', () async {
       await dispatcher.dispatch(
         const ActionSubmission(
@@ -1061,6 +1063,7 @@ void main() {
       expect(result, isA<DispatchExecutionFailed<Object?>>());
     });
 
+    // Verifies: EVS-PRD-action-dispatch/C
     test('execute throw emits execution_failed denial event', () async {
       await allowDispatcher.dispatch(
         const ActionSubmission(
@@ -1077,6 +1080,7 @@ void main() {
       expect(denials.first.data['action_name'], 'bad_execute');
     });
 
+    // Verifies: EVS-PRD-action-dispatch/C
     // Verifies: EVS-PRD-action-dispatch/A (dispatcher accepts actions and processes all the way through to DispatchSuccess)
     // Verifies: EVS-PRD-action-dispatch/B
     // (all stages complete in order for a successful dispatch)

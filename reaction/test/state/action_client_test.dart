@@ -1,8 +1,3 @@
-// Verifies: EVS-PRD-action-submitter/A
-// ActionClient mints an idempotency
-// key when the submission lacks one (so Idempotency.required actions are not
-// parse-denied for programmatic callers), passes consumer-supplied keys
-// through unchanged, and returns the submitter's DispatchResult.
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:reaction/src/interfaces/action_submitter.dart';

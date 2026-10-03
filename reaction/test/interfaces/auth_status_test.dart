@@ -1,12 +1,9 @@
-// Verifies: EVS-PRD-auth-session/B
-// AuthStatus is a sealed type
-// with exactly three variants (Authenticated, NotAuthenticated,
-// Expired).
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:reaction/src/interfaces/auth_session.dart';
 
 void main() {
+  // Verifies: EVS-PRD-auth-session/B
   group('AuthStatus', () {
     test('Authenticated carries a Principal', () {
       final p = Principal.user(

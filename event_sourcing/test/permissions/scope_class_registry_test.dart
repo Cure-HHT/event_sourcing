@@ -1,17 +1,9 @@
-// Verifies: EVS-PRD-permissions-as-events
-// (composition-time validation refuses cycles, dangling refs, missing columns)
-// Verifies: EVS-PRD-scoped-permissions/A+B — registers scope classes + byName lookup (A); composition refuses on duplicates,
-//   dangling refs, missing columns, and cycles.
-// Verifies: EVS-DEV-scope-class-registry-validation/A+B+C+D+E
-// duplicate-name
-//   refusal, dangling parentClass, projection / column resolution, cycle
-//   detection, and ancestor-chain walk.
-
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:test/test.dart';
 
 void main() {
   group('ScopeClassRegistry', () {
+    // Verifies: EVS-PRD-scoped-permissions/A, EVS-DEV-scope-class-registry-validation/E
     test('accepts a flat registry of top-level classes', () {
       final r = ScopeClassRegistry(
         classes: const [
@@ -25,6 +17,7 @@ void main() {
       expect(r.byName('nonexistent'), isNull);
     });
 
+    // Verifies: EVS-PRD-scoped-permissions/A
     test('accepts a hierarchy of two classes', () {
       final r = ScopeClassRegistry(
         classes: const [
@@ -46,6 +39,7 @@ void main() {
       expect(r.byName('patient')!.containedIn!.parentClass, 'site');
     });
 
+    // Verifies: EVS-PRD-scoped-permissions/B, EVS-DEV-scope-class-registry-validation/A
     test('rejects duplicate class names', () {
       expect(
         () => ScopeClassRegistry(
@@ -65,6 +59,7 @@ void main() {
       );
     });
 
+    // Verifies: EVS-PRD-scoped-permissions/B, EVS-DEV-scope-class-registry-validation/B
     test('rejects parentClass that is not a registered class', () {
       expect(
         () => ScopeClassRegistry(
@@ -92,6 +87,7 @@ void main() {
       );
     });
 
+    // Verifies: EVS-DEV-scope-class-registry-validation/C
     test('rejects projection that is not registered', () {
       expect(
         () => ScopeClassRegistry(
@@ -119,6 +115,7 @@ void main() {
       );
     });
 
+    // Verifies: EVS-PRD-scoped-permissions/B, EVS-DEV-scope-class-registry-validation/C
     test('rejects projection missing the keyColumn or parentColumn', () {
       expect(
         () => ScopeClassRegistry(
@@ -147,6 +144,7 @@ void main() {
       );
     });
 
+    // Verifies: EVS-PRD-scoped-permissions/B, EVS-DEV-scope-class-registry-validation/D
     test('rejects cycles in the containment graph', () {
       expect(
         () => ScopeClassRegistry(
@@ -182,6 +180,7 @@ void main() {
       );
     });
 
+    // Verifies: EVS-DEV-scope-class-registry-validation/E
     test('ancestorChain returns chain from class to top', () {
       final r = ScopeClassRegistry(
         classes: const [

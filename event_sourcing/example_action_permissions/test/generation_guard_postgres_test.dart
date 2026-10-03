@@ -1,11 +1,3 @@
-// Verifies: EVS-DEV-version-compatibility/F
-// a demo server instance of a build that raises the `demo_note` entry type
-//   to a new major (2.0) is refused with IncompatibleGenerationException
-//   while an instance of the 1.0 build is running on the same database,
-//   and the running instance keeps serving and draining; once it has
-//   stopped, the 2.0 build opens (a major bump is deployed
-//   stop-then-start).
-//
 // Gated on PG_TEST_URL. Drops the demo schema and runs the demo's deployment
 // step, so it runs one file at a time like every Postgres test; the
 // instances connect as the declared runtime role.
@@ -69,6 +61,7 @@ void main() {
     return;
   }
 
+  // Verifies: EVS-DEV-version-compatibility/F
   test('a build raising an entry-type major is refused while the running '
       'build serves, and opens once it has stopped', () async {
     await db.reset();

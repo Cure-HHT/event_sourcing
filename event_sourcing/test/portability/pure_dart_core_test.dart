@@ -1,10 +1,9 @@
-// Verifies: EVS-PRD-portability/A
-// the library's core SOURCE (event_sourcing/
-//   lib) is pure Dart: no Flutter or web-only imports, and the runtime
-//   `dependencies:` block names only the Dart SDK + pure-Dart packages (no
-//   `sdk: flutter`). A regression that pulled Flutter into the core source or
-//   its runtime deps would break the VM/server target; this guard fails closed
-//   on the first offender.
+// The library's core SOURCE (event_sourcing/lib) is pure Dart: no Flutter
+//   or web-only imports, and the runtime `dependencies:` block names only
+//   the Dart SDK + pure-Dart packages (no `sdk: flutter`). A regression
+//   that pulled Flutter into the core source or its runtime deps would
+//   break the VM/server target; this guard fails closed on the first
+//   offender.
 //
 //   One file is exempt: lib/src/storage/web_locks.dart, the library's wrapper
 //   of the browser's lock manager (the incompatible-generation guard on the
@@ -29,6 +28,7 @@ import 'package:flutter_test/flutter_test.dart';
 const _sanctionedWebFile = 'lib/src/storage/web_locks.dart';
 
 void main() {
+  // Verifies: EVS-PRD-portability/A
   group('portability/A — pure-Dart core', () {
     test('the sanctioned web file is reached only through a conditional '
         'import', () {

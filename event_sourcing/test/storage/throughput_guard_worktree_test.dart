@@ -1,5 +1,3 @@
-// Verifies: EVS-DEV-chain-verification/T
-
 @TestOn('vm')
 library;
 

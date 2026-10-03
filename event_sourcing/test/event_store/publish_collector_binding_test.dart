@@ -1,9 +1,3 @@
-// Verifies: EVS-PRD-destinations/K
-// an append publishes to live subscribers
-//   only through the collector of the transaction run that commits it: a
-//   collector whose run has ended is refused before any write, and nothing
-//   is appended or published.
-
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing/src/event_store.dart' show PublishCollector;
 import 'package:flutter_test/flutter_test.dart';
@@ -70,6 +64,7 @@ void main() {
     });
   });
 
+  // Verifies: EVS-PRD-subscription/E
   test('an append through the collector of an ended run is refused; '
       'nothing is appended or published', () async {
     late PublishCollector leaked;
@@ -99,6 +94,7 @@ void main() {
     expect(leaked.events, isEmpty);
   });
 
+  // Verifies: EVS-PRD-subscription/E
   test('an append through the collector the run received commits and is '
       'published once', () async {
     final appended = await store.runTransaction<StoredEvent?>(

@@ -1,10 +1,3 @@
-// Verifies: EVS-PRD-subscription/E
-// a storage backend may run a transaction
-//   body more than once before one run commits (Postgres after a
-//   serialization conflict, sembast_web after another tab commits first);
-//   live subscribers receive only the committed run's events and view
-//   changes, once each.
-//
 // RerunningSembastBackend models such a re-run on the VM: it runs the body
 // once and rolls that run back, then runs it again and commits.
 
@@ -16,6 +9,7 @@ import '../test_support/rerunning_sembast_backend.dart';
 const _viewName = 'notes_by_id';
 
 void main() {
+  // Verifies: EVS-PRD-subscription/E
   test('only the committed run of a re-run body is published, once', () async {
     final backend = await RerunningSembastBackend.openInMemory('publish-rerun');
     addTearDown(backend.close);

@@ -1,14 +1,3 @@
-// Verifies: EVS-PRD-ingest/B
-// upstream identity preserved across multi-hop
-//   chains; hop entries identify each originator and relay correctly
-// Verifies: EVS-PRD-ingest/C
-// each relay appends its own provenance entry;
-//   provenance grows by one entry per hop (length 3 for A->B->C, 4 for A->B->D->C)
-// Verifies: EVS-PRD-hash-chain-integrity/C
-// the chain verification walks all hops
-//   (including the k>1 ingest_sequence_number substitution branch) and returns
-//   ok=true across a 3-hop and a 4-hop chain
-//
 // Regression coverage for the hop-mapping logic in `hashMismatchEvidence`:
 // the recompute-at-hop-k-1 path uses
 //   - provenance[1].origin_sequence_number for k == 1
@@ -81,6 +70,7 @@ Future<StoredEvent> _fetchStored(_Fixture fixture, String eventId) async {
 // ---------------------------------------------------------------------------
 
 void main() {
+  // Verifies: EVS-PRD-ingest/B+C, EVS-PRD-hash-chain-integrity/C
   group('Multi-hop Chain 1 verification', () {
     // -------------------------------------------------------------------
     // 3-hop chain: originator A -> mobile relay B -> control-server C

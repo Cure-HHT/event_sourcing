@@ -1,8 +1,3 @@
-// Verifies: EVS-PRD-storage-barrier/A
-// Verifies: EVS-PRD-storage-barrier/H
-// Verifies: EVS-PRD-storage-barrier/I
-// Verifies: EVS-DEV-storage-capability/A
-//
 // A Postgres description: the library opens the backend from the
 // description's connection, lock-session and wait settings, and closes it
 // when the event store closes, when the boot refuses after the backend
@@ -115,6 +110,7 @@ void main() {
 
   tearDownAll(() async => db?.drop());
 
+  // Verifies: EVS-PRD-storage-barrier/A+H, EVS-DEV-storage-capability/A
   test('the library opens the described backend, and closing the store '
       'leaves no session of its pool or lock session', () async {
     if (db == null) return;
@@ -139,6 +135,7 @@ void main() {
     expect(await _settledSessionsOf(db, libraryRoles()), 0);
   });
 
+  // Verifies: EVS-PRD-storage-barrier/I
   test('a boot refusal after the backend opened closes it before the error '
       'reaches the caller', () async {
     if (db == null) return;
@@ -168,6 +165,7 @@ void main() {
     expect(await _settledSessionsOf(db, libraryRoles()), 0);
   });
 
+  // Verifies: EVS-PRD-storage-barrier/I
   test('a failure inside bootstrapEventStore after the open closes the '
       'backend before the error reaches the caller', () async {
     if (db == null) return;
@@ -187,6 +185,7 @@ void main() {
     expect(await _settledSessionsOf(db, libraryRoles()), 0);
   });
 
+  // Verifies: EVS-PRD-storage-barrier/I
   test('an open refused before the backend is returned leaves no session '
       'of the refused role', () async {
     if (db == null) return;

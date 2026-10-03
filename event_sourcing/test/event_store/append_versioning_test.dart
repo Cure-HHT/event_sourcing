@@ -1,9 +1,3 @@
-// Verifies: EVS-DEV-append-stamps-registered-version/A
-// substrate stamps
-//   entry_type_version with the registered major and minor on every local
-//   append; also verifies that lib_format_version is stamped from
-//   LibVersion.dataFormat (EVS-PRD-event-log/A: immutable
-//   log record carries all version metadata at write-time).
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';

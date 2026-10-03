@@ -1,7 +1,3 @@
-// Verifies: EVS-PRD-subscription/E
-// a committed queue change (an enqueue, a
-//   status change) is published to the watchers of that destination's FIFO
-//   as a fresh snapshot, and to no other destination's watchers.
 import 'package:event_sourcing/src/destinations/batch_envelope_metadata.dart';
 import 'package:event_sourcing/src/ingest/delivery_channel.dart';
 import 'package:event_sourcing/src/ingest/delivery_envelope.dart';
@@ -43,6 +39,7 @@ void main() {
       );
     });
 
+    // Verifies: EVS-PRD-subscription/E
     test('watchFifo emits a new snapshot on enqueue', () async {
       final stream = backend.watchFifo('dest');
       // Buffer emissions; then enqueue.
@@ -64,6 +61,7 @@ void main() {
       expect(emissions.last.first.eventIds, ['e1']);
     });
 
+    // Verifies: EVS-PRD-subscription/E
     test('watchFifo emits a snapshot on a status change', () async {
       final entry = await enqueueSingle(
         backend,

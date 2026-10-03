@@ -1,5 +1,3 @@
-// Verifies: EVS-PRD-reaction-widget-contract/H
-
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -9,11 +7,13 @@ import 'package:reaction_widgets_testing/reaction_widgets_testing.dart';
 
 void main() {
   group('FakeReaction', () {
+    // Verifies: EVS-PRD-reaction-widget-contract/H
     test('implements ReactionScope', () {
       final fake = FakeReaction();
       expect(fake, isA<ReactionScope>());
     });
 
+    // Verifies: EVS-PRD-reaction-widget-contract/H
     test('driveAuthStatus emits to authSession.stream', () async {
       final fake = FakeReaction();
       final received = <AuthStatus>[];
@@ -39,6 +39,7 @@ void main() {
       await sub.cancel();
     });
 
+    // Verifies: EVS-PRD-reaction-widget-contract/H
     test('driveConnectionStatus emits to connectionStatusStream', () async {
       final fake = FakeReaction();
       final received = <ConnectionStatus>[];
@@ -53,6 +54,7 @@ void main() {
       await sub.cancel();
     });
 
+    // Verifies: EVS-PRD-reaction-widget-contract/H
     test('actionSubmitter returns queued DispatchResult', () async {
       final fake = FakeReaction();
       const result = DispatchResult<Object?>.success('ok', <String>[]);
@@ -76,6 +78,7 @@ void main() {
       );
     });
 
+    // Verifies: EVS-PRD-reaction-widget-contract/H
     test(
       'viewSource emits queued Update<T> events to active subscribers',
       () async {
@@ -108,6 +111,7 @@ void main() {
       },
     );
 
+    // Verifies: EVS-PRD-reaction-widget-contract/H
     test('emitViewError delivers the error, with its stack trace, on the '
         "subscriber's error channel", () async {
       final fake = FakeReaction();
@@ -142,6 +146,7 @@ void main() {
       expect(() => fake.emitViewError('v', StateError('x')), throwsStateError);
     });
 
+    // Verifies: EVS-PRD-reaction-widget-contract/H
     test('permissionSource.current and stream are drivable', () async {
       final fake = FakeReaction();
       expect(fake.permissionSource.current, isNull);
@@ -213,6 +218,7 @@ void main() {
     });
   });
 
+  // Verifies: EVS-PRD-reaction-widget-contract/H
   group('pumpReactionWidget', () {
     testWidgets('mounts a widget with FakeReaction in scope', (tester) async {
       final fake = FakeReaction();

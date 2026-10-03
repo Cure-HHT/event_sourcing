@@ -1,5 +1,3 @@
-// Verifies: EVS-PRD-reaction-widget-contract/C+E+G+K
-
 import 'dart:async';
 
 import 'package:event_sourcing/event_sourcing.dart';
@@ -85,6 +83,7 @@ void main() {
       expect((observed.last as Success).result, same(result));
     });
 
+    // Verifies: EVS-PRD-reaction-widget-contract/E
     testWidgets('retry during Submitting reuses the same idempotency key', (
       tester,
     ) async {
@@ -128,6 +127,7 @@ void main() {
       await tester.pumpAndSettle();
     });
 
+    // Verifies: EVS-PRD-reaction-widget-contract/E
     testWidgets('fresh key generated after terminal state', (tester) async {
       final fake = FakeReaction();
       fake.queueDispatchResult(
@@ -166,6 +166,7 @@ void main() {
       );
     });
 
+    // Verifies: EVS-PRD-reaction-widget-contract/E
     testWidgets('consumer-supplied idempotencyKey overrides generation', (
       tester,
     ) async {
@@ -244,6 +245,7 @@ void main() {
       },
     );
 
+    // Verifies: EVS-PRD-reaction-widget-contract/C+G
     testWidgets('renders nothing on its own (headless)', (tester) async {
       final fake = FakeReaction();
       await pumpReactionWidget(
@@ -258,6 +260,7 @@ void main() {
       expect(find.text('CUSTOM'), findsOneWidget);
     });
 
+    // Verifies: EVS-PRD-reaction-widget-contract/K
     group('semanticIdentifier hook', () {
       testWidgets('null identifier adds no Semantics node', (tester) async {
         final handle = tester.ensureSemantics();

@@ -1,9 +1,4 @@
 // test/walkthroughs/walkthrough_05_cross_user_keys_test.dart
-// Verifies: EVS-PRD-action-dispatch/D
-// Verifies: EVS-PRD-event-log/A+C
-//
-// so two different principals can use the same idempotency key without
-// collision.
 
 import 'package:action_permissions_demo/shared/wire_types.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -71,6 +66,7 @@ void main() {
       },
     );
 
+    // Verifies: EVS-PRD-action-dispatch/D
     test(
       'one principal replays its own key with identical content -> '
       'idempotencyHit; the other principal still gets fresh success',

@@ -1,12 +1,3 @@
-// Verifies: EVS-PRD-permissions-as-events
-// (containment lookup via projection; fail-closed on miss)
-// Verifies: EVS-PRD-scoped-permissions/G
-// fail-closed on missing containment
-//   rows.
-// Verifies: EVS-DEV-containment-resolver/A+B+C+D — identity on equal class,
-//   null on non-ancestor target, per-hop projection read, and fail-closed
-//   on empty row / missing parent column.
-
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:test/test.dart';
 
@@ -35,6 +26,7 @@ class _FakeTxn extends Transaction {
 
 void main() {
   group('ContainmentResolver', () {
+    // Verifies: EVS-DEV-containment-resolver/C
     test('resolves a single-hop containment', () async {
       final reg = ScopeClassRegistry(
         classes: const [
@@ -69,6 +61,7 @@ void main() {
       expect(result, equals(const BoundScope(class_: 'site', value: 'A')));
     });
 
+    // Verifies: EVS-DEV-containment-resolver/C
     test('resolves a two-hop containment', () async {
       final reg = ScopeClassRegistry(
         classes: const [
@@ -116,6 +109,7 @@ void main() {
       expect(result, equals(const BoundScope(class_: 'region', value: 'East')));
     });
 
+    // Verifies: EVS-PRD-scoped-permissions/G, EVS-DEV-containment-resolver/D
     test(
       'returns null when intermediate row is missing (fail-closed)',
       () async {
@@ -149,6 +143,7 @@ void main() {
       },
     );
 
+    // Verifies: EVS-DEV-containment-resolver/A
     test('returns from itself when target equals from.class_', () async {
       final reg = ScopeClassRegistry(
         classes: const [ScopeClassSpec(name: 'site')],
@@ -166,6 +161,7 @@ void main() {
       expect(result, equals(const BoundScope(class_: 'site', value: 'A')));
     });
 
+    // Verifies: EVS-DEV-containment-resolver/B
     test("returns null when target is not in from's ancestor chain", () async {
       final reg = ScopeClassRegistry(
         classes: const [

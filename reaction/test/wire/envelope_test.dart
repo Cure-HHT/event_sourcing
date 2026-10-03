@@ -1,7 +1,3 @@
-// Verifies: EVS-PRD-cross-process-event-transport/A
-// shared
-//   discriminator + field-extraction primitives every codec uses.
-
 import 'package:flutter_test/flutter_test.dart';
 import 'package:reaction/src/wire/envelope.dart';
 

@@ -1,49 +1,4 @@
-// Verifies: EVS-PRD-event-log/E
-// concurrent appends against the Postgres
-// backend make progress: the per-transaction reserve-and-increment of the
-// global sequence counter under SERIALIZABLE isolation provokes SQLSTATE 40001
-// (serialization_failure) on the losers of each race, and PostgresBackend
-// .transaction's bounded retry re-runs each loser to completion so NO 40001
-// escapes to the caller and every append is assigned a distinct, gapless
-// sequence number. Gated on PG_TEST_URL; inert where no Postgres is available.
-// Verifies: EVS-DEV-postgres-backend/C
-// transaction<T> runs at SERIALIZABLE
-//   isolation (conflicting concurrent txns retry/serialize); rollback on throw,
-//   commit on return, handle invalidated after body.
-// Verifies: EVS-PRD-event-log/E
-// a re-run of a body whose earlier run wrote the table holding the sequence
-//   counter waits behind that table's writers (it holds the table lock); a
-//   re-run of a body that wrote nothing there takes no such lock.
-// Verifies: EVS-PRD-subscription/C
-// a transaction re-run after appending publishes its event once, and a
-//   later commit on the same store is published after it, not held back.
-// Verifies: EVS-PRD-subscription/E
-// when the backend re-runs a transaction
-//   body after a serialization conflict raised after the body appended, live
-//   subscribers receive only the committed run's event, once, carrying its
-//   committed sequence number.
-// Verifies: EVS-PRD-event-log/G
-// the re-run body's caller receives the
-//   committed run's event, not the rolled-back run's.
-// Verifies: EVS-PRD-destinations/K
-// an append inside a second, concurrent
-//   transaction that is handed the collector of another run is refused
-//   before any write, so a rolled-back append is never published and the
-//   outer run publishes nothing it did not append.
-// Verifies: EVS-DEV-event-store-open/E
-// the boot transaction is re-run after a serialization failure on a table
-//   it does not lock, as long as bootLockWait has not passed, and then
-//   throws TransactionRetryExhaustedException; a re-run boot records one
-//   initialization.
-// Verifies: EVS-DEV-event-store-open/B
-// a boot a serialization failure re-runs still appends exactly one
-//   lib_version_initialized: the aborted run's append rolled back with the
-//   rest of its transaction, so only the committed re-run's append is
-//   locally in the log.
-// Verifies: EVS-DEV-event-store-open/F
-// the re-run boot records the same database identity `EventStore.open`
-//   returns, minted or read once by the committed run, never by the
-//   rolled-back one.
+// Gated on PG_TEST_URL; inert where no Postgres is available.
 
 @TestOn('vm')
 library;
@@ -80,6 +35,9 @@ void main() {
 
     tearDown(() => backend.close());
 
+    // Verifies: EVS-PRD-event-log/E, EVS-DEV-postgres-backend/C
+    // concurrent appends under SERIALIZABLE isolation provoke 40001 on the
+    //   losers; the bounded retry re-runs each to completion.
     test('concurrent appends all succeed (no 40001 escapes) and get '
         'distinct, gapless sequence numbers', () async {
       const concurrency = 12;
@@ -164,6 +122,9 @@ void main() {
       await backendB.close();
     });
 
+    // Verifies: EVS-PRD-subscription/E, EVS-PRD-event-log/G
+    // live subscribers and the caller receive only the committed run's event,
+    //   once, carrying its committed sequence number.
     test(
       'a body that appends and then hits a serialization conflict is '
       're-run, and only the committed run is published and returned',
@@ -329,6 +290,10 @@ void main() {
       return locks;
     }
 
+    // Verifies: EVS-PRD-event-log/E
+    // a re-run of a body whose earlier run wrote the sequence counter's table
+    //   waits behind that table's writers; one that wrote nothing there takes
+    //   no such lock.
     test('a re-run takes the table lock only when its earlier run wrote the '
         "sequence counter's table", () async {
       expect(
@@ -457,6 +422,9 @@ void main() {
     Future<Object?> settle(Future<Object?> future) =>
         future.then<Object?>((value) => value, onError: (Object e) => e);
 
+    // Verifies: EVS-PRD-event-log/E
+    // past bootLockWait the failure is surfaced as
+    //   TransactionRetryExhaustedException.
     test('a serialization failure after bootLockWait has passed throws '
         'TransactionRetryExhaustedException', () async {
       final backend = await openBackend(bootLockWait: Duration.zero);
@@ -491,6 +459,9 @@ void main() {
       expect(row!['writer'], 'contender', reason: 'the boot committed nothing');
     });
 
+    // Verifies: EVS-PRD-event-log/E+G
+    // within bootLockWait the boot body is re-run to completion, and the
+    //   caller receives the committed run's result.
     test('a serialization failure within bootLockWait re-runs the body, '
         'and the second run commits', () async {
       final backend = await openBackend();
@@ -520,6 +491,10 @@ void main() {
       expect(row, <String, Object?>{'writer': 'boot', 'run': 2});
     });
 
+    // Verifies: EVS-DEV-event-store-open/B+E+F, EVS-PRD-event-log/G
+    // a re-run boot records one lib_version_initialized, carrying the database
+    //   identity EventStore.open returns: the aborted run's writes rolled back
+    //   with its one boot transaction.
     test('EventStore.open re-runs a boot a serialization failure aborted, '
         'and records one initialization', () async {
       final backend = await openBackend();

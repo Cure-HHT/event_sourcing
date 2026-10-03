@@ -1,10 +1,3 @@
-// Verifies: EVS-PRD-event-log/D
-// watchEvents emits events in
-//   sequence_number order from any starting position; replay + live merge
-//   delivers all committed events without gaps.
-// Verifies: EVS-PRD-portability/D
-// watchEvents is a SembastBackend-specific
-//   reactive surface built on top of the abstract StorageBackend contract.
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
@@ -106,6 +99,7 @@ void main() {
       await backend.close();
     });
 
+    // Verifies: EVS-PRD-event-log/D
     // The replay delivers the stored events; once it has, the next append
     // can only reach the watcher through the live path.
     test('watchEvents replays then transitions to live', () async {
@@ -123,6 +117,7 @@ void main() {
       expect(received, ['e1', 'e2', 'e3']);
     });
 
+    // Verifies: EVS-PRD-event-log/D
     // An append that commits after the replay has read the log and before
     // the watcher attaches to live events is delivered, once.
     test('an append committed between the replay read and the live attach '
@@ -148,6 +143,7 @@ void main() {
       expect(received, ['e1', 'e2', 'e3']);
     });
 
+    // Verifies: EVS-PRD-event-log/D
     test('watchEvents skips replay events at or below afterSequence', () async {
       final e1 = await _appendEvent(backend, eventId: 'e1');
       await _appendEvent(backend, eventId: 'e2');

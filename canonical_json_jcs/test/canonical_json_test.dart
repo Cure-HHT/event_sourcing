@@ -1,19 +1,3 @@
-// Verifies: EVS-PRD-canonical-json/A+B+C+D+E+F
-//
-// A — RFC 8785 number vectors (Appendix B), key-sort, string-escaping, and
-//     cross-platform baseline tests verify RFC 8785 conformance.
-// B — "identical input produces identical UTF-8 bytes" and "insertion order
-//     does not affect output" tests verify byte-identical determinism.
-// C — primitives / integers / doubles / strings / arrays / objects groups
-//     each verify a JSON-compatible Dart value type accepted by the package.
-// D — "unsupported types" group verifies FormatException on DateTime and
-//     arbitrary Object; doubles group verifies rejection of NaN / Infinity.
-// E — test suite itself is pure Dart (dart:convert + dart:typed_data only)
-//     and the "cross-platform invariance property" group pins the exact
-//     canonical form as a concrete baseline for any platform receiver.
-// F — test-only imports (dart:convert, dart:typed_data, package:test) confirm
-//     the package under test carries no platform-specific dependencies.
-//
 // Test vectors adapted from affinidi-ssi-dart's JCS test suite
 // (Apache License 2.0). See the package NOTICE.md for full attribution.
 
@@ -42,13 +26,16 @@ void _testNumber(String hex, String expected) {
 }
 
 void main() {
+  // Verifies: EVS-PRD-canonical-json/A
   group('CanonicalJson (RFC 8785)', () {
+    // Verifies: EVS-PRD-canonical-json/C
     group('primitives', () {
       test('null', () => expect(canonicalize(null), 'null'));
       test('true', () => expect(canonicalize(true), 'true'));
       test('false', () => expect(canonicalize(false), 'false'));
     });
 
+    // Verifies: EVS-PRD-canonical-json/C
     group('integers', () {
       test('zero', () => expect(canonicalize(0), '0'));
       test('positive', () => expect(canonicalize(42), '42'));
@@ -56,6 +43,7 @@ void main() {
       test('large', () => expect(canonicalize(1000000), '1000000'));
     });
 
+    // Verifies: EVS-PRD-canonical-json/C
     group('doubles', () {
       test('whole-valued double strips .0', () {
         expect(canonicalize(1.0), '1');
@@ -73,10 +61,12 @@ void main() {
         expect(canonicalize(-0.0), '0');
       });
 
+      // Verifies: EVS-PRD-canonical-json/D
       test('NaN rejected', () {
         expect(() => canonicalize(double.nan), throwsFormatException);
       });
 
+      // Verifies: EVS-PRD-canonical-json/D
       test('Infinity rejected', () {
         expect(() => canonicalize(double.infinity), throwsFormatException);
         expect(
@@ -102,6 +92,7 @@ void main() {
       });
     });
 
+    // Verifies: EVS-PRD-canonical-json/C
     group('strings', () {
       test('plain', () {
         expect(canonicalize('hello'), '"hello"');
@@ -131,6 +122,7 @@ void main() {
       });
     });
 
+    // Verifies: EVS-PRD-canonical-json/C
     group('arrays', () {
       test('empty', () => expect(canonicalize(<Object?>[]), '[]'));
       test('single int', () => expect(canonicalize([1]), '[1]'));
@@ -152,6 +144,7 @@ void main() {
       });
     });
 
+    // Verifies: EVS-PRD-canonical-json/C
     group('objects', () {
       test('empty', () {
         expect(canonicalize(<String, Object?>{}), '{}');
@@ -174,12 +167,14 @@ void main() {
         );
       });
 
+      // Verifies: EVS-PRD-canonical-json/B
       test('insertion order does not affect output', () {
         final forward = <String, Object?>{'a': 1, 'b': 2, 'c': 3};
         final reverse = <String, Object?>{'c': 3, 'b': 2, 'a': 1};
         expect(canonicalize(forward), equals(canonicalize(reverse)));
       });
 
+      // Verifies: EVS-PRD-canonical-json/B
       test('identical input produces identical UTF-8 bytes', () {
         final input = <String, Object?>{
           'event_id': 'abc',
@@ -195,6 +190,7 @@ void main() {
       });
     });
 
+    // Verifies: EVS-PRD-canonical-json/D
     group('unsupported types', () {
       test('DateTime throws FormatException', () {
         expect(

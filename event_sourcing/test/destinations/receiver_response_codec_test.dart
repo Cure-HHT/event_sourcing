@@ -1,19 +1,3 @@
-// Verifies: EVS-DEV-delivery-receiver/L
-// an acknowledgement carries exactly channel, receiver_database_id, record
-//   (exactly delivery_number and delivery_hash) and outcome (accepted or
-//   represented).
-// Verifies: EVS-DEV-delivery-receiver/M
-// a refusal carries exactly channel, receiver_database_id, record, refusal,
-//   reason and refused_event_id, reason and refused_event_id null unless the
-//   refusal is rejected.
-// Verifies: EVS-DEV-delivery-channel/L
-// the library's decoder maps an acknowledgement or refusal body to the send
-//   outcome it states.
-// Verifies: EVS-DEV-delivery-channel/S
-// the decoder maps a delivery_hash_mismatch refusal to a transient failure.
-// Verifies: EVS-DEV-delivery-channel/R
-// the library's pull decoder maps a pull response to served, a transient
-//   failure or a permanent failure.
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -55,6 +39,7 @@ ReceiverRefusal _refusal(
 
 void main() {
   group('response bodies', () {
+    // Verifies: EVS-DEV-delivery-receiver/L
     test('an acknowledgement carries exactly its keys', () {
       for (final outcome in AcknowledgementOutcome.values) {
         final ack = ReceiverAcknowledgement(
@@ -89,6 +74,7 @@ void main() {
       });
     });
 
+    // Verifies: EVS-DEV-delivery-receiver/M
     test('a refusal carries exactly its keys', () {
       final refusals = <ReceiverRefusal>[
         _refusal(RefusalKind.outOfSequence),
@@ -124,6 +110,7 @@ void main() {
       });
     });
 
+    // Verifies: EVS-DEV-delivery-receiver/M
     test('only a rejected refusal carries a reason and a refused event', () {
       expect(
         () => _refusal(RefusalKind.outOfSequence, reason: 'x'),
@@ -169,6 +156,7 @@ void main() {
     });
   });
 
+  // Verifies: EVS-DEV-delivery-channel/L
   group('the sender decoder', () {
     test('an acceptance and a re-presentation carry the receiver response', () {
       for (final outcome in AcknowledgementOutcome.values) {
@@ -187,6 +175,7 @@ void main() {
       expect(decodeReceiverAnswer(refusal.encode()), SendAnswered(refusal));
     });
 
+    // Verifies: EVS-DEV-delivery-channel/S
     test('a delivery_hash_mismatch refusal is a transient failure', () {
       expect(
         decodeReceiverAnswer(
@@ -225,6 +214,7 @@ void main() {
   });
 
   group('the pull decoder', () {
+    // Verifies: EVS-DEV-delivery-channel/R
     test('a channel listing is served', () {
       const listing = ChannelListing(
         receiverDatabaseId: 'db-receiver',
@@ -246,6 +236,7 @@ void main() {
       expect(decodePullResponse(listing.encode()), const PullServed(listing));
     });
 
+    // Verifies: EVS-DEV-delivery-channel/R
     test('a range of deliveries is served, with the delivery it cannot '
         'serve named', () {
       const range = DeliveryRange(
@@ -286,6 +277,7 @@ void main() {
       expect(decodePullResponse(range.encode()), const PullServed(range));
     });
 
+    // Verifies: EVS-DEV-delivery-channel/R
     test('an unavailable receiver is a transient failure', () {
       const refusal = PullRefusal(
         receiverDatabaseId: 'db-receiver',
@@ -295,6 +287,7 @@ void main() {
       expect(decodePullResponse(refusal.encode()), isA<PullTransient>());
     });
 
+    // Verifies: EVS-DEV-delivery-channel/R
     test('a rejected pull and a body that does not decode are permanent '
         'failures', () {
       const refusal = PullRefusal(

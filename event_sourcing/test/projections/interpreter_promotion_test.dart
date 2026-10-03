@@ -1,17 +1,3 @@
-// Verifies: EVS-DEV-ingest-promotes-before-fold/A
-// ProjectionInterpreter
-//   applies the per-view promoter chain when entryTypeVersion < registeredVersion.
-// Verifies: EVS-DEV-ingest-promotes-before-fold/B
-// the original StoredEvent
-//   is not modified; fold receives an in-memory promoted copy.
-// Verifies: EVS-DEV-ingest-promotes-before-fold/C
-// two specs matching the
-//   same entry type can register different chains and produce different fold
-//   inputs from the same source event (per-spec independence test).
-// Verifies: EVS-DEV-ingest-promotes-before-fold/D
-// when entryTypeVersion
-//   equals registeredVersion, the event is folded raw (no promotion path).
-
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing/src/projections/interpreter/projection_interpreter.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -102,6 +88,7 @@ void main() {
       });
     });
 
+    // Verifies: EVS-DEV-ingest-promotes-before-fold/A
     test(
       'event below registered version is folded after per-view promotion',
       () async {
@@ -177,6 +164,7 @@ void main() {
       },
     );
 
+    // Verifies: EVS-DEV-ingest-promotes-before-fold/C
     test('promotion is per-spec; two specs can apply different chains '
         'to the same event', () async {
       // viewA renames body -> body_a; viewB drops body. Both match the

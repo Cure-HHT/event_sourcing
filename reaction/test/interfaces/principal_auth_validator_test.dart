@@ -1,7 +1,3 @@
-// Verifies: EVS-PRD-auth-session/C
-// PrincipalAuthValidator
-// interface contract: authenticate(String) returns the Principal on
-// success or throws AuthenticationDenied on rejection.
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:reaction/src/interfaces/principal_auth_validator.dart';
@@ -19,6 +15,9 @@ class _StubValidator implements PrincipalAuthValidator {
 }
 
 void main() {
+  // Verifies: EVS-PRD-auth-session/C
+  // authenticate(String) returns the Principal on success or throws
+  // AuthenticationDenied on rejection.
   group('PrincipalAuthValidator contract', () {
     test('accepts a known credential and returns the Principal', () async {
       final validator = _StubValidator({

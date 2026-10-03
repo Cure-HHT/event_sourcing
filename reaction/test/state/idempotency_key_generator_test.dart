@@ -1,13 +1,10 @@
-// Verifies: EVS-PRD-reaction-widget-contract/E
-// UuidIdempotencyKeyGenerator emits UUID v4 keys (the format the
-// widget library is required to use), and the IdempotencyKeyGenerator
-// interface admits deterministic stub replacements for tests
-// (supporting the consumer-override path in assertion E).
 import 'package:flutter_test/flutter_test.dart';
 import 'package:reaction/src/state/idempotency_key_generator.dart';
 
 void main() {
   group('UuidIdempotencyKeyGenerator', () {
+    // Verifies: EVS-PRD-reaction-widget-contract/E
+    // The generator the widgets mint keys with emits the UUID v4 format.
     test('produces a UUID v4 format string', () {
       final gen = UuidIdempotencyKeyGenerator();
       final key = gen.generate();

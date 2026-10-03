@@ -1,11 +1,3 @@
-// Verifies: EVS-DEV-postgres-backend/G
-// provisioning creates every table the backend reads or writes.
-// Verifies: EVS-DEV-postgres-backend/B
-// view_rows stored as a single JSONB-blob
-//   table keyed by (copy_id, row_key).
-// Verifies: EVS-DEV-view-convergence/A
-// the view_copies table and its partial
-//   unique index on an unmarked fingerprint.
 // All tests are gated on PG_TEST_URL and skip themselves when it is unset.
 
 @TestOn('vm')
@@ -34,6 +26,7 @@ void main() {
       await db.reset();
     });
 
+    // Verifies: EVS-DEV-postgres-backend/G
     test('provisioning creates every expected table', () async {
       await db.provision();
 
@@ -132,6 +125,7 @@ void main() {
       },
     );
 
+    // Verifies: EVS-DEV-postgres-backend/B
     test('view_rows has the JSONB-blob shape with composite PK', () async {
       final backend = await db.open(provision: true);
       addTearDown(backend.close);

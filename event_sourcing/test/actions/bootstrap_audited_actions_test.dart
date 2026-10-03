@@ -1,7 +1,3 @@
-// Verifies: EVS-PRD-action-dispatch/A
-// (bootstrapAuditedActions wires all dependencies and returns a ready dispatcher)
-// Verifies: EVS-PRD-library-charter/C
-// (factory composes the full authorization-checked action dispatch pipeline)
 // Uses flutter_test (not package:test) because EventStore depends on
 // Sembast, which requires the Flutter test binding to run in this package.
 
@@ -13,6 +9,7 @@ import 'test_support/event_store_helper.dart' show bootstrapTestEventStore;
 
 void main() {
   group('bootstrapAuditedActions', () {
+    // Verifies: EVS-PRD-action-dispatch/A
     test(
       'returns a ready ActionDispatcher with all dependencies wired',
       () async {

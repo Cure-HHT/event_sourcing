@@ -1,4 +1,3 @@
-// Verifies: EVS-PRD-destinations/E
 import 'dart:typed_data';
 
 import 'package:event_sourcing/event_sourcing.dart';
@@ -94,6 +93,7 @@ void main() {
       },
     );
 
+    // Verifies: EVS-PRD-ingest/A
     test('a valid native delivery returns an acknowledgement and the hub '
         'admits its event', () async {
       final hub = await _bootstrapHub(nextPath());
@@ -235,6 +235,7 @@ void main() {
       );
     });
 
+    // Verifies: EVS-PRD-ingest/D
     test(
       'a record whose hash does not recompute is accepted; the hub '
       'stores it as received with a hash_mismatch security finding',
@@ -263,6 +264,7 @@ void main() {
       },
     );
 
+    // Verifies: EVS-PRD-ingest/G
     test('a declared reserved entry type under an aggregate type the library '
         'does not declare for it is accepted; the hub keeps the record in '
         'an event_malformed security finding', () async {

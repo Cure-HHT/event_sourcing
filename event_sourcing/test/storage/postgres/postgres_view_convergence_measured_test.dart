@@ -5,14 +5,6 @@
 // converging instances catch up a new copy of that view. Each scenario's
 // window is the 60 seconds from the moment the first converging instance
 // begins to open. Gated on PG_TEST_URL.
-//
-// Verifies: EVS-DEV-view-convergence/W
-// every append the serving loop starts inside a scenario's window commits
-//   within 1 second of its call, throughout the window, in all three
-//   scenarios.
-// Verifies: EVS-DEV-view-convergence/X
-// the converging copy's watermark reaches the log position held at the
-//   window's start, within the window, in all three scenarios.
 
 @TestOn('vm')
 @Tags(['timing'])

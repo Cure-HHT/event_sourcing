@@ -1,5 +1,4 @@
 // reaction/test/e2e/permission_test.dart
-// Verifies: EVS-PRD-permission-source/C+E
 import 'package:flutter_test/flutter_test.dart';
 import 'package:reaction/reaction.dart';
 
@@ -15,6 +14,7 @@ void main() {
   });
   tearDown(() => h.close());
 
+  // Verifies: EVS-PRD-permission-source/C+E
   test('permission snapshot fetched on Authenticated', () async {
     // alice must actually hold her claimed activeRole ('install') for the
     // policy to return a non-null EffectiveAuthorization — without a
@@ -39,6 +39,7 @@ void main() {
     expect(snap!.activeRole, 'install');
   });
 
+  // Verifies: EVS-PRD-permission-source/C+E
   test('granted permissions appear in the snapshot', () async {
     // Seed the grant + role membership after the initial setUp fetch,
     // then bounce the credential to force a re-fetch and observe the new

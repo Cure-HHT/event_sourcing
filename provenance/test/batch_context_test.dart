@@ -1,15 +1,11 @@
-// Verifies: EVS-PRD-provenance/A
-// (BatchContext value type: five
-//   required fields, value equality, fromJson validation)
-// Verifies: EVS-PRD-provenance/C
-// (BatchContext JSON round-trip
-//   without loss of information)
-
 import 'package:provenance/provenance.dart';
 import 'package:test/test.dart';
 
 void main() {
   group('BatchContext', () {
+    // Verifies: EVS-PRD-provenance/C
+    // a batch context, carried on a provenance entry, round-trips through
+    //   JSON without loss.
     test('round-trips through JSON preserving all five fields', () {
       final ctx = BatchContext(
         batchId: '01234567-89ab-cdef-0123-456789abcdef',

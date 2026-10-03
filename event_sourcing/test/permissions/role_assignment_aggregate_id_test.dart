@@ -1,18 +1,9 @@
-// Verifies: EVS-PRD-permissions-as-events
-// (aggregate-id encoding is collision-free)
-// Verifies: EVS-PRD-scoped-permissions/C
-// aggregate id deterministically
-//   derived from (user_id, role, scope) via canonical JSON.
-// Verifies: EVS-DEV-role-assignment-aggregate-id/A+B+C
-// canonical-JSON
-//   encoding shape; distinct tuples yield distinct ids; safe against
-//   segment-encoding ambiguity.
-
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:test/test.dart';
 
 void main() {
   group('computeRoleAssignmentAggregateId', () {
+    // Verifies: EVS-PRD-scoped-permissions/C, EVS-DEV-role-assignment-aggregate-id/A
     test('encodes a bound scope as canonical JSON', () {
       final id = computeRoleAssignmentAggregateId(
         userId: 'U1',
@@ -26,6 +17,7 @@ void main() {
       );
     });
 
+    // Verifies: EVS-DEV-role-assignment-aggregate-id/A
     test('encodes a value-wildcard scope', () {
       final id = computeRoleAssignmentAggregateId(
         userId: 'U1',
@@ -36,6 +28,7 @@ void main() {
       expect(id, contains('"class":"site"'));
     });
 
+    // Verifies: EVS-DEV-role-assignment-aggregate-id/A
     test('encodes a total wildcard scope', () {
       final id = computeRoleAssignmentAggregateId(
         userId: 'U2',
@@ -45,6 +38,7 @@ void main() {
       expect(id, contains('"wildcard_class":true'));
     });
 
+    // Verifies: EVS-DEV-role-assignment-aggregate-id/B+C
     test('distinct tuples produce distinct ids', () {
       final a = computeRoleAssignmentAggregateId(
         userId: 'U1',
@@ -59,6 +53,7 @@ void main() {
       expect(a, isNot(equals(b)));
     });
 
+    // Verifies: EVS-PRD-scoped-permissions/C, EVS-DEV-role-assignment-aggregate-id/B
     test('same tuple produces identical id', () {
       final a = computeRoleAssignmentAggregateId(
         userId: 'U1',

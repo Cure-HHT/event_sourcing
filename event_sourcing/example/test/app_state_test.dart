@@ -1,6 +1,3 @@
-// Verifies: EVS-PRD-destinations/D+F
-// Verifies: EVS-PRD-destinations/A+E
-// Verifies: EVS-PRD-library-charter/D+E
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing_demo/app_state.dart';
 import 'package:event_sourcing_demo/demo_destination.dart';
@@ -124,6 +121,7 @@ void main() {
       expect(s.destinations, isEmpty);
     });
 
+    // Verifies: EVS-PRD-destinations/A+F
     test('addDestination persists via registry and notifies', () async {
       final s = await _mkState(nextPath());
       var calls = 0;
@@ -136,6 +134,7 @@ void main() {
       expect(calls, 1);
     });
 
+    // Verifies: EVS-PRD-destinations/A+F
     test('destinations reflects every registered destination', () async {
       final s = await _mkState(nextPath());
       await s.addDestination(DemoDestination(id: 'a'));

@@ -1,13 +1,3 @@
-// Verifies: EVS-PRD-ingest/F
-// idempotency: re-presenting an already-admitted
-//   event returns IngestOutcome.duplicate and does not mutate the stored subject
-// Verifies: EVS-PRD-ingest/A
-// ingest.duplicate_received audit event is
-//   emitted under the ingest-audit aggregate for each duplicate re-presentation
-// Verifies: EVS-PRD-hash-chain-integrity/C
-// the chain verification passes over a receiver-originated
-//   duplicate_received event
-
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
@@ -69,6 +59,7 @@ Future<_Fixture> _openStore({
 
 void main() {
   group('EventStore.ingestEvent — duplicate', () {
+    // Verifies: EVS-PRD-ingest/A+F
     test('second ingest of identical event returns duplicate outcome and '
         'does not mutate the stored subject', () async {
       final orig = await _openStore(hopId: 'mobile-device');
@@ -208,6 +199,7 @@ void main() {
       }
     });
 
+    // Verifies: EVS-PRD-hash-chain-integrity/C
     test('the chain verification passes over a log holding an '
         'ingest.duplicate_received audit event', () async {
       final orig = await _openStore(hopId: 'mobile-device');

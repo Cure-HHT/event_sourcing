@@ -1,9 +1,3 @@
-// Verifies: EVS-DEV-storage-capability/H
-// every transaction the application runs through the storage reader runs
-//   READ ONLY at the database, and not deferrable: the server refuses a
-//   write in the backend's read-only transaction with SQLSTATE 25006, and
-//   inside the reader's transaction `transaction_read_only` is on.
-//
 // Gated on PG_TEST_URL, whose role must be able to create roles; files
 // that reset the schema run one at a time.
 
@@ -77,6 +71,7 @@ void main() {
     expect(await backend.findViewRows('reader_ro_view'), isEmpty);
   });
 
+  // Verifies: EVS-DEV-storage-capability/H
   test("the reader's transaction runs read-only and not deferrable; the "
       "event store's runs read-write", () async {
     final store = await _openStore(backend);

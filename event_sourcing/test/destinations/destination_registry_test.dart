@@ -1,7 +1,3 @@
-// Verifies: EVS-PRD-destinations/A+F
-// exercises DestinationRegistry:
-// configuring destinations (add, all, byId — A) and dynamic registration
-// after first read (F).
 import 'dart:typed_data';
 
 import 'package:event_sourcing/src/destinations/destination.dart';
@@ -95,6 +91,7 @@ void main() {
       await backend.close();
     });
 
+    // Verifies: EVS-PRD-destinations/A
     test('addDestination adds a destination and all() returns it', () async {
       final d = _StubDestination('primary');
       await registry.addDestination(d, initiator: _testInit);
@@ -170,6 +167,7 @@ void main() {
 
     // all() does not freeze the registry on first read. Subsequent
     // addDestination after all() succeeds.
+    // Verifies: EVS-PRD-destinations/F
     test('first all() read does NOT freeze the registry; a '
         'subsequent addDestination succeeds', () async {
       await registry.addDestination(
@@ -228,6 +226,7 @@ void main() {
     });
 
     // byId returns null for unknown ids, the destination for known ids.
+    // Verifies: EVS-PRD-destinations/A
     test('byId returns null for unknown ids', () async {
       expect(registry.byId('ghost'), isNull);
       final d = _StubDestination('primary');

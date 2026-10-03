@@ -1,13 +1,9 @@
-// Verifies: EVS-PRD-event-log/B
-// sequence-counter bookkeeping lands in
-//   the `backend_state` store rather than in an event-level `metadata`
-//   namespace. This file holds the sembast-specific layout assertions
-//   that pin where bookkeeping lives in the on-disk shape; the abstract
-//   StorageBackend contract for the event log (atomicity, monotonicity,
-//   per-aggregate order, in-order reads, findAllEvents filters, etc.)
-//   is exercised against this backend by
-//   `sembast_backend_conformance_test.dart` via the backend-agnostic
-//   conformance harness in `storage_backend_conformance.dart`.
+// This file holds the sembast-specific layout assertions that pin where
+// bookkeeping lives in the on-disk shape; the abstract StorageBackend
+// contract for the event log (atomicity, monotonicity, per-aggregate order,
+// in-order reads, findAllEvents filters, etc.) is exercised against this
+// backend by `sembast_backend_conformance_test.dart` via the
+// backend-agnostic conformance harness in `storage_backend_conformance.dart`.
 import 'package:event_sourcing/src/lifecycle/lib_version.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/sembast_backend.dart';

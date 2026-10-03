@@ -1,17 +1,3 @@
-// Verifies: EVS-PRD-destinations/C
-// (FIFO order — drains run concurrently per
-//   destination under Future.wait; within each destination the fillBatch+drain
-//   sequence preserves FIFO order; pollInbound runs after outbound drains)
-// Verifies: EVS-PRD-destinations/E
-// (pluggable delivery — exception from one
-//   destination's send does not cancel another destination's drain; SyncCycle
-//   swallows per-destination errors so all registered destinations are attempted)
-// Verifies: EVS-PRD-destinations/F
-// (dynamic registration — after a pass completes a new call re-consults
-//   registry.all() so destinations added between passes are included)
-// Verifies: EVS-DEV-destination-drain-lock/E
-// (a trigger that arrives during a pass makes the cycle run one more pass
-//   instead of running a second pass beside it)
 import 'dart:async';
 
 import 'package:event_sourcing/src/destinations/wire_payload.dart';
@@ -159,6 +145,7 @@ void main() {
     // second call starts nothing beside it: the running call runs one more
     // pass, and the second call completes when that pass is done. Each pass
     // polls inbound once, so the inbound-poll seam counts the passes.
+    // Verifies: EVS-DEV-destination-drain-lock/E
     test('a reentrant call runs one more pass and waits for it', () async {
       final gate = Completer<void>();
       addTearDown(() {
@@ -214,6 +201,7 @@ void main() {
 
     // A destination registered after a pass completes is included in the
     // next pass: each pass re-reads the registry.
+    // Verifies: EVS-PRD-destinations/F
     test(
       'a destination added between passes is drained by the next pass',
       () async {
@@ -260,6 +248,7 @@ void main() {
     // An exception in one destination must not cancel another drain.
     // Exercised via a destination whose send throws and another that
     // completes normally.
+    // Verifies: EVS-PRD-destinations/E
     test('exception in one destination does not cancel another', () async {
       final boomed = _AlwaysThrows(id: 'boomed');
       final healthy = FakeDestination(id: 'healthy', script: [const SendOk()]);

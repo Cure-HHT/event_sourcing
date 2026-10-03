@@ -1,21 +1,4 @@
 // test/permissions/bootstrap_action_permissions_test.dart
-// Verifies: EVS-PRD-permissions-as-events/A
-// bootstrap emits permission_granted
-//   events into the event log for all seed grants; mismatched yaml yields
-//   PolicyFailSafe with no events written.
-// Verifies: EVS-PRD-permissions-as-events/B
-// PolicyReady wraps a policy that
-//   reads solely from the event-derived projection; valid declared perms ->
-//   PolicyReady; mismatched yaml -> PolicyFailSafe.
-// Verifies: EVS-PRD-permissions-as-events/C
-// re-running bootstrap with the
-//   same yaml is idempotent (no new events), confirming the log alone
-//   suffices to reconstruct permission state.
-// Verifies: EVS-DEV-bootstrap-action-permissions/A+B+C+D
-// full YAML-seeded
-//   bootstrap behavior: missing-grant event emission (A), PolicyFailSafe on
-//   parse/validation failure (B), PolicyReady wrapping
-//   TableBackedAuthorizationPolicy on success (C), idempotent on re-run (D).
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -29,6 +12,8 @@ void main() {
       eventStore = await buildInMemoryEventStore();
     });
 
+    // Verifies: EVS-PRD-permissions-as-events/A+B
+    // Verifies: EVS-DEV-bootstrap-action-permissions/A+C
     test(
       'clean yaml + matching declared perms -> PolicyReady, ready answers permitted',
       () async {
@@ -82,6 +67,7 @@ grants:
       },
     );
 
+    // Verifies: EVS-DEV-bootstrap-action-permissions/B
     test('yaml refers to undeclared permission -> PolicyFailSafe', () async {
       const yaml = '''
 roles:
@@ -114,6 +100,7 @@ grants:
       expect((d as Deny).reason, DenyReason.notGranted);
     });
 
+    // Verifies: EVS-DEV-bootstrap-action-permissions/D
     test('re-bootstrap with same yaml is idempotent (no new events)', () async {
       const yaml = '''
 roles:

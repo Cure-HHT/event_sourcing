@@ -1,9 +1,3 @@
-// Verifies: EVS-DEV-postgres-backend/D
-// end-to-end PostgresBackend exercise
-//   via the action_permissions demo server. Action dispatch over HTTP
-//   writes an event into the `events` table and the role-permission
-//   matrix view rows into `view_rows` on a Postgres instance.
-//
 // Gated on PG_TEST_URL. Drops the demo schema and runs the demo's deployment
 // step in setUp, so each test runs against a deterministic empty database
 // opened as the declared runtime role.
@@ -183,6 +177,7 @@ void main() {
       },
     );
 
+    // Verifies: EVS-PRD-action-dispatch/C
     test('dispatch failure path: BlueTeam pressing green is recorded as '
         'authorization_denied event in Postgres', () async {
       final dispatch =
@@ -221,6 +216,7 @@ void main() {
     //
     // The seed YAML grants `buttons.press.red` to GreenTeam, so
     // `green-user-1` is authorized for the action.
+    // Verifies: EVS-PRD-action-dispatch/D
     test('idempotency replay: duplicate PressRedAlarm dispatch is '
         'short-circuited to the cached outcome on Postgres', () async {
       const idemKey = 'red-alarm-test-key-001';

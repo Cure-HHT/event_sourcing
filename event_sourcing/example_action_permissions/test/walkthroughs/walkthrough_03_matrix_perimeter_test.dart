@@ -1,9 +1,4 @@
 // test/walkthroughs/walkthrough_03_matrix_perimeter_test.dart
-// Verifies: EVS-PRD-permissions-as-events/B
-// Verifies: EVS-PRD-permissions-as-events/B
-// Verifies: EVS-PRD-event-log/A
-//
-//
 // Per-test fresh server so denial-event counts are deterministic.
 
 import 'package:action_permissions_demo/shared/wire_types.dart';
@@ -24,6 +19,7 @@ void main() {
   });
 
   group('Walkthrough 3: Matrix as perimeter (denial paths)', () {
+    // Verifies: EVS-PRD-permissions-as-events/A, EVS-PRD-action-dispatch/C
     test(
       'GreenTeam trying EditBlueNote -> authorization_denied (notes.write.blue)',
       () async {
@@ -117,6 +113,7 @@ void main() {
       },
     );
 
+    // Verifies: EVS-PRD-permissions-as-events/A, EVS-PRD-action-dispatch/C
     test(
       'every denial in this walkthrough produces exactly one authorization_denied event',
       () async {

@@ -1,18 +1,3 @@
-// Verifies: EVS-PRD-ingest/A
-// a delivery presented to the receiver endpoint admits its events
-// Verifies: EVS-PRD-ingest/B
-// upstream identity preserved on each stored event
-// Verifies: EVS-PRD-ingest/C
-// receiver provenance hop appended with
-//   batch_context, arrival_hash, previous_ingest_hash, ingest_sequence_number
-// Verifies: EVS-PRD-ingest/F
-// idempotency: duplicate in batch yields
-//   a duplicate_received audit; an identity-mismatching event is kept in a
-//   finding and the rest of the delivery is admitted
-// Verifies: EVS-PRD-hash-chain-integrity/B
-// Chain 2 previous_ingest_hash
-//   threads across events in order within a batch
-
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
@@ -78,6 +63,7 @@ Future<_Fixture> _openStore({
 
 void main() {
   group('delivery ingest — happy path', () {
+    // Verifies: EVS-PRD-ingest/A+B+C, EVS-PRD-hash-chain-integrity/E
     test(
       '3-event batch stores 3 events with correct batch_context on each',
       () async {
@@ -212,6 +198,7 @@ void main() {
       },
     );
 
+    // Verifies: EVS-PRD-ingest/A+C
     test('single-event batch (batchSize=1, batchPosition=0) works', () async {
       final orig = await _openStore(hopId: 'mobile-device');
       final dest = await _openStore(
@@ -257,6 +244,7 @@ void main() {
       }
     });
 
+    // Verifies: EVS-PRD-ingest/A+F
     test('batch with one duplicate + two new subjects: '
         'outcomes=[duplicate, ingested, ingested], '
         'dup marker carries batch_context', () async {
@@ -358,6 +346,7 @@ void main() {
 
     // Verifies: EVS-DEV-security-findings/G
     // Verifies: EVS-PRD-ingest/G
+    // Verifies: EVS-PRD-ingest/A
     test('batch with an identity-mismatching subject keeps it in a finding '
         'and admits the rest', () async {
       final orig = await _openStore(hopId: 'mobile-device');

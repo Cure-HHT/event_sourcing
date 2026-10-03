@@ -1,21 +1,3 @@
-// Verifies: EVS-DEV-view-convergence/B
-// the boot of EventStore.open creates an empty copy, watermark before the
-//   first event of the log, for every registered view whose fingerprint
-//   has no stored unmarked copy; a reopen under the same definition shares
-//   the existing copy instead.
-// Verifies: EVS-DEV-view-convergence/D
-// the boot marks for deletion every stored copy whose fingerprint the
-//   opening build does not register.
-// Verifies: EVS-DEV-view-convergence/E
-// a transaction that stores an event folds it into each of the instance's
-//   copies that is current, moving the copy's watermark to the event's
-//   position.
-// Verifies: EVS-DEV-view-convergence/F
-// a transaction that stores an event leaves the watermark of a converging
-//   copy unchanged.
-// Verifies: EVS-DEV-event-store-open/N
-// the boot transaction reads, writes and deletes no view row.
-
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -127,7 +109,7 @@ void main() {
       await second.close();
     });
 
-    // Verifies: EVS-DEV-view-convergence/A+B
+    // Verifies: EVS-DEV-view-convergence/A+B+D
     test('a new minor creates a second copy', () async {
       final backend = await _openBackend();
       final older = await _open(
@@ -274,6 +256,7 @@ void main() {
     // watermark == sequenceNumber - 1: a view whose copy starts behind a
     // log of events its interest does NOT fold is still current, because
     // "current" is decided against what the copy's own definition folds.
+    // Verifies: EVS-DEV-view-convergence/E
     test('a view registered over a log of events its interest does not fold: '
         'the first append folds and moves the watermark past the unfolded '
         'events', () async {

@@ -1,4 +1,3 @@
-// Verifies: EVS-DEV-severe-log-default/A
 import 'package:event_sourcing/src/logging.dart';
 import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -11,6 +10,7 @@ void main() {
     LibraryLogging.severeToStandardError = true;
   });
 
+  // Verifies: EVS-DEV-severe-log-default/A
   test('a severe drain record reaches the stderr sink', () {
     final lines = <String>[];
     runWithDeliveryTestHooks(
@@ -21,6 +21,7 @@ void main() {
     expect(lines.any((l) => l.contains('a drain failure')), isTrue);
   });
 
+  // Verifies: EVS-DEV-severe-log-default/A
   test('a severe sync_cycle record reaches the stderr sink', () {
     final lines = <String>[];
     runWithDeliveryTestHooks(
@@ -61,6 +62,7 @@ void main() {
     expect(lines, isEmpty);
   });
 
+  // Verifies: EVS-DEV-severe-log-default/A
   test('a severe record with a stack trace carries it on the written line', () {
     final lines = <String>[];
     final trace = StackTrace.current;
@@ -79,6 +81,7 @@ void main() {
     expect(lines.single, contains(trace.toString()));
   });
 
+  // Verifies: EVS-DEV-severe-log-default/A
   test('with the default turned off, nothing is written for a severe drain '
       'record', () {
     LibraryLogging.severeToStandardError = false;

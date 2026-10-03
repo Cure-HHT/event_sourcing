@@ -1,5 +1,3 @@
-// Verifies: EVS-PRD-event-log/B+C
-// Verifies: EVS-PRD-destinations/C+D
 // Regression test for strict-order delivery: a wedged head row must block
 // trailing pending rows.
 //
@@ -168,6 +166,7 @@ class _RecordingDestination extends Destination {
 
 void main() {
   group('strict-order regression regression', () {
+    // Verifies: EVS-PRD-destinations/C
     test('drain halts at wedged head; trail row stays null until '
         'tombstoneAndRefill re-enqueues and delivers in order', () async {
       final backend = await _openBackend('strict-order-regression.db');

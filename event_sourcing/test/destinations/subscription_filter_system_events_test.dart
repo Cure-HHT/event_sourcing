@@ -1,10 +1,3 @@
-// Verifies: EVS-PRD-event-log/F,
-//           EVS-PRD-destinations/B
-// exercises the system-events opt-in of
-// SubscriptionFilter: includeSystemEvents=false rejects all system entry
-// types (default, so app destinations don't accidentally admit audit events);
-// includeSystemEvents=true admits them bypassing the entryTypes allow-list.
-// User entry types continue to use the entryTypes allow-list regardless.
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -43,6 +36,7 @@ void main() {
   group('SubscriptionFilter.includeSystemEvents', () {
     // includeSystemEvents=false rejects system events regardless of
     // entryTypes content.
+    // Verifies: EVS-PRD-event-log/F
     test('includeSystemEvents=false rejects system events '
         'regardless of entryTypes', () {
       const f = SubscriptionFilter(entryTypes: {'demo_note'});
@@ -52,6 +46,7 @@ void main() {
 
     // includeSystemEvents=true admits system events even with an empty
     // entryTypes set (an empty set does not exclude them).
+    // Verifies: EVS-PRD-event-log/F
     test('includeSystemEvents=true admits system events even '
         'with empty entryTypes', () {
       const f = SubscriptionFilter(
@@ -63,6 +58,7 @@ void main() {
 
     // includeSystemEvents=true does not override entryTypes for user events;
     // user events still use the allow-list.
+    // Verifies: EVS-PRD-destinations/B
     test('includeSystemEvents=true still applies entryTypes '
         'for user events', () {
       const f = SubscriptionFilter(
@@ -73,6 +69,7 @@ void main() {
       expect(f.matches(_userEvent('red_button_pressed')), isFalse);
     });
 
+    // Verifies: EVS-PRD-event-log/F
     test('default includeSystemEvents is false', () {
       const f = SubscriptionFilter(entryTypes: {'demo_note'});
       expect(f.includeSystemEvents, isFalse);
@@ -80,6 +77,7 @@ void main() {
 
     // Every reserved system entry type is gated by the same flag (keyed
     // off the reserved set, not a single id).
+    // Verifies: EVS-PRD-event-log/F
     test('includeSystemEvents=true admits every reserved '
         'system entry type', () {
       const f = SubscriptionFilter(includeSystemEvents: true);

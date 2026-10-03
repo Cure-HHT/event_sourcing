@@ -12,11 +12,6 @@
 // finding naming aggregates of both views (so the outstanding-finding
 // refresh runs through the buffer, the table view's by its producer index).
 // It spans several of the catch-up's read pages.
-//
-// Verifies: EVS-DEV-view-convergence/K
-// a catch-up transaction folds each event through the fold step an append
-//   uses, under the instance's registered version: the copy it leaves equals
-//   an event-by-event replay under that version, rows and producer index.
 
 import 'dart:math' show Random;
 
@@ -198,6 +193,9 @@ void runCatchUpEquivalenceConformance({
   required Future<void> Function() settle,
 }) {
   // Verifies: EVS-DEV-view-convergence/K
+  // a catch-up transaction folds each event through the fold step an append
+  //   uses, under the instance's registered version: the copy it leaves equals
+  //   an event-by-event replay under that version, rows and producer index.
   test(
     'a copy caught up through the buffered catch-up equals an '
     'event-by-event replay of the log: aggregate rows, tombstones, promoted events, '

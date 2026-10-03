@@ -1,8 +1,3 @@
-// Verifies: EVS-PRD-portability/C
-// FifoEntry pure-Dart value type;
-//   toJson/fromJson round-trips produce identical results on any runtime;
-//   constructor invariants (non-empty eventIds, firstSeq <= lastSeq) are
-//   enforced in both release and debug builds.
 import 'package:event_sourcing/src/destinations/batch_envelope_metadata.dart';
 import 'package:event_sourcing/src/ingest/delivery_channel.dart';
 import 'package:event_sourcing/src/storage/attempt_result.dart';

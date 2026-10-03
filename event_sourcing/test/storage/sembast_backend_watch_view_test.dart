@@ -1,7 +1,3 @@
-// Verifies: EVS-PRD-portability/D
-// watchView is a SembastBackend-specific
-//   reactive surface exposing view-store mutations; snapshot-on-subscribe +
-//   re-emit-on-mutation; cross-view-name isolation.
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
@@ -40,6 +36,7 @@ void main() {
       );
     });
 
+    // Verifies: EVS-PRD-subscription/E
     test('watchView emits a new snapshot on upsert', () async {
       final stream = backend.watchView('lights');
       final emissions = <List<Map<String, Object?>>>[];
@@ -67,6 +64,7 @@ void main() {
       expect(emissions.last.first['is_on'], true);
     });
 
+    // Verifies: EVS-PRD-subscription/E
     test('watchView emits a new snapshot on delete', () async {
       await backend.transaction((txn) async {
         await backend.upsertViewRowInTxn(
@@ -93,6 +91,7 @@ void main() {
       expect(emissions.last, isEmpty);
     });
 
+    // Verifies: EVS-PRD-subscription/E
     test('watchView emits a new snapshot on clear', () async {
       await backend.transaction((txn) async {
         await backend.upsertViewRowInTxn(

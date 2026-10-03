@@ -1,4 +1,3 @@
-// Verifies: EVS-DEV-version-compatibility/K
 // Verifies the bootstrap-time `system.entry_type_registry_initialized`
 // audit stamps `aggregateId = source.identifier` (the install UUID).
 // The bootstrap audit is the first event in every installation's

@@ -1,4 +1,3 @@
-// Verifies: EVS-DEV-ingest-promotes-before-fold/A+B
 // event_sourcing/test/promoters/promoter_executor_test.dart
 import 'package:event_sourcing/src/promoters/primitives/transform.dart';
 import 'package:event_sourcing/src/promoters/promoter_executor.dart';
@@ -8,6 +7,7 @@ import 'package:event_sourcing/src/versions.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  // Verifies: EVS-DEV-ingest-promotes-before-fold/A
   test('promotes payload through chain v1 -> v3', () {
     final reg = PromoterRegistry()
       ..register(

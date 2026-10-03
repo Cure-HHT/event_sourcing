@@ -1,5 +1,3 @@
-// Verifies: EVS-PRD-reaction-widget-contract/A+B
-
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:reaction/reaction.dart';
@@ -7,6 +5,7 @@ import 'package:reaction_widgets/reaction_widgets.dart';
 import 'package:reaction_widgets_testing/reaction_widgets_testing.dart';
 
 void main() {
+  // Verifies: EVS-PRD-reaction-widget-contract/A
   testWidgets('threads ReactionScope down the tree', (tester) async {
     final fake = FakeReaction();
     late ReactionScope captured;
@@ -45,6 +44,7 @@ void main() {
     expect(error.toString(), contains('ReActionScope'));
   });
 
+  // Verifies: EVS-PRD-reaction-widget-contract/A
   testWidgets('rebuilds dependents when scope reference changes', (
     tester,
   ) async {
@@ -80,6 +80,7 @@ void main() {
   // implementation), resolves the scope correctly in both cases.
   // Using FakeReaction avoids requiring a full substrate (EventStore) in
   // widget tests while still exercising the abstraction boundary.
+  // Verifies: EVS-PRD-reaction-widget-contract/B
   testWidgets(
     'same widget code is source-identical under any ReactionScope impl (B)',
     (tester) async {

@@ -1,5 +1,4 @@
 // reaction/test/e2e/view_test.dart
-// Verifies: EVS-PRD-view-subscriber/C+D, EVS-PRD-cross-process-event-transport/A+B+C+D
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:reaction/reaction.dart';
@@ -35,6 +34,7 @@ void main() {
     expect(first, isA<EndOfReplay<Map<String, Object?>>>());
   });
 
+  // Verifies: EVS-PRD-cross-process-event-transport/A+C
   test('subscribe receives Snapshot x N -> EOR -> Delta sequence', () async {
     // (1) Pre-populate with N=2 notes via direct substrate append.
     final initiator = UserPrincipal(
@@ -94,6 +94,7 @@ void main() {
     await sub.cancel();
   });
 
+  // Verifies: EVS-PRD-view-subscriber/C
   test('mapper transforms rows client-side', () async {
     await h.substrate.eventStore.append(
       aggregateType: 'note',

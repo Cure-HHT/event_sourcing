@@ -1,18 +1,9 @@
-// Verifies: EVS-PRD-cross-process-event-transport/A
-// round-trip codec
-//   for the four Update<T> variants preserves all fields.
-// Verifies: EVS-PRD-cross-process-event-transport/B
-// sequence +
-//   subscriptionId on every encoded envelope.
-// Verifies: EVS-PRD-cross-process-event-transport/G
-// raw rows ship as
-//   Map<String, Object?>; consumer-side mapper applies later.
-
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:reaction/src/wire/update_codec.dart';
 
 void main() {
+  // Verifies: EVS-PRD-cross-process-event-transport/A+B
   test('round-trips Snapshot envelope', () {
     const original = Snapshot<Map<String, Object?>>(
       value: {'aggregateId': 'agg-1', 'title': 'hello'},
@@ -29,6 +20,7 @@ void main() {
     expect(decoded.sequence, 42);
   });
 
+  // Verifies: EVS-PRD-cross-process-event-transport/A
   test('round-trips Snapshot envelope with null value', () {
     const original = Snapshot<Map<String, Object?>>(value: null, sequence: 7);
     final json = UpdateCodec.encode(original, subscriptionId: 'sub-1');
@@ -41,6 +33,7 @@ void main() {
     expect(decoded.sequence, 7);
   });
 
+  // Verifies: EVS-PRD-cross-process-event-transport/A
   test('round-trips Delta envelope', () {
     const original = Delta<Map<String, Object?>>(
       value: {'aggregateId': 'agg-1', 'title': 'world'},
@@ -59,6 +52,7 @@ void main() {
     expect(decoded.cause, 'event-abc');
   });
 
+  // Verifies: EVS-PRD-cross-process-event-transport/A
   test('round-trips Tombstone envelope', () {
     const original = Tombstone<Map<String, Object?>>(
       aggregateId: 'agg-1',
@@ -74,6 +68,7 @@ void main() {
     expect(decoded.sequence, 44);
   });
 
+  // Verifies: EVS-PRD-cross-process-event-transport/A
   test('round-trips EndOfReplay envelope (current)', () {
     const original = EndOfReplay<Map<String, Object?>>(
       sequence: 45,
@@ -93,6 +88,7 @@ void main() {
     expect(decoded.state, ViewConvergenceState.current);
   });
 
+  // Verifies: EVS-PRD-cross-process-event-transport/A
   test('round-trips EndOfReplay envelope (converging)', () {
     const original = EndOfReplay<Map<String, Object?>>(
       sequence: 46,
@@ -118,6 +114,7 @@ void main() {
     expect(decoded.sequence, 0);
   });
 
+  // Verifies: EVS-PRD-cross-process-event-transport/B
   test('decode reads subscriptionId from envelope', () {
     final encoded = UpdateCodec.encode(
       const EndOfReplay<Map<String, Object?>>(

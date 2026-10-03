@@ -1,11 +1,3 @@
-// Verifies: EVS-PRD-event-log/F,
-//           EVS-PRD-destinations/B
-// (per-destination filter — system-event
-//   admission is driven entirely by SubscriptionFilter.matches via the
-//   includeSystemEvents flag; fillBatch holds no hard-drop guard against
-//   reserved system entry types; that decision lives on the destination's
-//   filter so audit-mirroring destinations that opt in receive system events
-//   and destinations that do not are unaffected)
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
@@ -40,6 +32,7 @@ Future<EventStoreBundle> _bootstrap(SembastBackend backend) {
 }
 
 void main() {
+  // Verifies: EVS-PRD-event-log/F, EVS-PRD-destinations/B
   group('fillBatch — system event admission via SubscriptionFilter', () {
     late SembastBackend backend;
     late EventStoreBundle ds;

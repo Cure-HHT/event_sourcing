@@ -1,5 +1,3 @@
-// Verifies: EVS-PRD-action-dispatch/A
-// Verifies: EVS-PRD-permissions-as-events/B
 import 'package:action_permissions_demo/server/bootstrap.dart';
 import 'package:action_permissions_demo/server/demo_idempotency_store.dart';
 import 'package:event_sourcing/event_sourcing.dart';

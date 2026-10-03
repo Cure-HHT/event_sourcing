@@ -1,14 +1,3 @@
-// Verifies: EVS-PRD-subscription/A
-// (AggregateMode emits EndOfReplay as the
-//   deterministic "snapshot complete; stream is now live" boundary marker;
-//   Events() mode emits no EndOfReplay — no replay phase)
-// Verifies: EVS-PRD-subscription/B
-// (post-replay Deltas are reactively
-//   delivered; EndOfReplay precedes any live Delta in stream order)
-// Verifies: EVS-PRD-subscription/C
-// (EndOfReplay.sequence equals max snapshot
-//   sequence, anchoring the ordering boundary; N Snapshots precede
-//   EndOfReplay in emission order)
 import 'dart:async';
 
 import 'package:event_sourcing/src/entry_type_definition.dart';
@@ -120,6 +109,8 @@ void main() {
     await store.close();
   });
 
+  // Verifies: EVS-PRD-subscription/A
+  // a subscription to a view's materialized state replays its rows.
   test(
     'populated view emits N Snapshots then EndOfReplay with max snapshot sequence',
     () async {
@@ -165,6 +156,8 @@ void main() {
     },
   );
 
+  // Verifies: EVS-PRD-subscription/B+C
+  // a post-subscribe append arrives as a Delta, after the replayed state.
   test('EndOfReplay is ordered before any post-subscribe Delta', () async {
     final store = await _open();
     await _append(store, 'e1', 'note_added', {
@@ -210,6 +203,7 @@ void main() {
     await store.close();
   });
 
+  // Verifies: EVS-PRD-subscription/B
   test('Events()-mode subscription emits no EndOfReplay', () async {
     final store = await _open();
     final updates = <Update<StoredEvent>>[];

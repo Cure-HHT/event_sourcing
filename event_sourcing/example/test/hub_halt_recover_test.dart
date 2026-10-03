@@ -1,17 +1,3 @@
-// Verifies: EVS-PRD-destinations/S
-// the WEDGED panel lists the default destination-wedges view: a wedge of
-//   the pane's own database carries a Recover button, and a peer's wedge,
-//   forwarded with the peer's system events, is labelled with its origin
-//   database and carries no action; the row goes when the wedge ends.
-// Verifies: EVS-PRD-destinations/U
-// the Halt buttons request a halt that the drainer honours by wedging the
-//   queue head for an operator halt, on a queue with a head or on an empty
-//   one, where the first item enqueued is wedged.
-// Verifies: EVS-PRD-destinations/M+O
-// a recovery of a halt for reconfiguration is refused until the drainer
-//   declares a changed configuration, and the refill then runs under it; a
-//   deletion is refused on a pending head and accepted once a halt wedged
-//   it, keeping the delivered items.
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing_demo/app_state.dart';
 import 'package:event_sourcing_demo/demo_destination.dart';
@@ -231,6 +217,7 @@ Future<void> _finish(WidgetTester tester, _Pane pane) async {
 }
 
 void main() {
+  // Verifies: EVS-PRD-destinations/S
   testWidgets('a refused delivery shows in the WEDGED panel, and Recover '
       'ends the wedge', (tester) async {
     late _Pane pane;
@@ -265,6 +252,7 @@ void main() {
     await _finish(tester, pane);
   });
 
+  // Verifies: EVS-PRD-destinations/U
   testWidgets('Halt wedges the head for an operator halt, and Recover '
       'resumes delivery', (tester) async {
     late _Pane pane;
@@ -342,6 +330,7 @@ void main() {
     await _finish(tester, pane);
   });
 
+  // Verifies: EVS-PRD-destinations/U
   testWidgets('Cancel halt closes the open request; with none open it is '
       'refused', (tester) async {
     late _Pane pane;
@@ -438,6 +427,7 @@ void main() {
     },
   );
 
+  // Verifies: EVS-PRD-destinations/U
   testWidgets('a halt on an empty queue wedges the first item enqueued', (
     tester,
   ) async {
@@ -480,6 +470,7 @@ void main() {
     await _finish(tester, pane);
   });
 
+  // Verifies: EVS-PRD-destinations/U, EVS-DEV-destination-drain/F
   testWidgets('a halt for reconfiguration is recovered only once the drainer '
       'runs a changed configuration, and the refill follows it', (
     tester,
@@ -560,6 +551,7 @@ void main() {
     await _finish(tester, pane);
   });
 
+  // Verifies: EVS-PRD-destinations/O+U
   testWidgets('delete is refused on a pending head and points at Halt; after '
       'a halt it deletes, keeping the delivered items', (tester) async {
     late _Pane pane;
@@ -635,6 +627,7 @@ void main() {
     await _finish(tester, pane);
   });
 
+  // Verifies: EVS-PRD-destinations/S
   testWidgets("a peer's wedge shows in the hub as a peer row with no action, "
       'and leaves once the peer recovers', (tester) async {
     late _Pane hub;

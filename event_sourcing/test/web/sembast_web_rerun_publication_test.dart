@@ -1,9 +1,3 @@
-// Verifies: EVS-PRD-subscription/E
-// when sembast_web re-runs a transaction
-//   body because another tab committed first, live subscribers and FIFO
-//   watchers see only the committed run's writes, once each, and the
-//   delivered event carries its committed sequence number.
-//
 // Two tab models share one IndexedDB database. Each opens it through its own
 // independently built sembast_web factory, so each holds its own sembast
 // Database, transaction lock and revision, as two browser tabs do.
@@ -59,6 +53,11 @@ Future<void> _waitUntil(bool Function() condition) async {
 }
 
 void main() {
+  // Verifies: EVS-PRD-subscription/E
+  // when sembast_web re-runs a transaction
+  //   body because another tab committed first, live subscribers and FIFO
+  //   watchers see only the committed run's writes, once each, and the
+  //   delivered event carries its committed sequence number.
   test('a body re-run after another tab commits publishes only the '
       'committed run, once', () async {
     final dbName = 'rerun-${DateTime.now().microsecondsSinceEpoch}.db';

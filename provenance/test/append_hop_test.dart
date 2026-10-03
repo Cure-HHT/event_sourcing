@@ -1,8 +1,3 @@
-// Verifies: EVS-PRD-provenance/B
-// (pure-functional append: input
-//   chain is not mutated; returned list is new and unmodifiable; entry is
-//   placed at the tail)
-
 import 'package:provenance/provenance.dart';
 import 'package:test/test.dart';
 
@@ -15,6 +10,7 @@ void main() {
         softwareVersion: 'pkg@1.0.0',
       );
 
+  // Verifies: EVS-PRD-provenance/B
   group('appendHop', () {
     test('appending to an empty chain yields a one-entry list', () {
       final entry = makeEntry('mobile-device');

@@ -1,5 +1,3 @@
-// Verifies: EVS-PRD-destinations/L
-//
 // The precondition of the storage trust boundary is stated where an
 // adopter meets the boundary: the `StorageBackend` dartdoc, the README's
 // storage section and the CLAUDE.md `StorageBackend` trust entry. Each
@@ -114,6 +112,7 @@ void main() {
   final libraryRoot = Directory.current.path;
   final repoRoot = p.dirname(libraryRoot);
 
+  // Verifies: EVS-PRD-destinations/L
   group('the storage precondition is stated', () {
     test('in the StorageBackend dartdoc', () {
       final source = File(

@@ -1,10 +1,8 @@
-// Verifies: EVS-PRD-reaction-scope/A+C+E
-//
 // LocalScope is the in-process composition root. It owns four
 // externally-constructed Local* impls, exposes them via the
-// ReactionScope interface (A), reports Connected for its entire
-// lifetime since in-process composition has no transport to lose (C),
-// and throws StateError on interface access post-dispose (E).
+// ReactionScope interface, reports Connected for its entire lifetime
+// since in-process composition has no transport to lose, and throws
+// StateError on interface access post-dispose.
 //
 // The setUp wires a real in-memory substrate via ReactionTestHarness
 // so the Local* impls are constructed against live handles — no mocks.
@@ -53,6 +51,7 @@ void main() {
       await harness.close();
     });
 
+    // Verifies: EVS-PRD-reaction-scope/A
     test('implements ReactionScope and exposes the four interfaces', () {
       expect(scope, isA<ReactionScope>());
       expect(scope.authSession, same(auth));
@@ -61,10 +60,12 @@ void main() {
       expect(scope.permissionSource, same(perms));
     });
 
+    // Verifies: EVS-PRD-reaction-scope/C
     test('connectionStatus is Connected synchronously', () {
       expect(scope.connectionStatus, equals(const Connected()));
     });
 
+    // Verifies: EVS-PRD-reaction-scope/C
     test('connectionStatusStream does NOT emit (always-connected)', () async {
       final emissions = <ConnectionStatus>[];
       final sub = scope.connectionStatusStream.listen(emissions.add);
@@ -73,6 +74,7 @@ void main() {
       expect(emissions, isEmpty);
     });
 
+    // Verifies: EVS-PRD-reaction-scope/A
     test('dispose() makes interface getters throw StateError', () async {
       await scope.dispose();
       expect(() => scope.authSession, throwsStateError);

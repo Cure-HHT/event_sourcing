@@ -1,22 +1,3 @@
-// Verifies: EVS-DEV-converging-view-reads/A
-// state and rows come from one storage transaction: an append the test
-//   queues from a hook run between the state read and the row read, inside
-//   the reader's transaction, has not landed by the time the rows are
-//   read, whatever order it eventually commits in.
-// Verifies: EVS-DEV-converging-view-reads/B
-// a converging aggregate view withholds the row of an aggregate an
-//   unfolded event names and returns the row of an aggregate no unfolded
-//   event touches; a converging table view returns no row at all.
-// Verifies: EVS-DEV-converging-view-reads/C
-// a by-key read reports an aggregate an unfolded event names as pending,
-//   distinct from a settled row and from a confirmed-absent key.
-// Verifies: EVS-DEV-converging-view-reads/D
-// the settled rows a converging read reports equal a fresh replay of the
-//   same log once the copy has caught up.
-// Verifies: EVS-DEV-converging-view-reads/J
-// viewProgress reports, per registered view, its state and its copy's
-//   watermark, the log's head and its last catch-up failure.
-
 import 'dart:async';
 
 import 'package:event_sourcing/event_sourcing.dart';
@@ -119,6 +100,7 @@ Future<void> _rewindWatermark(
 
 void main() {
   group('converging view reads', () {
+    // Verifies: EVS-DEV-converging-view-reads/B+C
     test('an aggregate view converging on one aggregate withholds its row and '
         "serves the untouched aggregate's settled row", () async {
       final backend = await _openBackend();
@@ -164,6 +146,7 @@ void main() {
       );
     });
 
+    // Verifies: EVS-DEV-converging-view-reads/B+C
     test(
       'a converging table view returns no rows, every key pending',
       () async {
@@ -193,6 +176,7 @@ void main() {
       },
     );
 
+    // Verifies: EVS-DEV-converging-view-reads/A
     test('state and rows are read in one transaction: an append queued '
         'between the state read and the row read has not landed by the '
         'time the rows are read', () async {
@@ -282,6 +266,7 @@ void main() {
       await store.close();
     });
 
+    // Verifies: EVS-DEV-converging-view-reads/D
     test('settled rows equal a replay: once the copy catches up, its rows '
         'match what the converging read already reported as settled', () async {
       final backend = await _openBackend();
@@ -323,6 +308,7 @@ void main() {
       await caughtUp.close();
     });
 
+    // Verifies: EVS-DEV-converging-view-reads/J
     test('viewProgress reports state, watermark, log head and last failure '
         'per registered view', () async {
       final backend = await _openBackend();

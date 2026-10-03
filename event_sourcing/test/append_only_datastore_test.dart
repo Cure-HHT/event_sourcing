@@ -1,4 +1,3 @@
-// Verifies: EVS-PRD-event-log/A
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {

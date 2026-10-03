@@ -1,14 +1,3 @@
-// Verifies: EVS-PRD-permission-source/A+C+D+E
-// Remote impl surface.
-//   Full per-assertion coverage (two-phase load + AuthSession
-//   dependency) lives in e2e/permission_test.dart; the
-//   null-on-empty-role parity test below runs here because it exercises
-//   only the snapshot-decode branch, which needs no live server.
-// Verifies: EVS-PRD-cross-process-event-transport/K
-// an explicit refresh() call
-//   propagates a typed ViewConvergingRefusal on a 503 view_converging
-//   response, not a silently swallowed transport failure.
-
 import 'dart:async';
 import 'dart:convert';
 
@@ -224,6 +213,7 @@ void main() {
     skip: 'covered in e2e/permission_test.dart',
   );
 
+  // Verifies: EVS-PRD-permission-source/C
   test(
     'empty-activeRole snapshot maps current to null (parity with Local)',
     () async {
@@ -259,6 +249,7 @@ void main() {
     },
   );
 
+  // Verifies: EVS-PRD-permission-source/A+C
   test(
     'non-empty-activeRole snapshot is stored as a non-null authorization',
     () async {

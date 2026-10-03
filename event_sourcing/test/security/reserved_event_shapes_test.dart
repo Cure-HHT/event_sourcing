@@ -1,11 +1,3 @@
-// Verifies: EVS-DEV-destination-drain/L
-// the library declares, for every reserved system entry type, the one
-//   aggregate type and the event types it appends that entry type with; no
-//   two reserved entry types share a declared pair, so the pair identifies
-//   the entry type; the declared shapes are fixed within a data-format
-//   major; and the check every reserved append of the library runs before
-//   it writes refuses a shape the library does not declare, and a
-//   destination audit whose data ingest would refuse.
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing/src/security/system_entry_types.dart'
     show
@@ -315,6 +307,9 @@ void main() {
       }
     });
 
+    // Verifies: EVS-DEV-destination-drain/L
+    // the aggregate type and event types declared for a reserved entry type
+    //   change only with a data-format major step.
     test('declared shapes are fixed within a data-format major', () {
       final recorded = _shapesByDataFormatMajor[LibVersion.dataFormat.major];
       expect(
@@ -441,6 +436,9 @@ void main() {
     // Verifies: EVS-DEV-delivery-receiver/S
     // ingest.delivery_accepted belongs to the reserved ingest audit, which
     //   the public append operations refuse.
+    // Verifies: EVS-DEV-destination-drain/L
+    // the public append operations refuse every entry type in the reserved
+    //   namespace.
     test('the public append refuses each new reserved type', () async {
       final db = await newDatabaseFactoryMemory().openDatabase(
         'reserved-channel-${DateTime.now().microsecondsSinceEpoch}.db',
@@ -603,6 +601,9 @@ void main() {
       },
     };
     for (final c in badAuditData.entries) {
+      // Verifies: EVS-DEV-destination-drain/K
+      // a destination audit the library appends carries a non-empty destination
+      //   identifier and database identity, neither containing `|`.
       test('a destination audit with ${c.key} is refused', () {
         expectRefused(
           kDestinationWedgeRecoveredEntryType,

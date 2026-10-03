@@ -1,7 +1,3 @@
-// Verifies: EVS-DEV-destination-drain/I
-// (the wedge event records the retry budget in effect: the budget a
-//   cycle resolves once per pass, a static policy's budget, or the default
-//   budget when neither supplies one, reaches every destination's drain)
 import 'package:event_sourcing/src/entry_type_definition.dart';
 import 'package:event_sourcing/src/event_store.dart';
 import 'package:event_sourcing/src/logging.dart';
@@ -166,6 +162,7 @@ void main() {
     // the resolver returns a budget of one, which differs from the default
     // budget, and every destination's head wedges on its first transient
     // send with that budget recorded, from a single resolver call.
+    // Verifies: EVS-DEV-destination-drain/I
     test(
       'resolver result is the same across all destinations within one cycle',
       () async {
@@ -211,6 +208,7 @@ void main() {
     // A resolver that returns null leaves the drain on SyncPolicy.defaults:
     // the head is sent once per cycle until the default budget is spent,
     // and the wedge records that budget.
+    // Verifies: EVS-DEV-destination-drain/I
     test('resolver returning null falls back to SyncPolicy.defaults', () async {
       await _expectDefaultBudget(policyResolver: () => null);
     });
@@ -420,6 +418,7 @@ void main() {
   group('regression', () {
     // SyncCycle with neither policy nor resolver drains under
     // SyncPolicy.defaults.
+    // Verifies: EVS-DEV-destination-drain/I
     test(
       'SyncCycle with neither policy nor resolver still works (defaults)',
       () async {
@@ -430,6 +429,7 @@ void main() {
     // When an explicit policy is supplied with no resolver, the field is
     // forwarded to drain unchanged: its budget, not the default one, wedges
     // the head and is recorded in the wedge event.
+    // Verifies: EVS-DEV-destination-drain/I
     test(
       'SyncCycle with explicit policy: still uses it (today behavior)',
       () async {

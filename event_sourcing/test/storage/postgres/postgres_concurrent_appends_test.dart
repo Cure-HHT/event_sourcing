@@ -1,17 +1,3 @@
-// Verifies: EVS-PRD-event-log/E
-// concurrent appends from several instances make progress: two event
-//   stores on two PostgresBackends, each appending in a tight loop, never
-//   exhaust the transaction's retry bound, and every append commits once,
-//   with gapless sequence numbers.
-// Verifies: EVS-PRD-event-log/E
-// the same holds while a delivery cycle drains the database at a short
-//   cadence: its pass starts, fills and outcomes write the table the
-//   appends' sequence counter lives in, and no append, and no transaction
-//   of the cycle, exhausts the retry bound; every event is delivered.
-// Verifies: EVS-PRD-subscription/C
-// live subscribers of one event store receive its events in log order when
-//   its appends run concurrently on several pool connections.
-//
 // Gated on PG_TEST_URL; files that reset the schema run one at a time.
 
 @TestOn('vm')
@@ -134,6 +120,9 @@ void main() {
     return b;
   }
 
+  // Verifies: EVS-PRD-event-log/E
+  // two event stores on two backends, appending in tight loops, never
+  //   exhaust the retry bound; every append commits once, gaplessly.
   test('two instances appending in tight loops never exhaust the retry '
       'bound', () async {
     const perInstance = 200;
@@ -165,6 +154,9 @@ void main() {
     );
   }, timeout: const Timeout(Duration(minutes: 5)));
 
+  // Verifies: EVS-PRD-event-log/E
+  // the same holds while a delivery cycle drains at a short cadence; no
+  //   append and no transaction of the cycle exhausts the retry bound.
   test('two instances appending in tight loops while a delivery cycle drains '
       'at a short cadence', () async {
     const perInstance = 200;
@@ -243,6 +235,7 @@ void main() {
     });
   }, timeout: const Timeout(Duration(minutes: 5)));
 
+  // Verifies: EVS-PRD-subscription/C
   test(
     'concurrent appends on one store are delivered in log order',
     () async {
@@ -272,6 +265,7 @@ void main() {
     timeout: const Timeout(Duration(minutes: 5)),
   );
 
+  // Verifies: EVS-PRD-subscription/C
   test('a later commit whose continuation resumes first is delivered after '
       'the earlier one', () async {
     final store = await _openStore(

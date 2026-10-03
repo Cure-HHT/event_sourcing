@@ -1,16 +1,4 @@
 // test/permissions/user_role_scopes_spec_test.dart
-// Verifies: EVS-PRD-permissions-as-events/A
-// role_assigned and
-//   role_unassigned events are written into the same event log as all
-//   other state changes, and the projection spec responds to them.
-// Verifies: EVS-PRD-permissions-as-events/B
-// the user_role_scopes view
-//   is the substrate-readable surface that TableBackedAuthorizationPolicy
-//   queries to enumerate (user, role, scope) assignments.
-// Verifies: EVS-PRD-permissions-as-events/C
-// insert and remove driven by
-//   the event log alone confirms the view is fully reconstructable from
-//   the log.
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -30,6 +18,7 @@ void main() {
       expect(userRoleScopesSpec.removeEventTypes, {'role_unassigned'});
     });
 
+    // Verifies: EVS-PRD-permissions-as-events/A
     test(
       'appending role_assigned upserts a row keyed by aggregate id',
       () async {
@@ -60,6 +49,7 @@ void main() {
       },
     );
 
+    // Verifies: EVS-PRD-permissions-as-events/A
     test('appending role_unassigned removes the matching row', () async {
       final harness = await SembastEventStoreHarness.create(
         projectionSpecs: [userRoleScopesSpec],

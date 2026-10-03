@@ -1,5 +1,3 @@
-// Verifies: EVS-PRD-destinations/K
-//
 // The library's mutating surface is internal: the scan resolves `lib/`
 // with the analyzer and checks annotations, overrides, exports and return
 // types as resolved elements, not as text. Each rule also runs against
@@ -758,6 +756,7 @@ void main() {
   );
 
   group('library surface', () {
+    // Verifies: EVS-PRD-destinations/K
     test('(a) StorageBackend mutators and their overrides are internal', () {
       final contract = contractOf(libraries);
       final impls = classesOf(libraries).where(
@@ -779,6 +778,7 @@ void main() {
       );
     });
 
+    // Verifies: EVS-PRD-destinations/K
     test('(a) concrete-only backend members are reads, named operations or '
         'internal', () {
       final owners = backendOwners(libraries, const <String>{
@@ -795,6 +795,7 @@ void main() {
       );
     });
 
+    // Verifies: EVS-PRD-destinations/K
     test('(b) the barrel exports neither drain nor fillBatch', () {
       expect(
         forbiddenExportsRule(barrel, const <String>{'drain', 'fillBatch'}),
@@ -802,6 +803,7 @@ void main() {
       );
     });
 
+    // Verifies: EVS-PRD-destinations/K
     test('(c) no unannotated raw handle on any type, and no function-typed '
         'state on the backends', () {
       final backends = backendOwners(libraries, const <String>{
@@ -849,6 +851,7 @@ void main() {
       );
     });
 
+    // Verifies: EVS-PRD-destinations/K
     test('(f) the must-be-internal set is internal', () {
       final owners = <InstanceElement>[
         ...libraries.expand((l) => l.classes),
@@ -864,6 +867,7 @@ void main() {
       );
     });
 
+    // Verifies: EVS-PRD-destinations/K
     test('(f) exported functions and bundle members are library operations '
         'or internal', () {
       expect(
@@ -877,6 +881,7 @@ void main() {
       );
     });
 
+    // Verifies: EVS-PRD-destinations/K
     test('(g) the unexported surface a src import reaches is internal or a '
         'named operation', () {
       expect(

@@ -1,11 +1,10 @@
-// Verifies: EVS-DEV-destination-drain/Q
-// this build appends a halt request with one of two purposes, each with its
-//   recorded string.
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   group('HaltPurpose', () {
+    // Verifies: EVS-DEV-destination-drain/Q
+    // the halt request's purpose is recorded as `pause` or `reconfigure`.
     test('has the two recorded purposes', () {
       expect(
         <String, HaltPurpose>{for (final p in HaltPurpose.values) p.wire: p},

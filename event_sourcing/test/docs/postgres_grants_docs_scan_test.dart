@@ -1,5 +1,3 @@
-// Verifies: EVS-DEV-postgres-backend/K
-//
 // The runtime role's privileges are documented where a deployment reads
 // them: the "Runtime role privileges" table of `spec/postgres-backend.md`
 // lists exactly the table/privilege pairs of `postgresRuntimeRoleGrants`,
@@ -72,6 +70,7 @@ String? grantsProblem(
 void main() {
   final repoRoot = p.dirname(Directory.current.path);
 
+  // Verifies: EVS-DEV-postgres-backend/K
   test('spec/postgres-backend.md lists exactly the runtime-role grants', () {
     final document = File(
       p.join(repoRoot, 'spec', 'postgres-backend.md'),
@@ -79,6 +78,7 @@ void main() {
     expect(grantsProblem(document), isNull);
   });
 
+  // Verifies: EVS-DEV-postgres-backend/K
   test('the grants name every table provisioning creates, and no other', () {
     expect(
       postgresRuntimeRoleGrants.keys.toSet(),

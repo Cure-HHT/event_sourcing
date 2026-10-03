@@ -1,11 +1,3 @@
-// Verifies: EVS-DEV-destination-drain-lock/D
-// an event store's trigger slot is held by its one started, not yet closed
-//   delivery cycle: the onDeliveryWake seam reports, for each wake, whether
-//   a started cycle held the slot, and an observer that throws does not
-//   reach the operation that woke; a cycle started under the
-//   handDrivenCycle seam holds the slot while a wake runs no pass of it,
-//   and its own calls still run passes.
-
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -72,6 +64,10 @@ Future<void> _until(bool Function() condition, String reason) async {
 }
 
 void main() {
+  // Verifies: EVS-DEV-destination-drain-lock/D
+  // an event store's trigger slot is held by its one started, not yet closed
+  //   delivery cycle, and a wake whose observer throws does not reach the
+  //   operation that woke.
   group('onDeliveryWake', () {
     test(
       'reports each wake and whether a started cycle held the slot',
@@ -137,6 +133,8 @@ void main() {
       await _until(() => d.sent.length > before, 'the woken pass sends');
     });
 
+    // Verifies: EVS-DEV-destination-drain-lock/D
+    // a hand-driven cycle still holds the trigger slot.
     test(
       'a wake runs no pass of a hand-driven cycle; calling it does',
       () async {

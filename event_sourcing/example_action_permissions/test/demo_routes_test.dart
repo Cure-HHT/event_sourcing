@@ -1,7 +1,4 @@
 // test/demo_routes_test.dart
-// Verifies: EVS-PRD-action-dispatch/A
-// Verifies: EVS-PRD-permissions-as-events/B
-// Verifies: EVS-PRD-event-log/A+C
 import 'dart:convert';
 
 import 'package:action_permissions_demo/server/bootstrap.dart';
@@ -185,6 +182,7 @@ void runDemoRoutesTests(DemoBackendFactory factory, {required String label}) {
       },
     );
 
+    // Verifies: EVS-PRD-action-dispatch/A
     test(
       'POST /dispatch: PressGreenButton happy-path returns success',
       () async {

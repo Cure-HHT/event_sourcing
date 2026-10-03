@@ -1,6 +1,4 @@
 // reaction/test/e2e/auth_test.dart
-// Verifies: EVS-PRD-auth-session/E (Remote 401 -> Expired),
-//           and the GET /me round-trip that drives setCredential.
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:reaction/reaction.dart';

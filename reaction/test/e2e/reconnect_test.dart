@@ -1,13 +1,4 @@
 // reaction/test/e2e/reconnect_test.dart
-//
-// Verifies: EVS-PRD-cross-process-event-transport/H
-// on non-auth WS
-//   drops, RemoteConnection auto-reconnects with exponential backoff
-//   and re-issues every active subscribe. The substrate's snapshot-
-//   then-deltas semantics replays a fresh `Snapshot x N -> EndOfReplay
-//   -> live` on the existing client-side stream (per `spec/reaction-
-//   remote.md` Section 3 "Reconnect strategy (v1 baseline: refetch)").
-
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:reaction/reaction.dart';
@@ -30,6 +21,13 @@ void main() {
   });
   tearDown(() => h.close());
 
+  // Verifies: EVS-PRD-cross-process-event-transport/H
+  // on non-auth WS
+  //   drops, RemoteConnection auto-reconnects with exponential backoff
+  //   and re-issues every active subscribe. The substrate's snapshot-
+  //   then-deltas semantics replays a fresh `Snapshot x N -> EndOfReplay
+  //   -> live` on the existing client-side stream (per `spec/reaction-
+  //   remote.md` Section 3 "Reconnect strategy (v1 baseline: refetch)").
   test('server-side WS drop triggers auto-reconnect; existing sub re-replays '
       'in place', () async {
     // (1) Pre-populate two notes so we can verify the replay shape.

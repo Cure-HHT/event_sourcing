@@ -1,9 +1,8 @@
-// Verifies: EVS-DEV-scope-descendant-expander
-// the read-path expander and
-//   the write-path ContainmentResolver traverse the SAME index data in
-//   opposite directions and must agree: if the resolver maps a participant
-//   UP to a site, the expander must include that participant when expanding
-//   the site DOWN. Guards against the two directions silently drifting.
+// The read-path expander and the write-path ContainmentResolver traverse
+// the SAME index data in opposite directions and must agree: if the
+// resolver maps a participant UP to a site, the expander must include that
+// participant when expanding the site DOWN. Guards against the two
+// directions silently drifting.
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:test/test.dart';
@@ -37,6 +36,7 @@ class _FakeDescriptor implements ScopeProjectionDescriptor {
 }
 
 void main() {
+  // Verifies: EVS-DEV-scope-descendant-expander/C
   test('expander down(site) contains every participant resolver maps up to '
       'that site', () async {
     final reg = ScopeClassRegistry(

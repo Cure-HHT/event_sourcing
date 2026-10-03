@@ -1,8 +1,8 @@
-// Verifies: EVS-DEV-event-record/L
 import 'package:event_sourcing/src/storage/record_characters.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  // Verifies: EVS-DEV-event-record/L
   group('recordFieldWithNulCharacter', () {
     test('returns null for a record free of U+0000', () {
       expect(

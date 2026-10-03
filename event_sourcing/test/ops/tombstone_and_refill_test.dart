@@ -1,4 +1,3 @@
-// Verifies: EVS-PRD-destinations/C+D+F
 import 'package:event_sourcing/src/destinations/destination_schedule.dart';
 import 'package:event_sourcing/src/event_store.dart';
 import 'package:event_sourcing/src/lifecycle/lib_version.dart';
@@ -490,6 +489,7 @@ void main() {
       expect(result.rewoundTo, 2); // head first_seq = 3, so 3-1 = 2
     });
 
+    // Verifies: EVS-PRD-destinations/C
     // tombstoneAndRefill, the next fillBatch re-promotes every event
     // covered by the tombstoned target AND by its trail into fresh
     // FIFO rows. v4-UUID `entry_id`s ensure the tombstoned audit row

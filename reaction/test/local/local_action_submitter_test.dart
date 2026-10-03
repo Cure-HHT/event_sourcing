@@ -1,9 +1,3 @@
-// Verifies: EVS-PRD-action-submitter/B
-// LocalActionSubmitter
-// delegates to an in-process ActionDispatcher.dispatch and surfaces
-// every DispatchResult variant (success, parse failure, auth denial,
-// idempotency hit) to the caller. Also exercises the
-// TransportException-on-no-Principal precondition path.
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:reaction/src/interfaces/action_submitter.dart';
@@ -69,6 +63,7 @@ void main() {
       await harness.close();
     });
 
+    // Verifies: EVS-PRD-action-submitter/B
     test('successful submission returns DispatchSuccess', () async {
       final result = await submitter.submit(
         const ActionSubmission(
@@ -84,6 +79,7 @@ void main() {
       );
     });
 
+    // Verifies: EVS-PRD-action-submitter/B
     test('parse failure returns DispatchParseDenied', () async {
       final result = await submitter.submit(
         const ActionSubmission(
@@ -95,6 +91,7 @@ void main() {
       expect(result, isA<DispatchParseDenied<Object?>>());
     });
 
+    // Verifies: EVS-PRD-action-submitter/B
     test('authorization denial returns DispatchAuthorizationDenied', () async {
       // Bob's active role 'nobody' has no grants seeded — say_hello denied.
       final bob = Principal.user(
@@ -118,6 +115,7 @@ void main() {
       expect(result, isA<DispatchAuthorizationDenied<Object?>>());
     });
 
+    // Verifies: EVS-PRD-action-submitter/B
     test('idempotent replay returns DispatchIdempotencyHit', () async {
       final r1 = await submitter.submit(
         const ActionSubmission(

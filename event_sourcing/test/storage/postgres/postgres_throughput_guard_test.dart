@@ -13,8 +13,6 @@
 // tree's, run in-process) and in throughput_baseline_workload.dart.txt (the
 // baseline's, copied into the baseline worktree as its own test file and run
 // there with `flutter test`).
-//
-// Verifies: EVS-DEV-chain-verification/T
 
 @TestOn('vm')
 library;
@@ -98,6 +96,7 @@ void main() {
       ? 'PG_TEST_URL is not set'
       : (optedIn ? null : '$_kOptInVar is not set to 1');
 
+  // Verifies: EVS-DEV-chain-verification/T
   test(
     "append and ingest throughput stay at least half the baseline build's",
     () async {
