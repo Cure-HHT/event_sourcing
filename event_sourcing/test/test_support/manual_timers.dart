@@ -1,9 +1,11 @@
 // Test support: timers a test fires by hand, installed through the
-// `timerFactory` test seam, so the delivery cycle's cadence, heartbeat and
-// drain-lock retries run only when the test says. This file declares no
-// tests, so it carries no citation.
+// `timerFactory` test seam, so the delivery cycle's cadence, heartbeat,
+// drain-lock retries and the view catch-up driver's waits run only when the
+// test says. This file declares no tests, so it carries no citation.
 import 'dart:async';
 
+import 'package:event_sourcing/event_sourcing.dart' show EventStore;
+import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 /// Creates timers that fire only when [fire] is called.
@@ -67,3 +69,31 @@ final class ManualTimer implements Timer {
 /// triggers may start a pass.
 Timer neverFiringTimer(Duration period, void Function(Timer timer) callback) =>
     ManualTimers().create(period, callback);
+
+/// Opens a store with [open] and returns it once its catch-up driver has
+/// parked: no catch-up transaction runs until the store closes.
+///
+/// `EventStore.open` registers the library's own views, so the driver's
+/// first pass, which starts after open returns, runs transactions over them.
+/// A test counting the backend's transactions must wait that pass out. The
+/// store opens inside a zone whose `timerFactory` creates timers only the
+/// test could fire. When [open] starts no delivery cycle, the only library
+/// timer the store creates is the driver's wait after a pass. Its creation
+/// is the signal: the pass is over, and nothing fires the wait.
+Future<EventStore> openWithCatchUpParked(
+  Future<EventStore> Function() open,
+) async {
+  final timers = ManualTimers();
+  final store = await runWithDeliveryTestHooks(
+    DeliveryTestHooks(timerFactory: timers.create),
+    open,
+  );
+  for (var round = 0; timers.active.isEmpty; round++) {
+    if (round == 100) {
+      await store.close();
+      fail('the catch-up driver never parked in a wait');
+    }
+    await pumpEventQueue();
+  }
+  return store;
+}

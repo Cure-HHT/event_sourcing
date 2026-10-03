@@ -4,14 +4,13 @@
 // commits first.
 
 import 'package:event_sourcing/event_sourcing.dart';
-import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart' show newDatabaseFactoryMemory;
 
 import '../actions/fixtures/test_actions.dart'
     show AlwaysAllowPolicy, MultiEventAction, OptionalKeyAction;
 import '../test_support/deliveries.dart';
-import '../test_support/manual_timers.dart' show neverFiringTimer;
+import '../test_support/manual_timers.dart' show openWithCatchUpParked;
 import '../test_support/rerunning_sembast_backend.dart';
 
 const _source = Source(
@@ -45,19 +44,18 @@ EntryTypeRegistry _registry() {
 Future<(EventStore, RerunningSembastBackend)> _openRerunningStore() async {
   final backend = await RerunningSembastBackend.openInMemory('rerun-report');
   backend.rerunEnabled = false;
-  final store = await EventStore.openForTest(
-    storage: backend,
-    entryTypes: _registry(),
-    source: _source,
-    securityContexts: SembastSecurityContextStore(backend: backend),
+  // Open registers the library's own views, so the catch-up driver's first
+  // pass, which starts after open returns, runs transactions over them.
+  // Open the store with that pass waited out and the driver parked, so
+  // every body run counted below belongs to the test.
+  final store = await openWithCatchUpParked(
+    () => EventStore.openForTest(
+      storage: backend,
+      entryTypes: _registry(),
+      source: _source,
+      securityContexts: SembastSecurityContextStore(backend: backend),
+    ),
   );
-  // Let the catch-up driver's initial discovery pass (it registers no
-  // views here, so it finds nothing to fold) run before the count below
-  // starts. The caller runs inside a zone whose timerFactory never fires
-  // (`neverFiringTimer`), so the driver's post-discovery idle wait never
-  // completes and it never runs a second pass -- deterministic, not a
-  // race against real time.
-  await pumpEventQueue(times: 50);
   backend
     ..rerunEnabled = true
     ..bodyRuns = 0;
@@ -224,49 +222,37 @@ void main() {
             initiator: const UserInitiator('u1'),
           ))!,
       ];
-      // The count below is exact (not a lower bound), so the background
-      // catch-up driver's own discovery-pass transactions on `backend`
-      // must not be able to interleave with it: run inside a zone whose
-      // timerFactory never fires, so after the driver's one, harmless
-      // initial pass its idle wait never completes and it never runs
-      // again.
-      await runWithDeliveryTestHooks(
-        const DeliveryTestHooks(timerFactory: neverFiringTimer),
-        () async {
-          final (store, backend) = await _openRerunningStore();
-          addTearDown(backend.close);
-          final delivery = await deliverEventsTo(store, subjects);
+      // The count below is exact (not a lower bound): _openRerunningStore
+      // returns the store with its catch-up driver parked, so no body run
+      // of the driver's interleaves with it.
+      final (store, backend) = await _openRerunningStore();
+      addTearDown(backend.close);
+      final delivery = await deliverEventsTo(store, subjects);
 
-          expect(backend.bodyRuns, 2, reason: 'the ingest body must be re-run');
-          final answer = delivery.response;
-          expect(answer, isA<ReceiverAcknowledgement>());
-          expect(
-            (answer as ReceiverAcknowledgement).outcome,
-            AcknowledgementOutcome.accepted,
-            reason: 'the committed run accepted the delivery',
-          );
-          expect(answer.record.deliveryNumber, 1);
-          expect(answer.record.deliveryHash, delivery.envelope.deliveryHash);
-          final audits = <StoredEvent>[
-            for (final e in await store.reader.findAllEvents(
-              entryType: 'ingest-audit',
-            ))
-              if (e.eventType == 'ingest.delivery_accepted') e,
-          ];
-          expect(
-            audits,
-            hasLength(1),
-            reason: 'one audit, of the committed run',
-          );
-          expect(
-            audits.single.data['event_ids'],
-            subjects.map((e) => e.eventId).toList(),
-          );
-          expect(
-            await recordOutcomes(store, delivery),
-            List<IngestOutcome>.filled(subjects.length, IngestOutcome.ingested),
-          );
-        },
+      expect(backend.bodyRuns, 2, reason: 'the ingest body must be re-run');
+      final answer = delivery.response;
+      expect(answer, isA<ReceiverAcknowledgement>());
+      expect(
+        (answer as ReceiverAcknowledgement).outcome,
+        AcknowledgementOutcome.accepted,
+        reason: 'the committed run accepted the delivery',
+      );
+      expect(answer.record.deliveryNumber, 1);
+      expect(answer.record.deliveryHash, delivery.envelope.deliveryHash);
+      final audits = <StoredEvent>[
+        for (final e in await store.reader.findAllEvents(
+          entryType: 'ingest-audit',
+        ))
+          if (e.eventType == 'ingest.delivery_accepted') e,
+      ];
+      expect(audits, hasLength(1), reason: 'one audit, of the committed run');
+      expect(
+        audits.single.data['event_ids'],
+        subjects.map((e) => e.eventId).toList(),
+      );
+      expect(
+        await recordOutcomes(store, delivery),
+        List<IngestOutcome>.filled(subjects.length, IngestOutcome.ingested),
       );
     });
   });

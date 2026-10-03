@@ -7,13 +7,12 @@
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing/src/event_store.dart' show verifyChainsForTest;
 import 'package:event_sourcing/src/security/security_context_store.dart';
-import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast.dart' as sembast;
 import 'package:sembast/sembast_memory.dart' show newDatabaseFactoryMemory;
 
 import '../test_support/chain_verification_conformance.dart';
-import '../test_support/manual_timers.dart' show neverFiringTimer;
+import '../test_support/manual_timers.dart' show openWithCatchUpParked;
 
 class _SembastChainDatabase implements ChainTestDatabase {
   _SembastChainDatabase(this._db);
@@ -91,40 +90,32 @@ void main() {
     setUp(() async {
       backend = _CountingBackend(database: await _memoryDatabase());
       // The counting assertions below need the catch-up driver's own
-      // background transactions to never land inside their window: open
-      // (and so `start()`'s persistent loop) inside a zone whose
-      // timerFactory never fires, so after the driver's one, harmless
-      // initial discovery pass (this store registers no views) its idle
-      // wait never completes and it never runs a transaction again.
-      await runWithDeliveryTestHooks(
-        const DeliveryTestHooks(timerFactory: neverFiringTimer),
-        () async {
-          store = await EventStore.open(
-            storage: ApplicationSuppliedStorage(
-              backend,
-              SembastSecurityContextStore(backend: backend),
-            ),
-            entryTypes: EntryTypeRegistry()
-              ..register(
-                const EntryTypeDefinition(
-                  id: 'walked_note',
-                  registeredVersion: EntryTypeVersion(1, 0),
-                  name: 'walked_note',
-                ),
+      // transactions to stay out of their window. Open registers the
+      // library's own views, so the driver's first pass, which starts
+      // after open returns, runs transactions over them. Open the store
+      // with that pass waited out and the driver parked: from then on it
+      // runs no transaction.
+      store = await openWithCatchUpParked(
+        () => EventStore.open(
+          storage: ApplicationSuppliedStorage(
+            backend,
+            SembastSecurityContextStore(backend: backend),
+          ),
+          entryTypes: EntryTypeRegistry()
+            ..register(
+              const EntryTypeDefinition(
+                id: 'walked_note',
+                registeredVersion: EntryTypeVersion(1, 0),
+                name: 'walked_note',
               ),
-            source: const Source(
-              hopId: 'walk-hop',
-              identifier: 'walk-install',
-              softwareVersion: 'walk-app@1.0.0',
             ),
-          );
-        },
+          source: const Source(
+            hopId: 'walk-hop',
+            identifier: 'walk-install',
+            softwareVersion: 'walk-app@1.0.0',
+          ),
+        ),
       );
-      // Let the driver's one, harmless initial discovery pass finish
-      // before the test's own transactions run: with the never-firing
-      // timer factory above, it then never runs another transaction, so
-      // the transaction count below never races it.
-      await pumpEventQueue(times: 50);
       for (var i = 0; i < 3; i++) {
         await store.append(
           entryType: 'walked_note',
