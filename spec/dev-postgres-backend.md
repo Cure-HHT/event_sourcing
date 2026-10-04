@@ -98,7 +98,7 @@ Q. Every statement the library runs on a Postgres database -- through its pool, 
 
 R. `PostgresBackend.open` SHALL refuse, before it registers a generation and naming both schemas, when the current schema inside a library transaction is not the schema the storage description names.
 
-S. The Postgres backend SHALL refuse to open a database, before it registers a generation and naming the role, the table and the privilege, when a declared library role holds a privilege other than `SELECT` on a library table, or on a column of one, that the documented runtime-role privileges for that table do not include, or can inherit the privileges of, or set its role to, `pg_write_all_data` through a chain of memberships.
+S. The Postgres backend SHALL refuse to open a database, before it registers a generation and naming the role, the privilege and any table the privilege is on, when a declared library role holds a privilege other than `SELECT` on a library table, or on a column of one, that the documented runtime-role privileges for that table do not include, or can inherit the privileges of, or set its role to, `pg_write_all_data` through a chain of memberships.
 
 T. The Postgres backend SHALL take a connection URL's user name from the percent-decoded user information before its first colon, and its password from the percent-decoded user information after that colon.
 
@@ -224,8 +224,9 @@ The check runs at open. A grant made while an instance runs is seen at the next 
 
 ## Changelog
 
+- 2026-10-03 | 6c8aa9e4 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-10-03 | cccad2fc | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
-- 2026-10-03 | - | - | Michael Lewis (<michael@anspar.org>) | Add S: open refuses a declared library role holding a privilege on a library table, or a column of one, outside the documented runtime-role privileges, or able to act as pg_write_all_data. Add T: a connection URL's user name and password are percent-decoded after the split at the first colon
+- 2026-10-03 | - | - | Michael Lewis (<michael@anspar.org>) | Add S: open refuses a declared library role holding a privilege on a library table, or a column of one, outside the documented runtime-role privileges, or able to act as pg_write_all_data, naming the role, the privilege and any table it is on. Add T: a connection URL's user name and password are percent-decoded after the split at the first colon
 - 2026-09-25 | 3f6c533e | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-26 | - | - | Michael Lewis (<michael@anspar.org>) | Amend J: no convergence lease; the generation locks include the registrations of the view definitions the instance registers. J is cited by code and tests (listed in the integration report)
 - 2026-09-25 | 686483cf | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
@@ -244,4 +245,4 @@ The check runs at open. A grant made while an instance runs is seen at the next 
 - 2026-08-10 | 4e78d64b | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-07-02 | e69b5a15 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
-*End* *Postgres backend reference impl* | **Hash**: cccad2fc
+*End* *Postgres backend reference impl* | **Hash**: 6c8aa9e4
