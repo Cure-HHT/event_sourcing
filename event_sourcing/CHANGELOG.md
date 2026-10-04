@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.5.1
+
+Data: data format 3.0, unchanged. A database written by 0.5.0 opens.
+
+### Postgres runtime roles
+
+- `PostgresBackend.open` refuses a database on which a declared runtime or
+  lock role holds a privilege other than `SELECT` that
+  `postgresRuntimeRoleGrants` does not list for the table, on the table or
+  on a column of it (for example `UPDATE`, `DELETE` or `TRUNCATE` on
+  `events`), or can act as `pg_write_all_data` through a membership it can
+  inherit or set. The refusal is a `PostgresRoleRefusedException` naming the
+  role, the table and the privilege. Every declared role is checked, not
+  only the roles the opening instance connects as. A declared role holding
+  a subset of the runtime privileges still opens.
+- `PostgresBackend.endpointFromUrl` splits the URL's user information at the
+  first `:` and percent-decodes the user name and the password, so an IAM
+  database user written `name%40project.iam` connects as
+  `name@project.iam`, and a password may carry reserved characters in
+  encoded form.
+- `spec/postgres-backend.md` states the table posture: the Event Log is
+  append-only to the runtime role, `library_roles` is owner-written,
+  `view_rows` and `view_copies` are derived, and `fifo_entries`,
+  `backend_state`, `security_context` and `idempotency` hold state the log
+  cannot rebuild.
+
 ## 0.5.0
 
 This release changes what the library stores and sends (data format 3.0,

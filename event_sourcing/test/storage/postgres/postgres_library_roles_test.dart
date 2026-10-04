@@ -462,6 +462,105 @@ void main() {
     });
   });
 
+  group('a declared role holding more than the runtime privileges', () {
+    final r = quoteIdent(db.runtime);
+
+    for (final privilege in <String>['UPDATE', 'DELETE', 'TRUNCATE']) {
+      // Verifies: EVS-DEV-postgres-backend/S
+      test('$privilege on events for the runtime role is refused', () async {
+        await admin('GRANT $privilege ON $s.events TO $r');
+        await expectRefused(role: db.runtime, privilege: privilege);
+      });
+    }
+
+    // Verifies: EVS-DEV-postgres-backend/S
+    test('TRIGGER and REFERENCES on a derived table are refused', () async {
+      await admin('GRANT TRIGGER ON $s.view_rows TO $r');
+      await expectRefused(role: db.runtime, privilege: 'TRIGGER');
+      await admin('REVOKE TRIGGER ON $s.view_rows FROM $r');
+      await admin('GRANT REFERENCES ON $s.view_rows TO $r');
+      await expectRefused(role: db.runtime, privilege: 'REFERENCES');
+    });
+
+    // Verifies: EVS-DEV-postgres-backend/S
+    test('UPDATE on one column of events is refused', () async {
+      await admin('GRANT UPDATE (event_type) ON $s.events TO $r');
+      await expectRefused(role: db.runtime, privilege: 'UPDATE');
+    });
+
+    // Verifies: EVS-DEV-postgres-backend/S
+    test('membership in pg_write_all_data is refused', () async {
+      await admin('GRANT pg_write_all_data TO $r');
+      await expectRefused(role: db.runtime, privilege: 'MEMBER');
+    });
+
+    // Verifies: EVS-DEV-postgres-backend/S
+    test('an inherited path to pg_write_all_data is refused', () async {
+      final m = quoteIdent(middle);
+      await admin('ALTER ROLE $m NOCREATEROLE');
+      await admin('GRANT pg_write_all_data TO $m');
+      await admin('GRANT $m TO $r WITH INHERIT TRUE, SET FALSE');
+      await expectRefused(role: db.runtime, privilege: 'MEMBER');
+    });
+
+    // Verifies: EVS-DEV-postgres-backend/S
+    test('an over-granted lock role is refused', () async {
+      await admin('GRANT UPDATE ON $s.events TO ${quoteIdent(db.lock)}');
+      await expectRefused(
+        role: db.lock,
+        privilege: 'UPDATE',
+        lockUrl: db.lockUrl,
+      );
+    });
+
+    // Verifies: EVS-DEV-postgres-backend/S
+    // a declared role the opening instance does not connect as is checked
+    //   too.
+    test('an over-granted declared role the instance does not connect as '
+        'is refused', () async {
+      await db.provision(runtimeRoles: <String>{db.runtime, canary});
+      await admin('GRANT DELETE ON $s.events TO ${quoteIdent(canary)}');
+      await expectRefused(role: canary, privilege: 'DELETE');
+    });
+
+    // Verifies: EVS-DEV-postgres-backend/S
+    // a declared role holding a subset of the runtime privileges opens: a
+    //   maintenance role reads every table and writes only the derived
+    //   tables, with no INSERT on events.
+    test('a declared role holding a subset of the runtime privileges '
+        'opens', () async {
+      await db.reset(
+        provision: true,
+        grants: <String, Set<String>>{
+          for (final MapEntry(key: table, value: privileges)
+              in postgresRuntimeRoleGrants.entries)
+            table: switch (table) {
+              'events' ||
+              'backend_state' ||
+              'security_context' ||
+              'idempotency' => <String>{'SELECT'},
+              _ => privileges,
+            },
+        },
+      );
+      final held = await db.asAdmin(
+        (c) => c.execute(
+          Sql.named('SELECT has_table_privilege(@r, @t, @p)'),
+          parameters: <String, Object?>{
+            'r': db.runtime,
+            't': '${db.schema}.events',
+            'p': 'INSERT',
+          },
+        ),
+      );
+      expect(held.first[0], isFalse);
+      // The separate lock role carries the runtime role's backend_state
+      // privileges (the lock session writes there); the pool role does
+      // not need them to pass the check.
+      await expectOpens(lockUrl: db.lockUrl);
+    });
+  });
+
   group('admitted', () {
     // Verifies: EVS-DEV-postgres-backend/M
     test('a foreign role holding only SELECT is admitted', () async {
