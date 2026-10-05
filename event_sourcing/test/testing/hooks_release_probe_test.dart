@@ -86,7 +86,7 @@ void main() {
         (err.contains('pub get') || err.contains('Could not resolve'))) {
       final reason =
           '$tool ${args.join(' ')} could not resolve packages:\n$err';
-      if (runningInCi) fail(reason);
+      if (prerequisitesRequired) fail(reason);
       throw ToolUnavailable(reason);
     }
     return result;

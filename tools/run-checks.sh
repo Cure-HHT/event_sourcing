@@ -5,10 +5,16 @@
 # The test suites are defined in one place: the [[scanning.test.targets]] of
 # .elspais.toml, grouped by [scanning.test.groups]. This script lists none of
 # them. Each make target asks elspais for the targets of a group and runs them
-# through `elspais checks --run-tests --targets <target>`, one invocation per
-# target, JOBS at a time; `make test-all` is one plain
-# `elspais checks --run-tests`. CI (.github/workflows/event-sourcing-tests.yml)
-# runs the same targets the same way.
+# through `elspais test --targets <target>`, one invocation per target, JOBS at
+# a time; `make test-all` is one plain `elspais test`. A full run then judges
+# every result with one strict `elspais checks`. `make evidence` runs the
+# `evidence` group and writes the Evidence Snapshot from its results. CI
+# (.github/workflows/event-sourcing-tests.yml) runs the same targets the same
+# way and verifies the snapshot.
+#
+# The tool versions come from .github/versions.env: the Postgres image the
+# throwaway containers run, and the Flutter and elspais versions the Evidence
+# Snapshot requires.
 #
 # The script has two halves:
 #   - the make targets (`help` lists them), run from the repository root;
@@ -50,6 +56,9 @@ SELF="$ROOT/tools/run-checks.sh"
 DURATIONS_FILE="$ROOT/.check-durations"
 # The test targets' folders: [scanning.test] output_root of .elspais.toml.
 RESULTS_DIR="$ROOT/.results"
+# The tool pins: ELSPAIS_VERSION, FLUTTER_VERSION and POSTGRES_IMAGE.
+# shellcheck source=SCRIPTDIR/../.github/versions.env
+. "$ROOT/.github/versions.env"
 
 # event_sourcing's throughput guard: gated on Postgres like the other files,
 # run by its own target (the postgres targets leave it out).
@@ -90,12 +99,8 @@ if [ "$default_unit_pieces" -gt 4 ]; then default_unit_pieces=4; fi
 SHARDS="${SHARDS:-$default_shards}"
 UNIT_PIECES="${UNIT_PIECES:-$default_unit_pieces}"
 JOBS="${JOBS:-$default_jobs}"
-PG_IMAGE="${PG_IMAGE:-postgres:16}"
+PG_IMAGE="${PG_IMAGE:-$POSTGRES_IMAGE}"
 PG_PART="${PG_PART:-1/1}"
-# elspais checks run with the pre-push hook's flag (.pre-commit-config.yaml):
-# warnings are reported without failing. ELSPAIS_STRICT=1 drops --lenient.
-ELSPAIS_ARGS="--lenient"
-if [ "${ELSPAIS_STRICT:-}" = 1 ]; then ELSPAIS_ARGS=""; fi
 case "$SHARDS" in '' | *[!0-9]* | 0) echo "SHARDS must be a positive integer (got '$SHARDS')" >&2; exit 2 ;; esac
 case "$UNIT_PIECES" in '' | *[!0-9]* | 0) echo "UNIT_PIECES must be a positive integer (got '$UNIT_PIECES')" >&2; exit 2 ;; esac
 case "$JOBS" in '' | *[!0-9]* | 0) echo "JOBS must be a positive integer (got '$JOBS')" >&2; exit 2 ;; esac
@@ -109,7 +114,7 @@ if [ "$PART_I" -gt "$PART_N" ]; then
   exit 2
 fi
 # Every child process re-reads these, so they carry the resolved values.
-export SHARDS JOBS UNIT_PIECES PG_IMAGE PG_PART ELSPAIS_ARGS
+export SHARDS JOBS UNIT_PIECES PG_IMAGE PG_PART
 
 usage() {
   cat <<EOF
@@ -117,8 +122,8 @@ Usage: make <target> [VAR=value ...]    (or: tools/run-checks.sh <target>)
 
 The test suites are the [[scanning.test.targets]] of .elspais.toml; each make
 target runs a group of them (\`elspais config get scanning.test.groups\` lists
-the groups), one \`elspais checks --run-tests --targets <target>\` per target,
-JOBS at a time.
+the groups), one \`elspais test --targets <target>\` per target, JOBS at a
+time.
 
 Targets:
   help               This list (the default target).
@@ -138,22 +143,41 @@ Targets:
                      Postgres and desktop tests.
   test-throughput    The \`throughput\` group: the throughput guard against
                      the baseline build.
-  elspais            elspais checks --lenient (as the pre-push hook) over the
+  elspais            elspais checks (strict, as the pre-push hook) over the
                      results on disk, built locally (not by the daemon).
-  test-all           \`elspais checks --run-tests\`: the \`default\` group
-                     (every target) one after another in one invocation, one
-                     Postgres container per Postgres target, after analyze:
-                     the slow reference run.
+  evidence           The Evidence Snapshot: every target of the \`evidence\`
+                     group (all but the throughput guard), JOBS at a time,
+                     the Postgres targets on throwaway containers with the
+                     second server, then \`elspais evidence write\`. It
+                     refuses to start without Docker, a Chrome that flutter
+                     can use, xvfb-run on Linux, and the pinned Flutter and
+                     elspais, and it writes nothing when a target fails. A
+                     test that skips off CI for a missing tool prerequisite
+                     fails here, as on CI.
+                     Commit the snapshot directory with the change it
+                     describes. The facts it records:
+                       $(evidence_facts_text)
+  test-all           \`elspais test\`: the \`default\` group (every target)
+                     one after another in one invocation, one Postgres
+                     container per Postgres target, after analyze, then the
+                     gate: the slow reference run.
   test-all-parallel  analyze and every target of the \`default\` group, JOBS
-                     at a time, the Postgres files sharded, then one
-                     \`elspais checks\` over all the results as the gate: the
+                     at a time, the Postgres files sharded, then the gate: the
                      fast full verification.
   pg-up              Start SHARDS throwaway Postgres containers and print
                      their URLs (left running until pg-down).
   pg-down            Remove the containers pg-up started.
 
-Both full runs end with the gate \`elspais checks\` (lenient) and a strict
-check that every target's results were ingested.
+The gate of both full runs is one strict \`elspais checks --expect default\`
+over every result: a warning fails it, and so does a target with no results.
+
+Subcommands of this script only:
+  evidence-verify [--run]
+                     \`elspais evidence verify\` of the \`evidence\` group with
+                     the snapshot's facts. It compares the committed snapshot
+                     with the results on disk, as CI's gate does. --run first
+                     runs the group as \`evidence\` does, and refuses to
+                     start where \`evidence\` refuses.
 
 Variables (current value in brackets):
   SHARDS    Postgres servers a Postgres target shards its files across when
@@ -163,20 +187,21 @@ Variables (current value in brackets):
   UNIT_PIECES
             Pieces event_sourcing's one-file-at-a-time unit suite is split
             into, run side by side [$UNIT_PIECES; default cores/6, 1..4].
-  PG_IMAGE  Postgres image for the containers [$PG_IMAGE].
-  ELSPAIS_STRICT
-            1 runs elspais checks without --lenient, so its warnings fail
-            too [${ELSPAIS_STRICT:-unset}].
+  PG_IMAGE  Postgres image for the containers [$PG_IMAGE; default
+            POSTGRES_IMAGE of .github/versions.env]. \`evidence\` refuses
+            another image.
   PG_TEST_URL
             Reuse this existing server instead of starting containers: the
             Postgres targets then run one after another on it, unsharded. Its
             role must be able to create roles. PG_TEST_URL_OTHER_SERVER, if
             set, is the second server one file compares against.
+            \`evidence\` refuses it.
   PG_TEST_URLS
             Several existing servers (space-separated, e.g. from pg-up), one
-            shard each; takes precedence over PG_TEST_URL.
+            shard each; takes precedence over PG_TEST_URL. \`evidence\`
+            refuses it.
   PG_PART   <i>/<n>: run slice i of the Postgres shard plan cut n ways (CI's
-            matrix) [$PG_PART].
+            matrix) [$PG_PART]. \`evidence\` refuses a slice.
 
 Logs: .check-logs/<run id>/ (one file per target, analyzer and Postgres file).
 Per-file Postgres durations and per-target durations: .check-durations
@@ -483,7 +508,7 @@ target_setup() {
   fi
   if [ -z "${ELSPAIS_TARGET_OUTPUT:-}" ]; then
     echo "target $kind writes into the folder ELSPAIS_TARGET_OUTPUT names: run it with" \
-      "\`elspais checks --run-tests --targets <name>\`, or begin the run with" \
+      "\`elspais test --targets <name>\`, or begin the run with" \
       "\`elspais fingerprint start <name>\`" >&2
     exit 2
   fi
@@ -961,7 +986,7 @@ run_target_kind() {
 # ---------------------------------------------------------------------------
 # Tasks of a make run (each its own process: `run-checks.sh _task <task>`)
 #   analyze:<package>      the package's analyzer
-#   targets:<t1>,<t2>,...  one `elspais checks --run-tests` over the targets
+#   targets:<t1>,<t2>,...  one `elspais test` over the targets
 # ---------------------------------------------------------------------------
 
 task_label() {
@@ -1024,23 +1049,20 @@ task_analyze() {
   fi
 }
 
-# Records one status line per target from an elspais log's runner lines
-# ("<<< name: passed (12.3s)" / "<<< name: FAILED ..."). A target's status is
-# its runner's: the checks each invocation runs afterwards read every results
-# file on disk, including those of targets still running or left by earlier
-# runs, so they are advisory here and a full run's gate is the verdict. With
-# a fifth argument of 1 (test-all's one invocation over every target), a
-# failed check counts too.
+# Records one status line per target from an `elspais test` log's runner
+# lines ("<<< name: passed (12.3s)" / "<<< name: FAILED ..."). A target with
+# no runner line did not run: elspais refused the selection, or the run
+# crashed or was interrupted.
 report_elspais_run() {
-  local log="$1" rc="$2" secs="$3" names="$4" count_checks="${5:-0}"
-  local name line result tsecs note any_fail=0
+  local log="$1" secs="$2" names="$3"
+  local name line result tsecs note
   for name in $names; do
     line="$(strip_ansi <"$log" | grep -F "<<< $name: " | tail -1)" || line=""
     note=""
     case "$line" in
       *": passed "*) result=pass ;;
-      *": FAILED"*) result=fail; any_fail=1 ;;
-      *) result=fail; any_fail=1; note="no runner result (crashed or interrupted)" ;;
+      *": FAILED"*) result=fail ;;
+      *) result=fail; note="no runner result (refused, crashed or interrupted)" ;;
     esac
     tsecs="$(echo "$line" | sed -n 's/.*(\([0-9]*\)\.[0-9]*s)[[:space:]]*$/\1/p')"
     [ -n "$tsecs" ] || tsecs="$secs"
@@ -1049,23 +1071,22 @@ report_elspais_run() {
     fi
     report "$result" "$tsecs" "$name" "$log" "$note"
   done
-  if [ "$rc" -ne 0 ] && [ "$any_fail" -eq 0 ] && [ "$count_checks" = 1 ]; then
-    report fail "$secs" "elspais checks after $(echo "$names" | tr ' ' ',')" "$log" "the checks failed"
-  fi
 }
 
 task_targets() {
-  local names start rc=0 log
+  local names start log
   names="$(echo "$1" | tr ',' ' ')"
   log="$LOGDIR/$(safe_name "targets $1").log"
   start=$SECONDS
   local args=()
   local n
   for n in $names; do args+=("$n"); done
-  # shellcheck disable=SC2086 # ELSPAIS_ARGS is a flag list
-  run_logged "$log" sh -c 'd="$0"; b="$1"; shift; cd "$d" && exec "$b" checks --run-tests "$@"' \
-    "$ROOT" "$ELSPAIS_BIN" $ELSPAIS_ARGS --targets "${args[@]}" || rc=$?
-  report_elspais_run "$log" "$rc" $((SECONDS - start)) "$names"
+  # The exit status is the targets', which the runner lines record.
+  if ! run_logged "$log" sh -c 'd="$0"; b="$1"; shift; cd "$d" && exec "$b" test "$@"' \
+    "$ROOT" "$ELSPAIS_BIN" --targets "${args[@]}"; then
+    echo "elspais test --targets ${args[*]} failed" >>"$log"
+  fi
+  report_elspais_run "$log" $((SECONDS - start)) "$names"
 }
 
 run_task() {
@@ -1078,6 +1099,160 @@ run_task() {
       return 2
       ;;
   esac
+}
+
+# ---------------------------------------------------------------------------
+# The Evidence Snapshot ([scanning.test] evidence of .elspais.toml)
+# ---------------------------------------------------------------------------
+
+# The group whose results the snapshot holds: every target except the
+# throughput guard, which measures the machine rather than the tree.
+EVIDENCE_GROUP=evidence
+
+# The facts the snapshot claims about its run: the backends the group's
+# targets run on, and the pinned Flutter SDK and Postgres image. `evidence`
+# writes them, and `evidence-verify` (CI's gate) requires the same ones.
+EVIDENCE_FACTS=(
+  "backends=vm,chrome,desktop,postgres"
+  "flutter=$FLUTTER_VERSION"
+  "postgres=$POSTGRES_IMAGE"
+)
+
+evidence_facts_text() { echo "${EVIDENCE_FACTS[*]}"; }
+
+# The Chrome executable `flutter test --platform chrome` uses: the one
+# CHROME_EXECUTABLE names, else the first of the names flutter looks for on
+# PATH (Linux) or the installed application (macOS). Prints nothing when
+# there is none.
+chrome_executable() {
+  local name
+  if [ -n "${CHROME_EXECUTABLE:-}" ]; then
+    if [ -x "$CHROME_EXECUTABLE" ]; then
+      echo "$CHROME_EXECUTABLE"
+    elif command -v "$CHROME_EXECUTABLE" >/dev/null 2>&1; then
+      command -v "$CHROME_EXECUTABLE"
+    fi
+    return 0
+  fi
+  for name in google-chrome google-chrome-stable chromium chromium-browser; do
+    if command -v "$name" >/dev/null 2>&1; then
+      command -v "$name"
+      return 0
+    fi
+  done
+  if [ -x "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" ]; then
+    echo "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+  fi
+}
+
+# The installed Flutter framework version, or nothing when flutter is absent.
+flutter_version() {
+  command -v flutter >/dev/null 2>&1 || return 0
+  flutter --version --machine 2>/dev/null | python3 -c '
+import json, sys
+text = sys.stdin.read()
+start = text.find("{")
+if start >= 0:
+    try:
+        print(json.loads(text[start:]).get("frameworkVersion", ""))
+    except ValueError:
+        pass
+'
+}
+
+# The version of the elspais this script runs.
+elspais_version() {
+  local v
+  v="$("$ELSPAIS_BIN" --version 2>/dev/null)" || v=""
+  echo "$v" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1
+}
+
+# Refuses, naming every cause, a machine on which the snapshot's facts would
+# not be true. With no argument it checks what running the `evidence` group
+# needs; with `verify-only` just the elspais version (CI's gate job runs no
+# test, so it has no Flutter).
+evidence_preflight() {
+  local scope="${1:-run}" problems=() v chrome
+  v="$(elspais_version)"
+  if [ "$v" != "$ELSPAIS_VERSION" ]; then
+    problems+=("elspais ${v:-(version unreadable)} is not the pinned $ELSPAIS_VERSION:" \
+      "  pip install 'elspais==$ELSPAIS_VERSION' (CI verifies the snapshot with that version)")
+  fi
+  if [ "$scope" = run ]; then
+    v="$(flutter_version)"
+    if [ "$v" != "$FLUTTER_VERSION" ]; then
+      problems+=("Flutter ${v:-not found} is not the pinned $FLUTTER_VERSION: install Flutter $FLUTTER_VERSION" \
+        "  (the snapshot records flutter=$FLUTTER_VERSION)")
+    fi
+    if [ "$(uname -s)" != Linux ]; then
+      problems+=("the desktop target runs on Linux only (this is $(uname -s))")
+    elif ! command -v xvfb-run >/dev/null 2>&1; then
+      problems+=("xvfb-run not found: install xvfb (the desktop target runs under it)")
+    fi
+    chrome="$(chrome_executable)"
+    if [ -z "$chrome" ]; then
+      if [ -n "${CHROME_EXECUTABLE:-}" ]; then
+        problems+=("CHROME_EXECUTABLE=$CHROME_EXECUTABLE is not an executable: point it at Chrome or Chromium")
+      else
+        problems+=("no Chrome found (google-chrome, google-chrome-stable, chromium, chromium-browser):" \
+          "  install Chrome or Chromium, or set CHROME_EXECUTABLE (the web target runs in it)")
+      fi
+    fi
+    if ! command -v docker >/dev/null 2>&1; then
+      problems+=("docker not found: install Docker (the Postgres targets start their own servers)")
+    elif ! docker info >/dev/null 2>&1; then
+      problems+=("docker is not running (docker info failed): start it")
+    fi
+    if [ -n "${PG_TEST_URL:-}" ] || [ -n "${PG_TEST_URLS:-}" ]; then
+      problems+=("PG_TEST_URL or PG_TEST_URLS is set: unset it. The snapshot records" \
+        "  postgres=$POSTGRES_IMAGE, so the Postgres targets start their own servers from that image")
+    fi
+    if [ "$PG_IMAGE" != "$POSTGRES_IMAGE" ]; then
+      problems+=("PG_IMAGE=$PG_IMAGE is not the pinned $POSTGRES_IMAGE: unset it")
+    fi
+    if [ "$PG_PART" != 1/1 ]; then
+      problems+=("PG_PART=$PG_PART runs a slice of the Postgres files: unset it")
+    fi
+  fi
+  [ "${#problems[@]}" -eq 0 ] && return 0
+  echo "refusing: the Evidence Snapshot's facts ($(evidence_facts_text)) would not hold here:" >&2
+  printf '  %s\n' "${problems[@]}" >&2
+  return 1
+}
+
+# The snapshot's directory, from the repository root.
+evidence_dir() {
+  "$ELSPAIS_BIN" -C "$ROOT" config get scanning.test.evidence
+}
+
+# Writes the snapshot from the results the `evidence` group left in its
+# folders.
+evidence_write() {
+  local rc=0 dir
+  if ! dir="$(evidence_dir)"; then
+    echo "could not read [scanning.test] evidence from .elspais.toml" >&2
+    return 2
+  fi
+  echo ""
+  echo "elspais evidence write --targets $EVIDENCE_GROUP --fact $(evidence_facts_text)"
+  (cd "$ROOT" && "$ELSPAIS_BIN" --spec-dir spec evidence write \
+    --targets "$EVIDENCE_GROUP" --fact "${EVIDENCE_FACTS[@]}") || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    echo "elspais evidence write failed (exit $rc)" >&2
+    return "$rc"
+  fi
+  echo ""
+  echo "Wrote the Evidence Snapshot into $dir/. Commit it with the change it describes:"
+  echo "  git add $dir"
+}
+
+# Compares the committed snapshot with the results the `evidence` group's
+# targets hold in their folders, with the snapshot's facts. Exits 0 when they
+# agree and 1 when they differ, listing each difference.
+evidence_verify() {
+  echo "elspais evidence verify --targets $EVIDENCE_GROUP --fact $(evidence_facts_text)"
+  (cd "$ROOT" && "$ELSPAIS_BIN" --spec-dir spec evidence verify \
+    --targets "$EVIDENCE_GROUP" --fact "${EVIDENCE_FACTS[@]}")
 }
 
 # ---------------------------------------------------------------------------
@@ -1197,67 +1372,21 @@ run_pool() {
   POOL_PID=""
 }
 
-# The final gate: one `elspais checks` over every result on disk, built
-# locally (--spec-dir forces a local graph; the daemon does not watch the
-# results files), then results_ingested (a lenient gate passes the "no
-# results ingested" warning).
+# The final gate: one strict `elspais checks` over every result on disk,
+# built locally (--spec-dir forces a local graph; the daemon does not watch the
+# results files). `--expect default` names every target, so a target with no
+# results fails it (tests.ingestion_fault), as do a failing test
+# (tests.results), a stale result (tests.results_stale) and a results or
+# coverage file read only in part (tests.partial_read).
 run_gate() {
-  local log="$LOGDIR/gate.log" start=$SECONDS rc=0
+  local log="$LOGDIR/gate.log" start=$SECONDS
   echo "gate" >>"$LOGDIR/order"
-  # shellcheck disable=SC2086 # ELSPAIS_ARGS is a flag list
-  run_logged "$log" sh -c 'cd "$0" && exec "$1" --spec-dir spec checks $2' "$ROOT" "$ELSPAIS_BIN" "$ELSPAIS_ARGS" || rc=$?
-  echo "--- results ingested (strict)" >>"$log"
-  run_logged "$log" "$SELF" results-ingested || rc=$?
-  if [ "$rc" -eq 0 ]; then
+  if run_logged "$log" sh -c 'cd "$0" && exec "$1" --spec-dir spec checks --expect default' \
+    "$ROOT" "$ELSPAIS_BIN"; then
     report pass $((SECONDS - start)) "elspais checks (gate)" "$log"
   else
     report fail $((SECONDS - start)) "elspais checks (gate)" "$log"
   fi
-}
-
-# Strict about result ingestion alone: the checks tests.results (some result
-# ingested, none failed), tests.ingestion_fault (every target has results, and
-# every results and coverage file it names was read) and tests.partial_read
-# must pass. `--expect default` names every target, so a target with no
-# results is a fault rather than one not run. A lenient gate only reports
-# some of these, and `elspais checks --check` narrows the report but not the
-# exit status, so this reads elspais's JSON report.
-results_ingested() {
-  local bin json rc=0
-  if ! bin="$(find_elspais)"; then
-    echo "elspais not found on PATH or in .venv/bin" >&2
-    return 2
-  fi
-  json="$(mktemp "${TMPDIR:-/tmp}/evs-checks.XXXXXX")"
-  (cd "$ROOT" && "$bin" --spec-dir spec checks --lenient --expect default --format json -o "$json") >/dev/null 2>"$json.err" || rc=$?
-  # Exit 1 is a check that failed, and the report below says which; any other
-  # failure, or no report, means the report cannot be read.
-  if { [ "$rc" -ne 0 ] && [ "$rc" -ne 1 ]; } || [ ! -s "$json" ]; then
-    cat "$json.err" >&2
-    rm -f "$json" "$json.err"
-    echo "elspais checks failed (exit $rc) before the ingestion could be read" >&2
-    return "$rc"
-  fi
-  rm -f "$json.err"
-  rc=0
-  python3 - "$json" <<'PY2' || rc=$?
-import json, sys
-checks = {c["name"]: c for c in json.load(open(sys.argv[1]))["checks"]}
-bad = 0
-for name in ("tests.results", "tests.ingestion_fault", "tests.partial_read"):
-    c = checks.get(name)
-    if c is None:
-        print(f"FAIL  {name}: not in the report")
-        bad = 1
-        continue
-    ok = c.get("passed") and not (name == "tests.results" and not (c.get("details") or {}).get("passed"))
-    print(f"{'ok  ' if ok else 'FAIL'}  {name}: {c.get('message')}")
-    if not ok:
-        bad = 1
-sys.exit(bad)
-PY2
-  rm -f "$json"
-  return "$rc"
 }
 
 # Merges this run's target durations into .check-durations.
@@ -1275,9 +1404,6 @@ summarize() {
     case "$task" in
       targets:*)
         for t in $(echo "${task#targets:}" | tr ',' ' '); do echo "target:$t"; done
-        if [ -f "$LOGDIR/status/$(safe_name "elspais checks after ${task#targets:}")" ]; then
-          echo "checks:${task#targets:}"
-        fi
         ;;
       *) echo "$task" ;;
     esac
@@ -1285,7 +1411,6 @@ summarize() {
   while IFS= read -r task; do
     case "$task" in
       target:*) label="${task#target:}" ;;
-      checks:*) label="elspais checks after ${task#checks:}" ;;
       *) label="$(task_label "$task")" ;;
     esac
     sf="$LOGDIR/status/$(safe_name "$label")"
@@ -1364,9 +1489,22 @@ main() {
       merge_all_coverage
       return
       ;;
-    results-ingested)
-      results_ingested
-      return
+    evidence-verify)
+      # Without --run, CI's gate: the results on disk. With --run, the group
+      # runs first, below, as for `evidence`.
+      case "${2:-}" in
+        "")
+          load_targets
+          if ! evidence_preflight verify-only; then return 2; fi
+          evidence_verify
+          return
+          ;;
+        --run) ;;
+        *)
+          echo "usage: run-checks.sh evidence-verify [--run]" >&2
+          return 2
+          ;;
+      esac
       ;;
     help | -h | --help)
       usage
@@ -1411,6 +1549,13 @@ main() {
       ;;
   esac
 
+  if [ "$cmd" = evidence ] || [ "$cmd" = evidence-verify ]; then
+    load_targets
+    if ! evidence_preflight; then return 2; fi
+    # The snapshot's run treats a missing tool prerequisite as CI does: the
+    # test fails instead of skipping. Both runs then record the same outcome.
+    export EVS_REQUIRE_PREREQUISITES=1
+  fi
   new_run
   TASKS=()
   case "$cmd" in
@@ -1431,19 +1576,37 @@ main() {
     test-throughput) run_groups throughput ;;
     elspais)
       echo "elspais" >>"$LOGDIR/order"
-      local log="$LOGDIR/elspais.log" start=$SECONDS rc=0
-      # shellcheck disable=SC2086 # ELSPAIS_ARGS is a flag list
-      run_logged "$log" sh -c 'cd "$0" && exec "$1" --spec-dir spec checks $2' "$ROOT" "$ELSPAIS_BIN" "$ELSPAIS_ARGS" || rc=$?
-      if [ "$rc" -eq 0 ]; then
+      local log="$LOGDIR/elspais.log" start=$SECONDS
+      if run_logged "$log" sh -c 'cd "$0" && exec "$1" --spec-dir spec checks' "$ROOT" "$ELSPAIS_BIN"; then
         report pass $((SECONDS - start)) "elspais" "$log"
       else
         report fail $((SECONDS - start)) "elspais" "$log"
       fi
       ;;
+    evidence)
+      run_groups "$EVIDENCE_GROUP"
+      if ! summarize; then
+        echo "The Evidence Snapshot was not written: a target failed or recorded no result, and"
+        echo "a snapshot that holds a failing or missing result cannot pass CI's gate."
+        return 1
+      fi
+      evidence_write
+      return
+      ;;
+    evidence-verify)
+      # A failing target is a difference from the snapshot, which the
+      # comparison lists, so it runs either way.
+      run_groups "$EVIDENCE_GROUP"
+      local rc=0
+      if ! summarize; then rc=1; fi
+      echo ""
+      if ! evidence_verify; then rc=1; fi
+      return "$rc"
+      ;;
     test-all)
-      # The reference run: analyze, then one `elspais checks --run-tests` of
-      # the default group, every target one after another, one Postgres
-      # server per Postgres target and one unit piece.
+      # The reference run: analyze, then one `elspais test` of the default
+      # group, every target one after another, one Postgres server per
+      # Postgres target and one unit piece, then the gate.
       local pkgs a=() names
       pkgs="$(target_packages)"
       # shellcheck disable=SC2086 # one package per word
@@ -1452,12 +1615,14 @@ main() {
       run_pool 1 "${a[@]}"
       names="$(targets_of default | tr '\n' ' ')"
       echo "targets:$(echo "$names" | sed 's/ *$//' | tr ' ' ',')" >>"$LOGDIR/order"
-      local log="$LOGDIR/elspais-run-tests.log" start=$SECONDS rc=0
-      echo "elspais checks --run-tests (default group, one target at a time; log: $(rel "$log"))"
-      # shellcheck disable=SC2086 # ELSPAIS_ARGS is a flag list
-      run_logged "$log" env SHARDS=1 UNIT_PIECES=1 \
-        sh -c 'cd "$0" && exec "$1" checks --run-tests $2' "$ROOT" "$ELSPAIS_BIN" "$ELSPAIS_ARGS" || rc=$?
-      report_elspais_run "$log" "$rc" $((SECONDS - start)) "$names" 1
+      local log="$LOGDIR/elspais-test.log" start=$SECONDS
+      echo "elspais test (default group, one target at a time; log: $(rel "$log"))"
+      # The exit status is the targets', which the runner lines record.
+      if ! run_logged "$log" env SHARDS=1 UNIT_PIECES=1 \
+        sh -c 'cd "$0" && exec "$1" test --concurrency 1' "$ROOT" "$ELSPAIS_BIN"; then
+        echo "elspais test failed" >>"$log"
+      fi
+      report_elspais_run "$log" $((SECONDS - start)) "$names"
       run_gate
       ;;
     test-all-parallel)

@@ -502,8 +502,11 @@ cd event_sourcing && flutter test --platform chrome test/web/
 
 The test suites are the test targets of the repository's `.elspais.toml`
 (see the root README). CI (`.github/workflows/event-sourcing-tests.yml`)
-runs the analyzer and every target through `elspais checks --run-tests`,
-the Postgres-gated files against Postgres services.
+runs the analyzer and every target through `elspais test --targets <group or
+target>`, the Postgres-gated files against Postgres services. Its gate then
+verifies the committed Evidence Snapshot (`test-evidence/`) and runs a strict
+`elspais checks` over every result; see
+[Test evidence](../README.md#test-evidence) in the root README.
 
 End-to-end and multi-client scenario suites and how/when to run them are
 documented in [`docs/e2e-testing.md`](../docs/e2e-testing.md).

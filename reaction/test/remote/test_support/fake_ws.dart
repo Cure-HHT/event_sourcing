@@ -54,6 +54,25 @@ class FakeWsFactory {
   /// The most-recently-built pair (i.e. the connection the client is
   /// currently using). Throws if none yet built.
   FakeWsPair get latest => pairs.last;
+
+  /// Waits until the client has built its [n]th pair (1-based) and
+  /// returns that pair. A reconnect loop builds its next pair only after
+  /// its backoff timer fires, so a test that acks auth must wait for the
+  /// pair to exist; [latest] read too early names the previous one.
+  /// Fails the test when the pair does not appear within [bound].
+  Future<FakeWsPair> generation(
+    int n, {
+    Duration bound = const Duration(seconds: 10),
+  }) async {
+    final deadline = DateTime.now().add(bound);
+    while (pairs.length < n) {
+      if (DateTime.now().isAfter(deadline)) {
+        fail('WS generation $n was not opened within $bound');
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 1));
+    }
+    return pairs[n - 1];
+  }
 }
 
 /// In-process pair of [WebSocketChannel]s: anything the client's sink

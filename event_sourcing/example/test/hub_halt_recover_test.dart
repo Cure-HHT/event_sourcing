@@ -519,9 +519,13 @@ void main() {
     // A new configuration: the drainer restarts with the filter narrowed
     // to notes.
     await _press(tester, '[Reconfigure drainer]');
+    // The reconfiguration records the new configuration before it starts
+    // the new delivery cycle, so the wait holds only once both are done.
     await _until(
       tester,
-      () => pane.state.reconfiguredDestinationIds.contains('Primary'),
+      () =>
+          pane.state.reconfiguredDestinationIds.contains('Primary') &&
+          pane.state.cycle != null,
       'the drainer to restart',
     );
     await tester.runAsync(pane.cycle);

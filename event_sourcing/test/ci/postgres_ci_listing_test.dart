@@ -11,7 +11,7 @@
 // gating tokens in pieces, so it is not gated itself.
 //
 // The test suites are the `[[scanning.test.targets]]` of `.elspais.toml`, and
-// CI runs them through `elspais checks --run-tests --targets <names>`. A gated
+// CI runs them through `elspais test --targets <names>`. A gated
 // file counts as run in CI when all three links hold:
 //   1. `tools/run-checks.sh target-files <kind>`, run from the file's package,
 //      lists it: that is the set the package's `target <kind>` command runs
@@ -19,8 +19,8 @@
 //   2. `.elspais.toml` has a target whose working directory is the package and
 //      whose command runs `run-checks.sh target <kind>`;
 //   3. `.github/workflows/event-sourcing-tests.yml` has a step that runs
-//      `elspais checks --run-tests --targets` naming that target or one of its
-//      groups, in a job or step whose environment sets the Postgres URL. A
+//      `elspais test --targets` naming that target or one of its groups, in a
+//      job or step whose environment sets the Postgres URL. A
 //      mention in a YAML comment or in a job without the database does not
 //      count.
 
@@ -141,9 +141,9 @@ List<ElspaisTarget> elspaisTargets(String toml) {
 
 bool _setsPgUrl(Object? env) => env is YamlMap && env.containsKey(_pgUrlVar);
 
-/// The names passed to `--targets` of `elspais checks --run-tests` by the
-/// steps of [workflowText] whose environment (workflow, job or step) sets the
-/// Postgres URL.
+/// The names passed to `--targets` of `elspais test` by the steps of
+/// [workflowText] whose environment (workflow, job or step) sets the Postgres
+/// URL.
 Set<String> targetsRunWithPostgres(String workflowText) {
   final doc = loadYaml(workflowText);
   if (doc is! YamlMap) return const <String>{};
@@ -163,14 +163,12 @@ Set<String> targetsRunWithPostgres(String workflowText) {
       if (!(jobPg || _setsPgUrl(step['env']))) continue;
       for (final line in run.split('\n')) {
         final tokens = line.trim().split(RegExp(r'\s+'));
-        final checks = tokens.indexOf('checks');
-        if (checks < 1 ||
-            !tokens[checks - 1].endsWith('elspais') ||
-            !tokens.contains('--run-tests')) {
+        final command = tokens.indexOf('test');
+        if (command < 1 || !tokens[command - 1].endsWith('elspais')) {
           continue;
         }
         var selecting = false;
-        for (final token in tokens.skip(checks + 1)) {
+        for (final token in tokens.skip(command + 1)) {
           if (token.startsWith('--')) {
             selecting = token == '--targets';
           } else if (selecting) {
@@ -353,7 +351,7 @@ void main() {
           '    steps:\n'
           '      - name: Tests\n'
           '        run: echo none\n'
-          '      # run: elspais checks --run-tests --targets postgres\n';
+          '      # run: elspais test --targets postgres\n';
       expect(_uncovered(workflow), ['test/listed_test.dart']);
     });
 
@@ -415,9 +413,8 @@ String _config() =>
     '[scanning.docs]\n'
     'directories = ["docs"]\n';
 
-/// A one-job workflow that runs `elspais checks --run-tests --targets
-/// [targets]`. [jobEnv] is the job's `env:` block (empty for none); [stepEnv]
-/// is the step's.
+/// A one-job workflow that runs `elspais test --targets [targets]`. [jobEnv]
+/// is the job's `env:` block (empty for none); [stepEnv] is the step's.
 String _workflow({
   String targets = 'postgres',
   String jobEnv = '    env:\n      $_pgUrlVar: postgres://x\n',
@@ -428,5 +425,5 @@ String _workflow({
     '$jobEnv'
     '    steps:\n'
     '      - name: Tests\n'
-    '        run: elspais checks --run-tests --lenient --targets $targets\n'
+    '        run: elspais test --targets $targets\n'
     '$stepEnv';

@@ -1,0 +1,76 @@
+{
+ "elspais": "0.125.51",
+ "facts": [
+  {
+   "name": "backends",
+   "value": "vm,chrome,desktop,postgres"
+  },
+  {
+   "name": "flutter",
+   "value": "3.44.7"
+  },
+  {
+   "name": "postgres",
+   "value": "postgres:16"
+  }
+ ],
+ "targets": [
+  {
+   "digest": "dc837439489f942d5fdda15501695eb45984ce541fb9491f502b92a44497afa1",
+   "target": "canonical_json_jcs"
+  },
+  {
+   "digest": "dc837439489f942d5fdda15501695eb45984ce541fb9491f502b92a44497afa1",
+   "target": "event_sourcing"
+  },
+  {
+   "digest": "dc837439489f942d5fdda15501695eb45984ce541fb9491f502b92a44497afa1",
+   "target": "event_sourcing-example"
+  },
+  {
+   "digest": "dc837439489f942d5fdda15501695eb45984ce541fb9491f502b92a44497afa1",
+   "target": "event_sourcing-example-desktop"
+  },
+  {
+   "digest": "dc837439489f942d5fdda15501695eb45984ce541fb9491f502b92a44497afa1",
+   "target": "event_sourcing-example_action_permissions"
+  },
+  {
+   "digest": "dc837439489f942d5fdda15501695eb45984ce541fb9491f502b92a44497afa1",
+   "target": "event_sourcing-example_action_permissions-postgres"
+  },
+  {
+   "digest": "dc837439489f942d5fdda15501695eb45984ce541fb9491f502b92a44497afa1",
+   "target": "event_sourcing-example_clinical_scopes"
+  },
+  {
+   "digest": "dc837439489f942d5fdda15501695eb45984ce541fb9491f502b92a44497afa1",
+   "target": "event_sourcing-postgres"
+  },
+  {
+   "digest": "dc837439489f942d5fdda15501695eb45984ce541fb9491f502b92a44497afa1",
+   "target": "event_sourcing-web"
+  },
+  {
+   "digest": "dc837439489f942d5fdda15501695eb45984ce541fb9491f502b92a44497afa1",
+   "target": "provenance"
+  },
+  {
+   "digest": "dc837439489f942d5fdda15501695eb45984ce541fb9491f502b92a44497afa1",
+   "target": "reaction"
+  },
+  {
+   "digest": "dc837439489f942d5fdda15501695eb45984ce541fb9491f502b92a44497afa1",
+   "target": "reaction-example"
+  },
+  {
+   "digest": "dc837439489f942d5fdda15501695eb45984ce541fb9491f502b92a44497afa1",
+   "target": "reaction_widgets"
+  },
+  {
+   "digest": "dc837439489f942d5fdda15501695eb45984ce541fb9491f502b92a44497afa1",
+   "target": "reaction_widgets_testing"
+  }
+ ],
+ "tree": "dc837439489f942d5fdda15501695eb45984ce541fb9491f502b92a44497afa1"
+}
