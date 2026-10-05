@@ -2583,11 +2583,11 @@ Code:
 Tests:
 
 - event_sourcing/test/destinations/queue_rerun_test.dart:408 a drain-lock acquisition raises the epoch once -- passed
-- event_sourcing/test/storage/postgres/postgres_drain_lock_test.dart:1021 acquisition on the lock session another database identity is refused -- passed
-- event_sourcing/test/storage/postgres/postgres_drain_lock_test.dart:1047 acquisition on the lock session a key held outside the library, and a live lock -- passed
-- event_sourcing/test/storage/postgres/postgres_drain_lock_test.dart:1157 acquisition on the lock session a session ended before the epoch raise -- passed
-- event_sourcing/test/storage/postgres/postgres_drain_lock_test.dart:1209 scope two schemas, one copied identity, two drainers -- passed
-- event_sourcing/test/storage/postgres/postgres_drain_lock_test.dart:342 standby and takeover across processes a second process stands by and takes over -- passed
+- event_sourcing/test/storage/postgres/postgres_drain_lock_test.dart:1093 acquisition on the lock session another database identity is refused -- passed
+- event_sourcing/test/storage/postgres/postgres_drain_lock_test.dart:1119 acquisition on the lock session a key held outside the library, and a live lock -- passed
+- event_sourcing/test/storage/postgres/postgres_drain_lock_test.dart:1229 acquisition on the lock session a session ended before the epoch raise -- passed
+- event_sourcing/test/storage/postgres/postgres_drain_lock_test.dart:1281 scope two schemas, one copied identity, two drainers -- passed
+- event_sourcing/test/storage/postgres/postgres_drain_lock_test.dart:377 standby and takeover across processes a second process stands by and takes over -- passed
 - event_sourcing/test/storage/storage_backend_conformance.dart:4443 StorageBackend conformance (postgres) drain lock and drain records one holder at a time; every acquisition raises the epoch -- passed, skipped
 - event_sourcing/test/storage/storage_backend_conformance.dart:4443 StorageBackend conformance (postgres, runtime role) drain lock and drain records one holder at a time; every acquisition raises the epoch -- passed
 - event_sourcing/test/storage/storage_backend_conformance.dart:4443 StorageBackend conformance (sembast (memory)) drain lock and drain records one holder at a time; every acquisition raises the epoch -- passed
@@ -2620,12 +2620,12 @@ Code:
 
 Tests:
 
-- event_sourcing/test/storage/postgres/postgres_drain_lock_test.dart:1157 acquisition on the lock session a session ended before the epoch raise -- passed
-- event_sourcing/test/storage/postgres/postgres_drain_lock_test.dart:1393 a fenced backend a send in flight when the backend is fenced records nothing -- passed
-- event_sourcing/test/storage/postgres/postgres_drain_lock_test.dart:370 fencing a replaced holder a check after the new holder raised the epoch -- passed
-- event_sourcing/test/storage/postgres/postgres_drain_lock_test.dart:437 fencing a replaced holder a check during an uncommitted epoch raise -- passed
-- event_sourcing/test/storage/postgres/postgres_drain_lock_test.dart:524 fencing a replaced holder a check before the epoch raise -- passed
-- event_sourcing/test/storage/postgres/postgres_drain_lock_test.dart:637 fencing a replaced holder a replaced holder sends nothing more -- passed
+- event_sourcing/test/storage/postgres/postgres_drain_lock_test.dart:1229 acquisition on the lock session a session ended before the epoch raise -- passed
+- event_sourcing/test/storage/postgres/postgres_drain_lock_test.dart:1465 a fenced backend a send in flight when the backend is fenced records nothing -- passed
+- event_sourcing/test/storage/postgres/postgres_drain_lock_test.dart:405 fencing a replaced holder a check after the new holder raised the epoch -- passed
+- event_sourcing/test/storage/postgres/postgres_drain_lock_test.dart:472 fencing a replaced holder a check during an uncommitted epoch raise -- passed
+- event_sourcing/test/storage/postgres/postgres_drain_lock_test.dart:559 fencing a replaced holder a check before the epoch raise -- passed
+- event_sourcing/test/storage/postgres/postgres_drain_lock_test.dart:672 fencing a replaced holder a replaced holder sends nothing more -- passed
 - event_sourcing/test/storage/storage_backend_conformance.dart:4486 StorageBackend conformance (postgres) drain lock and drain records assertHeldInTxn refuses after a release; a release is no loss -- passed, skipped
 - event_sourcing/test/storage/storage_backend_conformance.dart:4486 StorageBackend conformance (postgres, runtime role) drain lock and drain records assertHeldInTxn refuses after a release; a release is no loss -- passed
 - event_sourcing/test/storage/storage_backend_conformance.dart:4486 StorageBackend conformance (sembast (memory)) drain lock and drain records assertHeldInTxn refuses after a release; a release is no loss -- passed
@@ -2649,16 +2649,16 @@ Code:
 
 Tests:
 
-- event_sourcing/test/storage/postgres/postgres_drain_lock_test.dart:1075 acquisition on the lock session a verification failure at start throws and leaves nothing -- passed
-- event_sourcing/test/storage/postgres/postgres_drain_lock_test.dart:1114 acquisition on the lock session an epoch raise past the query timeout gives the key up -- passed
-- event_sourcing/test/storage/postgres/postgres_drain_lock_test.dart:1279 a fenced backend a fenced backend stops its drainer -- passed
-- event_sourcing/test/storage/postgres/postgres_drain_lock_test.dart:1393 a fenced backend a send in flight when the backend is fenced records nothing -- passed
-- event_sourcing/test/storage/postgres/postgres_drain_lock_test.dart:773 loss and re-acquisition a lost lock session: re-acquisition without a restart -- passed
-- event_sourcing/test/storage/postgres/postgres_drain_lock_test.dart:806 loss and re-acquisition a stalled probe on a live session -- passed
-- event_sourcing/test/storage/postgres/postgres_drain_lock_test.dart:853 loss and re-acquisition no probe while an epoch raise runs -- passed
-- event_sourcing/test/storage/postgres/postgres_drain_lock_test.dart:894 a lock session behind a black hole a frozen lock connection: loss, then re-acquisition -- passed
-- event_sourcing/test/storage/postgres/postgres_drain_lock_test.dart:954 a lock session behind a black hole close while the lock connection is frozen -- passed
-- event_sourcing/test/storage/postgres/postgres_drain_lock_test.dart:985 a lock session behind a black hole close while the lock session reconnects into a black hole -- passed
+- event_sourcing/test/storage/postgres/postgres_drain_lock_test.dart:1022 a lock session behind a black hole close while the lock connection is frozen -- passed
+- event_sourcing/test/storage/postgres/postgres_drain_lock_test.dart:1057 a lock session behind a black hole close while the lock session reconnects into a black hole -- passed
+- event_sourcing/test/storage/postgres/postgres_drain_lock_test.dart:1147 acquisition on the lock session a verification failure at start throws and leaves nothing -- passed
+- event_sourcing/test/storage/postgres/postgres_drain_lock_test.dart:1186 acquisition on the lock session an epoch raise past the query timeout gives the key up -- passed
+- event_sourcing/test/storage/postgres/postgres_drain_lock_test.dart:1351 a fenced backend a fenced backend stops its drainer -- passed
+- event_sourcing/test/storage/postgres/postgres_drain_lock_test.dart:1465 a fenced backend a send in flight when the backend is fenced records nothing -- passed
+- event_sourcing/test/storage/postgres/postgres_drain_lock_test.dart:808 loss and re-acquisition a lost lock session: re-acquisition without a restart -- passed
+- event_sourcing/test/storage/postgres/postgres_drain_lock_test.dart:841 loss and re-acquisition a stalled probe on a live session -- passed
+- event_sourcing/test/storage/postgres/postgres_drain_lock_test.dart:888 loss and re-acquisition no probe while an epoch raise runs -- passed
+- event_sourcing/test/storage/postgres/postgres_drain_lock_test.dart:931 a lock session behind a black hole a frozen lock connection: loss, then re-acquisition -- passed
 - event_sourcing/test/storage/storage_backend_conformance.dart:4517 StorageBackend conformance (postgres) drain lock and drain records a request is granted once the holder releases -- passed, skipped
 - event_sourcing/test/storage/storage_backend_conformance.dart:4517 StorageBackend conformance (postgres, runtime role) drain lock and drain records a request is granted once the holder releases -- passed
 - event_sourcing/test/storage/storage_backend_conformance.dart:4517 StorageBackend conformance (sembast (memory)) drain lock and drain records a request is granted once the holder releases -- passed
@@ -2758,8 +2758,8 @@ Code:
 Tests:
 
 - event_sourcing/test/destinations/queue_rerun_test.dart:426 the pass start records the committed run's heartbeat -- passed
-- event_sourcing/test/storage/postgres/postgres_drain_lock_test.dart:1249 wakeups from another process a halt and an event from another backend -- passed
-- event_sourcing/test/storage/postgres/postgres_drain_lock_test.dart:583 fencing a replaced holder a replaced holder's pass start writes nothing -- passed
+- event_sourcing/test/storage/postgres/postgres_drain_lock_test.dart:1321 wakeups from another process a halt and an event from another backend -- passed
+- event_sourcing/test/storage/postgres/postgres_drain_lock_test.dart:618 fencing a replaced holder a replaced holder's pass start writes nothing -- passed
 - event_sourcing/test/sync/sync_cycle_test.dart:149 SyncCycle a reentrant call runs one more pass and waits for it -- passed
 - event_sourcing/test/test_support/delivery_cycle_conformance.dart:1004 delivery cycle scenarios (postgres) cadence, heartbeat and wakeups the heartbeat runs while a send is blocked -- passed, skipped
 - event_sourcing/test/test_support/delivery_cycle_conformance.dart:1004 delivery cycle scenarios (postgres, runtime role) cadence, heartbeat and wakeups the heartbeat runs while a send is blocked -- passed
@@ -3055,7 +3055,7 @@ Code:
 
 Tests:
 
-- event_sourcing/example/test/hub_halt_recover_test.dart:474 a halt for reconfiguration is recovered only once the drainer runs a changed configuration, and the refill follows it -- passed
+- event_sourcing/example/test/hub_halt_recover_test.dart:486 a halt for reconfiguration is recovered only once the drainer runs a changed configuration, and the refill follows it -- passed
 - event_sourcing/test/destinations/queue_rerun_test.dart:451 a reconfigure recovery's guard names the committed event -- passed
 - event_sourcing/test/storage/storage_backend_conformance.dart:3021 StorageBackend conformance (postgres) FIFO deleteNullRowsAfterSequenceInQueueTxn reports count and lowest first_seq -- passed, skipped
 - event_sourcing/test/storage/storage_backend_conformance.dart:3021 StorageBackend conformance (postgres, runtime role) FIFO deleteNullRowsAfterSequenceInQueueTxn reports count and lowest first_seq -- passed
@@ -5643,7 +5643,8 @@ Code:
 
 Tests:
 
-- event_sourcing/test/storage/postgres/postgres_drain_lock_test.dart:806 loss and re-acquisition a stalled probe on a live session -- passed
+- event_sourcing/test/storage/postgres/postgres_drain_lock_test.dart:841 loss and re-acquisition a stalled probe on a live session -- passed
+- event_sourcing/test/storage/postgres/postgres_drain_lock_test.dart:993 a lock session behind a black hole a connection frozen after a statement result: loss -- passed
 - event_sourcing/test/storage/postgres/postgres_generation_guard_test.dart:1006 the lock session a lock role that cannot use the library schema, and so reaches another, is refused -- passed, skipped
 - event_sourcing/test/storage/postgres/postgres_generation_guard_test.dart:1029 the lock session a terminated lock session is replaced and the generation registered again -- passed, skipped
 - event_sourcing/test/storage/postgres/postgres_generation_guard_test.dart:1056 the lock session a probe that outlasts the query timeout declares the session lost; the replacement ends the old server session -- passed, skipped
@@ -8166,8 +8167,8 @@ Code:
 
 Tests:
 
-- event_sourcing/test/storage/postgres/postgres_drain_lock_test.dart:370 fencing a replaced holder a check after the new holder raised the epoch -- passed
-- event_sourcing/test/storage/postgres/postgres_drain_lock_test.dart:637 fencing a replaced holder a replaced holder sends nothing more -- passed
+- event_sourcing/test/storage/postgres/postgres_drain_lock_test.dart:405 fencing a replaced holder a check after the new holder raised the epoch -- passed
+- event_sourcing/test/storage/postgres/postgres_drain_lock_test.dart:672 fencing a replaced holder a replaced holder sends nothing more -- passed
 - event_sourcing/test/sync/drain_test.dart:530 drain() drain treats a thrown exception as SendTransient and records an attempt -- passed
 - event_sourcing/test/test_support/delivery_cycle_conformance.dart:599 delivery cycle scenarios (postgres) close close with a timeout: the late outcome commits nothing -- passed, skipped
 - event_sourcing/test/test_support/delivery_cycle_conformance.dart:599 delivery cycle scenarios (postgres, runtime role) close close with a timeout: the late outcome commits nothing -- passed
@@ -8316,7 +8317,7 @@ Tests:
 
 - event_sourcing/example/test/hub_delete_destination_test.dart:106 a deleted destination keeps its retained rows visible -- passed
 - event_sourcing/example/test/hub_delete_destination_test.dart:76 delete is refused while the head is pending -- passed
-- event_sourcing/example/test/hub_halt_recover_test.dart:559 delete is refused on a pending head and points at Halt; after a halt it deletes, keeping the delivered items -- passed
+- event_sourcing/example/test/hub_halt_recover_test.dart:571 delete is refused on a pending head and points at Halt; after a halt it deletes, keeping the delivered items -- passed
 - event_sourcing/test/destinations/destination_registry_dynamic_test.dart:308 DestinationRegistry (dynamic lifecycle deleteDestination retires a wedged queue and drops the schedule when allowHardDelete is true -- passed
 - event_sourcing/test/storage/postgres/postgres_fifo_guard_test.dart:772 deletion under the guard retains the terminal items -- passed
 - event_sourcing/test/test_support/queue_registry_conformance.dart:1175 queue registry scenarios (postgres) persisted state the latest registration's opt-in is in effect -- passed, skipped
@@ -8464,7 +8465,7 @@ Code:
 Tests:
 
 - event_sourcing/example/test/hub_halt_recover_test.dart:221 a refused delivery shows in the WEDGED panel, and Recover ends the wedge -- passed
-- event_sourcing/example/test/hub_halt_recover_test.dart:635 a peer's wedge shows in the hub as a peer row with no action, and leaves once the peer recovers -- passed
+- event_sourcing/example/test/hub_halt_recover_test.dart:647 a peer's wedge shows in the hub as a peer row with no action, and leaves once the peer recovers -- passed
 - event_sourcing/example_action_permissions/test/drain_lock_postgres_test.dart:196 one instance drains and the other stands by; a halt and a recovery issued through the standing-by instance are honoured by the drainer; closing the drainer hands delivery over -- passed
 - event_sourcing/test/test_support/destination_wedges_view_conformance.dart:1024 destination-wedges view scenarios (postgres) ingest refusals delivery stores an own recovery it does not hold and the view does not fold it -- passed, skipped
 - event_sourcing/test/test_support/destination_wedges_view_conformance.dart:1024 destination-wedges view scenarios (postgres) ingest refusals ingestEvent stores an own recovery it does not hold and the view does not fold it -- passed, skipped
@@ -8532,12 +8533,12 @@ Code:
 Tests:
 
 - event_sourcing/example/test/hub_halt_recover_test.dart:256 Halt wedges the head for an operator halt, and Recover resumes delivery -- passed
-- event_sourcing/example/test/hub_halt_recover_test.dart:334 Cancel halt closes the open request; with none open it is refused -- passed
-- event_sourcing/example/test/hub_halt_recover_test.dart:431 a halt on an empty queue wedges the first item enqueued -- passed
-- event_sourcing/example/test/hub_halt_recover_test.dart:474 a halt for reconfiguration is recovered only once the drainer runs a changed configuration, and the refill follows it -- passed
-- event_sourcing/example/test/hub_halt_recover_test.dart:559 delete is refused on a pending head and points at Halt; after a halt it deletes, keeping the delivered items -- passed
+- event_sourcing/example/test/hub_halt_recover_test.dart:340 Cancel halt closes the open request; with none open it is refused -- passed
+- event_sourcing/example/test/hub_halt_recover_test.dart:437 a halt on an empty queue wedges the first item enqueued -- passed
+- event_sourcing/example/test/hub_halt_recover_test.dart:486 a halt for reconfiguration is recovered only once the drainer runs a changed configuration, and the refill follows it -- passed
+- event_sourcing/example/test/hub_halt_recover_test.dart:571 delete is refused on a pending head and points at Halt; after a halt it deletes, keeping the delivered items -- passed
 - event_sourcing/example_action_permissions/test/drain_lock_postgres_test.dart:196 one instance drains and the other stands by; a halt and a recovery issued through the standing-by instance are honoured by the drainer; closing the drainer hands delivery over -- passed
-- event_sourcing/test/storage/postgres/postgres_drain_lock_test.dart:713 halt across a takeover the new holder honours a halt requested during both sends -- passed
+- event_sourcing/test/storage/postgres/postgres_drain_lock_test.dart:748 halt across a takeover the new holder honours a halt requested during both sends -- passed
 - event_sourcing/test/test_support/operator_halt_conformance.dart:1396 operator halt scenarios (postgres) request and cancel a request records its purpose and requester -- passed, skipped
 - event_sourcing/test/test_support/operator_halt_conformance.dart:1396 operator halt scenarios (postgres, runtime role) request and cancel a request records its purpose and requester -- passed
 - event_sourcing/test/test_support/operator_halt_conformance.dart:1396 operator halt scenarios (sembast) request and cancel a request records its purpose and requester -- passed
@@ -8575,7 +8576,7 @@ Tests:
 
 - event_sourcing/example_action_permissions/test/bootstrap_postgres_test.dart:48 two server instances: one drains, the other stands by -- passed
 - event_sourcing/example_action_permissions/test/drain_lock_postgres_test.dart:196 one instance drains and the other stands by; a halt and a recovery issued through the standing-by instance are honoured by the drainer; closing the drainer hands delivery over -- passed
-- event_sourcing/test/storage/postgres/postgres_drain_lock_test.dart:342 standby and takeover across processes a second process stands by and takes over -- passed
+- event_sourcing/test/storage/postgres/postgres_drain_lock_test.dart:377 standby and takeover across processes a second process stands by and takes over -- passed
 - event_sourcing/test/sync/one_drainer_test.dart:66 two databases in one isolate each run a cycle -- passed
 - event_sourcing/test/sync/one_drainer_test.dart:97 a cycle in another isolate over another database -- passed
 - event_sourcing/test/test_support/delivery_cycle_conformance.dart:288 delivery cycle scenarios (postgres) one drainer a second cycle over the database in one isolate is refused -- passed, skipped
