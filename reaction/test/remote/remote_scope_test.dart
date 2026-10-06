@@ -141,11 +141,10 @@ void main() {
         // Drop with a non-auth close code (1006). The auto-reconnect
         // loop emits Reconnecting, opens a fresh WS generation, and
         // emits Connected again on auth_ok. RemoteScope uses the
-        // default ExponentialBackoff (initial=250ms); wait past that
-        // so the loop opens a new factory pair before we accept auth.
+        // default ExponentialBackoff (initial=250ms); wait for the loop
+        // to open the new factory pair before accepting auth on it.
         await factory.latest.serverCloseClient(1006);
-        await Future<void>.delayed(const Duration(milliseconds: 300));
-        await factory.latest.acceptAuth();
+        await (await factory.generation(2)).acceptAuth();
         await pumpEventLoop();
 
         expect(transitions, [

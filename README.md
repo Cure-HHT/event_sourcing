@@ -27,17 +27,18 @@ The repository's test suites are defined once, as the
 `[[scanning.test.targets]]` of `.elspais.toml`: each target names its
 command, working directory, reporter and the results and coverage files it
 writes, and `[scanning.test.groups]` gathers them into groups (`unit`, `web`,
-`desktop`, `postgres`, `demos`, `throughput`; the reserved `default` group is
-every target). `elspais checks --run-tests --targets <group or target>` runs
-them, ingests their results and credits the requirements their tests verify;
-a bare `elspais checks --run-tests` runs the `default` group, the full
-verification. The target commands pass `--no-pub`, so resolve each package's
-dependencies first (`make` does).
+`desktop`, `postgres`, `demos`, `evidence`, `throughput`; the reserved
+`default` group is every target). `elspais test --targets <group or target>`
+runs them and records their results; a bare `elspais test` runs the `default`
+group, the full verification. `elspais checks` then ingests the results,
+credits the requirements their tests verify and judges them. The target
+commands pass `--no-pub`, so resolve each package's dependencies first (`make`
+does).
 
 The root `Makefile` runs the targets through `tools/run-checks.sh`, which asks
-elspais for a group's targets and runs one `elspais checks --run-tests
---targets <target>` per target, `JOBS` at a time. CI runs the same targets the
-same way. `make` alone lists the make targets and variables.
+elspais for a group's targets and runs one `elspais test --targets <target>`
+per target, `JOBS` at a time. CI runs the same targets the same way. `make`
+alone lists the make targets and variables.
 
 | Target | What it runs |
 | --- | --- |
@@ -48,29 +49,107 @@ same way. `make` alone lists the make targets and variables.
 | `make test-postgres` | the `postgres` group: every Postgres-gated file, sharded across throwaway containers |
 | `make test-demos` | the `demos` group: the example packages' unit, Postgres and desktop tests |
 | `make test-throughput` | the `throughput` group: the throughput guard against the baseline build |
-| `make elspais` | `elspais checks --lenient` over the results on disk |
-| `make test-all-parallel` | analyze and every target at once, then one `elspais checks` over all the results as the gate: the fast full verification |
-| `make test-all` | analyze, then `elspais checks --run-tests`: every target one after another in one invocation, one Postgres container per Postgres target, then the gate: the slow reference run |
+| `make elspais` | `elspais checks` (strict) over the results on disk |
+| `make evidence` | the `evidence` group, then `elspais evidence write`: the Evidence Snapshot (see [Test evidence](#test-evidence)) |
+| `make test-all-parallel` | analyze and every target at once, then the gate: the fast full verification |
+| `make test-all` | analyze, then `elspais test`: every target one after another in one invocation, one Postgres container per Postgres target, then the gate: the slow reference run |
 | `make pg-up` / `make pg-down` | start / remove throwaway Postgres containers by hand |
 
-Each target writes its machine-JSON results (and lcov coverage) under its
-package's `coverage/`, to paths no other target writes, so targets run side by
-side. The Postgres targets run every `_test.dart` file that names
-`PG_TEST_URL` (or uses the test URL helper); they take servers from
-`PG_TEST_URLS` (space-separated, one shard each) or `PG_TEST_URL`, and without
-them start their own `postgres:16` containers on free ports (`SHARDS` of
-them) and remove them when they end, interrupted or not. A target that
-splits its files (the Postgres targets and event_sourcing's unit suite, in
-`UNIT_PIECES` pieces) writes one results file per shard or piece and merges
-their coverage. The gate is `elspais checks --lenient` (the pre-push hook's
-flag; `ELSPAIS_STRICT=1` drops it) plus a strict check that results were
-ingested and every results and coverage file a target names was read
-(`tools/run-checks.sh results-ingested`); it builds the graph locally, since
-the elspais daemon does not watch the results files. Output is one line per target,
-shard or piece; full logs go to `.check-logs/<run id>/`, and a run ends with
-every failing test. Per-file Postgres durations and per-target durations are
-kept in `.check-durations` and balance the next run. Runs on Linux and macOS
-(bash 3.2 or later, GNU make 3.81 or later, python3 and Docker).
+Each target writes its machine-JSON results, its lcov coverage and the
+fingerprint of the inputs it ran against into its own folder,
+`.results/<target>/`, so targets run side by side. The Postgres targets run
+every `_test.dart` file that names `PG_TEST_URL` (or uses the test URL
+helper); they take servers from `PG_TEST_URLS` (space-separated, one shard
+each) or `PG_TEST_URL`, and without them start their own containers of the
+pinned Postgres image on free ports (`SHARDS` of them, and the second server
+one file compares against) and remove them when they end, interrupted or not.
+A target that splits its files (the Postgres targets and event_sourcing's unit
+suite, in `UNIT_PIECES` pieces) writes one results file per shard or piece and
+merges their coverage. The gate is one strict `elspais checks --expect
+default` over every result: a warning fails it, and so does a target with no
+results. It builds the graph locally, since the elspais daemon does not watch
+the results files. Output is one line per target, shard or piece; full logs
+go to `.check-logs/<run id>/`, and a run ends with every failing test.
+Per-file Postgres durations and per-target durations are kept in
+`.check-durations` and balance the next run. Runs on Linux and macOS (bash
+3.2 or later, GNU make 3.81 or later, python3 and Docker).
+
+The tool versions are pinned in `.github/versions.env`: elspais, the Flutter
+SDK and the Postgres image. CI installs them, and `tools/run-checks.sh` reads
+them.
+
+## Test evidence
+
+`test-evidence/` holds the Evidence Snapshot: the results of every test suite
+except the throughput guard, for the commit whose tree digest it records,
+and the traceability report derived from them. A consumer that pins a commit
+of this repository can cite that report without running the suites.
+
+- `results.jsonl` holds the outcome of each test, by the file and line that
+  declare it.
+- `snapshot.json` holds the digest of the tree the run tested, the targets of
+  the `evidence` group with the digest of each target's inputs, and the facts
+  about the run.
+- `TRACEABILITY.md` names, for each assertion, the code that implements it and
+  the tests that verify it, with each test's outcome.
+- `timings.jsonl` holds each test's duration and printed output. No check
+  compares it.
+
+The facts state what the run used:
+
+| Fact | Meaning |
+| --- | --- |
+| `backends=vm,chrome,desktop,postgres` | The suites ran on the Dart VM, in Chrome, as a Linux desktop build under a virtual display, and against Postgres servers |
+| `flutter=<version>` | The Flutter SDK that ran them: `FLUTTER_VERSION` of `.github/versions.env` |
+| `postgres=<image>` | The Postgres image the servers ran: `POSTGRES_IMAGE` of `.github/versions.env` |
+
+The throughput guard is not part of the snapshot: it measures the machine that
+runs it, not the tree. CI runs it as a blocking job of its own.
+
+CI runs every suite again on each pull request and push to `main`, and its
+gate verifies the committed snapshot against that run byte for byte, with the
+same facts. On a pull request CI tests GitHub's merge of the branch into
+`main`, so the snapshot matches only when the branch holds the tip of `main`:
+bring the branch up to date before writing the snapshot. A difference in any test's outcome, in the set of results, in a
+fact, in the tree digest or in the report fails the gate. So the snapshot on
+`main` describes the commit that holds it.
+
+Write the snapshot as the last step before committing a change, and commit
+`test-evidence/` with it:
+
+```sh
+make evidence           # run the `evidence` group, then write test-evidence/
+git add test-evidence
+```
+
+`make evidence` refuses to start, and names what to install, when Docker, a
+Chrome that flutter can use (`CHROME_EXECUTABLE` names one), `xvfb-run` or
+the pinned Flutter and elspais versions are missing: the snapshot's facts
+would then not hold. It starts its own Postgres containers, so it refuses
+`PG_TEST_URL`, `PG_TEST_URLS`, another `PG_IMAGE` and a `PG_PART` slice. A
+test that skips off CI when a tool prerequisite is missing (an offline
+`flutter pub get`, a package that does not resolve, a process that does not
+become ready) fails in `make evidence`, as it does on CI, so both runs record
+the same outcome. It writes nothing when a target fails. A snapshot of another
+tree fails CI's gate, so write it again after every change that a pull request
+carries.
+
+The pre-push `elspais checks` is strict, and it judges the spec, the code
+citations and the defined terms. It does not judge test results. CI's gate
+judges them, so a push of work in progress needs no full suite run, and a pull
+request merges only with a current snapshot.
+
+To check a snapshot without writing one, run the `evidence` group again and
+compare:
+
+```sh
+tools/run-checks.sh evidence-verify --run
+```
+
+It runs the `evidence` group as `make evidence` does, then
+`elspais evidence verify --targets evidence` with the snapshot's facts, which
+lists each difference. Without `--run` it compares the snapshot with the
+results already in `.results/`, as CI's gate does.
 
 ## Related repositories
 

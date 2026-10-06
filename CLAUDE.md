@@ -20,10 +20,16 @@ packages, `provenance` and `canonical_json_jcs`), the browser-only
 `event_sourcing/test/web/` suite in Chrome, the `event_sourcing/example`
 desktop integration test, every Postgres-gated test file, and the opt-in
 throughput guard. CI (`.github/workflows/event-sourcing-tests.yml`) runs
-them through `elspais checks --run-tests` in parallel jobs, the Postgres
-targets against Postgres services, then one traceability gate over all
-results; locally, `make test-all-parallel` does the same (see `make help`).
-Every workflow pins the Flutter SDK version.
+them through `elspais test` in parallel jobs, the Postgres targets against
+Postgres services, then one traceability gate over all results. The gate
+verifies the committed Evidence Snapshot (`test-evidence/`: the results of
+every target except the throughput guard, for the tree it records) against
+that run byte for byte, and runs a strict `elspais checks` that expects every
+target's results. Locally, `make test-all-parallel` runs every target and the
+strict check, and `make evidence` writes the snapshot, which is committed with
+the change it describes (see `make help`). `.github/versions.env` pins
+elspais, the Flutter SDK and the Postgres image, and every workflow job and
+`tools/run-checks.sh` read them there.
 Downstream consumers pin this repo by git ref.
 
 The substrate ships two concrete `StorageBackend` reference

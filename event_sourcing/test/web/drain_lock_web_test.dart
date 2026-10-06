@@ -712,53 +712,61 @@ void main() {
       dispatch('resume');
     });
 
-    for (final (hide, show) in const <(String, String)>[
-      ('pagehide', 'pageshow'),
-      ('freeze', 'resume'),
-    ]) {
-      // Verifies: EVS-DEV-destination-drain-lock/A
-      // with no seam, the page's own lifecycle drives the drain lock: a
-      //   hiding event hands it over (the send in flight returns and its
-      //   outcome commits, the lock is released and nothing is requested),
-      //   and the showing event requests it again.
-      test(
-        '$hide hands the drain lock over and $show requests it again',
-        () async {
-          final name = freshWebName('document-$hide');
-          final f1 = await tab(name);
-          final d1 = WebReceiver(id: 'x');
-          await f1.register(d1);
-          final c1 = await startIn(
-            f1,
-            DeliveryTestHooks(timerFactory: ManualTimers().create),
-          );
-          cycles.add(c1);
-          expect(c1.state, SyncCycleState.running);
-          final gate = Completer<void>();
-          d1.gate = () => gate.future;
-          final n1 = await f1.note('n1');
-          await until(() => d1.started.length == 1, reason: 'the send');
-          dispatch(hide);
-          await Future<void>.delayed(const Duration(milliseconds: 50));
-          expect(c1.state, SyncCycleState.running, reason: 'a send in flight');
-          gate.complete();
-          await until(
-            () => c1.state == SyncCycleState.standby,
-            reason: 'the hand-over',
-          );
-          expect(d1.sentIds, <String>[n1]);
-          final rows = await readFresh(name, (b) => b.listFifoEntries('x'));
-          expect(rows.single.finalStatus, FinalStatus.sent);
-          await Future<void>.delayed(const Duration(milliseconds: 50));
-          expect(await drainLockCounts(f1), (held: 0, pending: 0));
-          dispatch(show);
-          await until(
-            () => c1.state == SyncCycleState.running,
-            reason: 'the request once shown',
-          );
-        },
+    // The page's own lifecycle drives the drain lock: a hiding event hands it
+    // over (the send in flight returns and its outcome commits, the lock is
+    // released and nothing is requested), and the showing event requests it
+    // again. Each hiding event and its showing event is one test, named
+    // literally, so a run in the browser binds each result to its test.
+    Future<void> handsOverAndRequestsAgain(String hide, String show) async {
+      final name = freshWebName('document-$hide');
+      final f1 = await tab(name);
+      final d1 = WebReceiver(id: 'x');
+      await f1.register(d1);
+      final c1 = await startIn(
+        f1,
+        DeliveryTestHooks(timerFactory: ManualTimers().create),
+      );
+      cycles.add(c1);
+      expect(c1.state, SyncCycleState.running);
+      final gate = Completer<void>();
+      d1.gate = () => gate.future;
+      final n1 = await f1.note('n1');
+      await until(() => d1.started.length == 1, reason: 'the send');
+      dispatch(hide);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(c1.state, SyncCycleState.running, reason: 'a send in flight');
+      gate.complete();
+      await until(
+        () => c1.state == SyncCycleState.standby,
+        reason: 'the hand-over',
+      );
+      expect(d1.sentIds, <String>[n1]);
+      final rows = await readFresh(name, (b) => b.listFifoEntries('x'));
+      expect(rows.single.finalStatus, FinalStatus.sent);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(await drainLockCounts(f1), (held: 0, pending: 0));
+      dispatch(show);
+      await until(
+        () => c1.state == SyncCycleState.running,
+        reason: 'the request once shown',
       );
     }
+
+    // Verifies: EVS-DEV-destination-drain-lock/A
+    // with no seam, pagehide hands the drain lock over and pageshow requests
+    //   it again.
+    test(
+      'pagehide hands the drain lock over and pageshow requests it again',
+      () => handsOverAndRequestsAgain('pagehide', 'pageshow'),
+    );
+
+    // Verifies: EVS-DEV-destination-drain-lock/A
+    // with no seam, freeze hands the drain lock over and resume requests it
+    //   again.
+    test(
+      'freeze hands the drain lock over and resume requests it again',
+      () => handsOverAndRequestsAgain('freeze', 'resume'),
+    );
 
     // Verifies: EVS-DEV-destination-drain-lock/F
     // the page-visibility seam narrows the page's own visibility and never

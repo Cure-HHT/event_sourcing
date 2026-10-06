@@ -214,7 +214,7 @@ void main() {
     try {
       found = await _analyzeFixtures();
     } on ToolUnavailable catch (e) {
-      if (runningInCi) fail('$e');
+      if (prerequisitesRequired) fail('$e');
       markTestSkipped('$e');
       return;
     }

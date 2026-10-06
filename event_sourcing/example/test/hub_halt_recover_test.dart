@@ -280,7 +280,13 @@ void main() {
       ),
       'the operator-halt row',
     );
-    expect(find.text('HALT REQUESTED (pause)'), findsNothing);
+    // The indicator is the FIFO panel's, which re-reads the delivery status
+    // on its own after the wedge event; the WEDGED row says nothing of it.
+    await _until(
+      tester,
+      () => !_shown(find.text('HALT REQUESTED (pause)')),
+      'the indicator to clear',
+    );
     // The WEDGED column lists the delivery events; the detail panel shows
     // the persisted status.
     await _until(
@@ -466,7 +472,13 @@ void main() {
       () => _shown(find.textContaining('Primary: operator_halt')),
       'the operator-halt row',
     );
-    expect(find.text('HALT REQUESTED (pause)'), findsNothing);
+    // The indicator is the FIFO panel's, which re-reads the delivery status
+    // on its own after the wedge event; the WEDGED row says nothing of it.
+    await _until(
+      tester,
+      () => !_shown(find.text('HALT REQUESTED (pause)')),
+      'the indicator to clear',
+    );
     await _finish(tester, pane);
   });
 
@@ -519,9 +531,13 @@ void main() {
     // A new configuration: the drainer restarts with the filter narrowed
     // to notes.
     await _press(tester, '[Reconfigure drainer]');
+    // The reconfiguration records the new configuration before it starts
+    // the new delivery cycle, so the wait holds only once both are done.
     await _until(
       tester,
-      () => pane.state.reconfiguredDestinationIds.contains('Primary'),
+      () =>
+          pane.state.reconfiguredDestinationIds.contains('Primary') &&
+          pane.state.cycle != null,
       'the drainer to restart',
     );
     await tester.runAsync(pane.cycle);

@@ -111,6 +111,9 @@ skip = [
   "elspais-refines-coverage-propagation-repro.md", "checks--*.json",
   "traceability.html", "traceability.md", "traceability.csv", "traceability_view.html",
   "traceability_matrix.csv", "traceability_matrix.html", "traceability_matrix.md",
+  # The committed Evidence Snapshot ([scanning.test] evidence): it describes
+  # a run, so it is never that run's input.
+  "test-evidence",
 ]
 
 [scanning.spec]
@@ -153,6 +156,11 @@ enabled = true
 # Each target writes its results and coverage into <output_root>/<name>/,
 # whose absolute path its command reads from $ELSPAIS_TARGET_OUTPUT.
 output_root = ".results"
+# The Evidence Snapshot: the normalized results of the `evidence` group's run
+# of a tree, and the traceability report derived from them. `make evidence`
+# writes it and the developer commits it with the change it describes; CI
+# runs the same targets again and verifies the snapshot byte for byte.
+evidence = "test-evidence"
 prescan_command = ""
 reference_keyword = "Verifies"
 reference_patterns = []
@@ -160,8 +168,9 @@ reference_patterns = []
 # Test targets: the single definition of the repository's test suites. The
 # root Makefile (through tools/run-checks.sh) and CI
 # (.github/workflows/event-sourcing-tests.yml) both run them through
-# `elspais checks --run-tests --targets <group or target>`; neither lists a
-# suite or a test command of its own.
+# `elspais test --targets <group or target>` and judge the results afterwards
+# with one `elspais checks`; neither lists a suite or a test command of its
+# own.
 #
 # Each target runs `flutter test` with the machine reporter
 # (`reporter = "flutter-machine"`, `match = "source"`): the JSON carries each
@@ -170,17 +179,16 @@ reference_patterns = []
 # from covered // Implements: lines, and a red target marks that credit
 # failing.
 #
-# flutter-machine is a stdout channel: under `--run-tests` elspais parses the
-# command's captured stdout, not the `results` files. Each command therefore
-# prints the machine JSON on stdout and also writes it, with its lcov, into the
-# target's own folder, .results/<name>/, whose absolute path elspais passes in
-# ELSPAIS_TARGET_OUTPUT; `results` and `coverage` are paths inside that folder.
-# Every command that does not run the tests (a plain `elspais checks`,
-# `trace`, `viewer`, and CI's gate job over the downloaded artifacts) reads
-# them there. No two targets share a folder, so any set of targets can run at
-# once. The folder also holds the fingerprint of the inputs the run saw, so a
-# result reads as stale once an input changes; the global `skip` above keeps
-# what runs and builds write out of those inputs.
+# Each command writes the machine JSON, with its lcov, into the target's own
+# folder, .results/<name>/, whose absolute path elspais passes in
+# ELSPAIS_TARGET_OUTPUT; `results` and `coverage` are paths inside that
+# folder. `elspais test` reads nothing while a command runs, and every later
+# command (`elspais checks`, `trace`, `viewer`, `evidence`, and CI's gate job
+# over the downloaded artifacts) reads the results there. The commands also
+# print the machine JSON on stdout. No two targets share a folder, so any set
+# of targets can run at once. The folder also holds the fingerprint of the
+# inputs the run saw, so a result reads as stale once an input changes; the
+# global `skip` above keeps what runs and builds write out of those inputs.
 #
 # Commands run with --no-pub (resolve dependencies first: `make` and CI do),
 # and in each package at most one target builds the test assets (the widget
@@ -206,8 +214,11 @@ reference_patterns = []
 # (CI's matrix); with no server given they start throwaway Postgres containers
 # (SHARDS of them) and remove them when done.
 #
-# Groups name what a run is about. A bare `elspais checks --run-tests` runs
-# the `default` group: every target, the full verification.
+# Groups name what a run is about. A bare `elspais test` runs the `default`
+# group: every target, the full verification. The `evidence` group is every
+# target except the throughput guard: the Evidence Snapshot holds its results.
+# The throughput guard measures the machine that runs it, so its outcome is
+# not a property of the tree; CI runs it as a blocking job of its own.
 
 [scanning.test.groups]
 unit = "Every package's tests on the Dart VM, without Postgres (its gated files skip)"
@@ -215,11 +226,12 @@ web = "event_sourcing's browser-only suite (test/web/) in Chrome"
 desktop = "event_sourcing/example's integration test on a Linux desktop build under a virtual display"
 postgres = "Every Postgres-gated test file, run against Postgres servers (the throughput guard excluded)"
 demos = "The example packages: their unit tests, the example_action_permissions Postgres files and the desktop integration test"
+evidence = "Every target except the throughput guard: the targets whose results the Evidence Snapshot holds"
 throughput = "The throughput guard: the current tree's Postgres append and ingest throughput against the baseline build's"
 
 [[scanning.test.targets]]
 name = "provenance"
-groups = ["default", "unit"]
+groups = ["default", "evidence", "unit"]
 cwd = "provenance"
 command = "env -u PG_TEST_URL -u PG_TEST_URLS -u PG_TEST_URL_OTHER_SERVER -u EVS_THROUGHPUT_TEST flutter test --no-pub --machine --coverage --file-reporter=json:$ELSPAIS_TARGET_OUTPUT/machine.jsonl --coverage-path=$ELSPAIS_TARGET_OUTPUT/lcov.info"
 reporter = "flutter-machine"
@@ -230,7 +242,7 @@ credit_coverage = "verified"
 
 [[scanning.test.targets]]
 name = "canonical_json_jcs"
-groups = ["default", "unit"]
+groups = ["default", "evidence", "unit"]
 cwd = "canonical_json_jcs"
 command = "env -u PG_TEST_URL -u PG_TEST_URLS -u PG_TEST_URL_OTHER_SERVER -u EVS_THROUGHPUT_TEST flutter test --no-pub --machine --coverage --file-reporter=json:$ELSPAIS_TARGET_OUTPUT/machine.jsonl --coverage-path=$ELSPAIS_TARGET_OUTPUT/lcov.info"
 reporter = "flutter-machine"
@@ -241,7 +253,7 @@ credit_coverage = "verified"
 
 [[scanning.test.targets]]
 name = "reaction"
-groups = ["default", "unit"]
+groups = ["default", "evidence", "unit"]
 cwd = "reaction"
 command = "env -u PG_TEST_URL -u PG_TEST_URLS -u PG_TEST_URL_OTHER_SERVER -u EVS_THROUGHPUT_TEST flutter test --no-pub --machine --coverage --file-reporter=json:$ELSPAIS_TARGET_OUTPUT/machine.jsonl --coverage-path=$ELSPAIS_TARGET_OUTPUT/lcov.info"
 reporter = "flutter-machine"
@@ -252,7 +264,7 @@ credit_coverage = "verified"
 
 [[scanning.test.targets]]
 name = "reaction-example"
-groups = ["default", "unit", "demos"]
+groups = ["default", "evidence", "unit", "demos"]
 cwd = "reaction/example"
 command = "env -u PG_TEST_URL -u PG_TEST_URLS -u PG_TEST_URL_OTHER_SERVER -u EVS_THROUGHPUT_TEST flutter test --no-pub --machine --coverage --file-reporter=json:$ELSPAIS_TARGET_OUTPUT/machine.jsonl --coverage-path=$ELSPAIS_TARGET_OUTPUT/lcov.info"
 reporter = "flutter-machine"
@@ -263,7 +275,7 @@ credit_coverage = "verified"
 
 [[scanning.test.targets]]
 name = "reaction_widgets"
-groups = ["default", "unit"]
+groups = ["default", "evidence", "unit"]
 cwd = "reaction_widgets"
 command = "env -u PG_TEST_URL -u PG_TEST_URLS -u PG_TEST_URL_OTHER_SERVER -u EVS_THROUGHPUT_TEST flutter test --no-pub --machine --coverage --file-reporter=json:$ELSPAIS_TARGET_OUTPUT/machine.jsonl --coverage-path=$ELSPAIS_TARGET_OUTPUT/lcov.info"
 reporter = "flutter-machine"
@@ -274,7 +286,7 @@ credit_coverage = "verified"
 
 [[scanning.test.targets]]
 name = "reaction_widgets_testing"
-groups = ["default", "unit"]
+groups = ["default", "evidence", "unit"]
 cwd = "reaction_widgets_testing"
 command = "env -u PG_TEST_URL -u PG_TEST_URLS -u PG_TEST_URL_OTHER_SERVER -u EVS_THROUGHPUT_TEST flutter test --no-pub --machine --coverage --file-reporter=json:$ELSPAIS_TARGET_OUTPUT/machine.jsonl --coverage-path=$ELSPAIS_TARGET_OUTPUT/lcov.info"
 reporter = "flutter-machine"
@@ -287,7 +299,7 @@ credit_coverage = "verified"
 # pieces run side by side; test/web/ is left to the browser target.
 [[scanning.test.targets]]
 name = "event_sourcing"
-groups = ["default", "unit"]
+groups = ["default", "evidence", "unit"]
 cwd = "event_sourcing"
 command = "../tools/run-checks.sh target unit"
 reporter = "flutter-machine"
@@ -298,7 +310,7 @@ credit_coverage = "verified"
 
 [[scanning.test.targets]]
 name = "event_sourcing-example"
-groups = ["default", "unit", "demos"]
+groups = ["default", "evidence", "unit", "demos"]
 cwd = "event_sourcing/example"
 command = "env -u PG_TEST_URL -u PG_TEST_URLS -u PG_TEST_URL_OTHER_SERVER -u EVS_THROUGHPUT_TEST flutter test --no-pub --machine --coverage --file-reporter=json:$ELSPAIS_TARGET_OUTPUT/machine.jsonl --coverage-path=$ELSPAIS_TARGET_OUTPUT/lcov.info"
 reporter = "flutter-machine"
@@ -309,7 +321,7 @@ credit_coverage = "verified"
 
 [[scanning.test.targets]]
 name = "event_sourcing-example_action_permissions"
-groups = ["default", "unit", "demos"]
+groups = ["default", "evidence", "unit", "demos"]
 cwd = "event_sourcing/example_action_permissions"
 command = "env -u PG_TEST_URL -u PG_TEST_URLS -u PG_TEST_URL_OTHER_SERVER -u EVS_THROUGHPUT_TEST flutter test --no-pub --machine --coverage --concurrency=1 --file-reporter=json:$ELSPAIS_TARGET_OUTPUT/machine.jsonl --coverage-path=$ELSPAIS_TARGET_OUTPUT/lcov.info"
 reporter = "flutter-machine"
@@ -320,7 +332,7 @@ credit_coverage = "verified"
 
 [[scanning.test.targets]]
 name = "event_sourcing-example_clinical_scopes"
-groups = ["default", "unit", "demos"]
+groups = ["default", "evidence", "unit", "demos"]
 cwd = "event_sourcing/example_clinical_scopes"
 command = "env -u PG_TEST_URL -u PG_TEST_URLS -u PG_TEST_URL_OTHER_SERVER -u EVS_THROUGHPUT_TEST flutter test --no-pub --machine --coverage --file-reporter=json:$ELSPAIS_TARGET_OUTPUT/machine.jsonl --coverage-path=$ELSPAIS_TARGET_OUTPUT/lcov.info"
 reporter = "flutter-machine"
@@ -333,7 +345,7 @@ credit_coverage = "verified"
 # No coverage: the Chrome platform collects none.
 [[scanning.test.targets]]
 name = "event_sourcing-web"
-groups = ["default", "web"]
+groups = ["default", "evidence", "web"]
 cwd = "event_sourcing"
 command = "flutter test --no-pub --no-test-assets --machine --platform chrome --file-reporter=json:$ELSPAIS_TARGET_OUTPUT/machine.jsonl test/web/"
 reporter = "flutter-machine"
@@ -345,7 +357,7 @@ match = "source"
 # nothing.
 [[scanning.test.targets]]
 name = "event_sourcing-example-desktop"
-groups = ["default", "desktop", "demos"]
+groups = ["default", "evidence", "desktop", "demos"]
 cwd = "event_sourcing/example"
 command = "../../tools/run-checks.sh target desktop"
 reporter = "flutter-machine"
@@ -357,7 +369,7 @@ match = "source"
 # excluded, sharded across the Postgres servers.
 [[scanning.test.targets]]
 name = "event_sourcing-postgres"
-groups = ["default", "postgres"]
+groups = ["default", "evidence", "postgres"]
 cwd = "event_sourcing"
 command = "../tools/run-checks.sh target postgres"
 reporter = "flutter-machine"
@@ -369,7 +381,7 @@ credit_coverage = "verified"
 # Every Postgres-gated file of example_action_permissions.
 [[scanning.test.targets]]
 name = "event_sourcing-example_action_permissions-postgres"
-groups = ["default", "postgres", "demos"]
+groups = ["default", "evidence", "postgres", "demos"]
 cwd = "event_sourcing/example_action_permissions"
 command = "../../tools/run-checks.sh target postgres"
 reporter = "flutter-machine"
@@ -411,17 +423,6 @@ provisional = ["Proposed"]
 aspirational = ["Roadmap", "Future", "Idea"]
 retired = ["Deprecated", "Superseded", "Rejected"]
 
-# Structural-orphan suppression.
-#
-# A "structural orphan" is a node with no FILE ancestor. The flutter-machine
-# reporter emits one RESULT node per executed test case with no stable
-# `test_id`, so elspais cannot wire those nodes to a TEST/FILE by edge -- it
-# instead credits `verified` by matching the RESULT's `source_file` to the test
-# file's path. The result nodes are therefore structurally orphaned by design,
-# not by a build bug. Once `results` persists to disk (above), every `checks`
-# run loads them, so the default `spec.structural_orphans` check would fail the
-# pre-push hook (`elspais checks --lenient`) on ~1 orphan-per-test-case even
-# though nothing is wrong. Suppress it.
 # Reference and format severities
 #
 # The keys left at their default are named rather than omitted, so the levers
@@ -446,7 +447,22 @@ no_traceability_severity = "error"
 # Every citation binds today, so a new unbound one fails the gate.
 [rules.severity]
 "tests.unbound_citation" = "error"
+# A results or coverage file a target names that elspais could read only in
+# part (a stream that ends inside a test, a line that does not parse) fails
+# the gate rather than shortening the run in silence.
+"tests.partial_read" = "error"
 
+# Structural-orphan suppression.
+#
+# A "structural orphan" is a node with no FILE ancestor. The flutter-machine
+# reporter emits one RESULT node per executed test case with no stable
+# `test_id`, so elspais cannot wire those nodes to a TEST/FILE by edge -- it
+# instead credits `verified` by matching the RESULT's `source_file` to the test
+# file's path. The result nodes are therefore structurally orphaned by design,
+# not by a build bug. Every `checks` run loads the results on disk, so the
+# default `spec.structural_orphans` check would fail the pre-push hook
+# (`elspais checks`) on one orphan per test case although nothing is wrong.
+# Suppress it.
 [rules.hierarchy]
 allow_structural_orphans = true
 

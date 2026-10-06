@@ -96,9 +96,9 @@ void main() {
         // Call reconnect(); the loop opens a fresh WS generation.
         unawaited(conn.reconnect());
 
-        // Accept auth on the new generation so the loop can complete.
-        await Future<void>.delayed(const Duration(milliseconds: 10));
-        await factory.latest.acceptAuth();
+        // Accept auth on the new generation once the loop has opened it,
+        // so the loop can complete.
+        await (await factory.generation(2)).acceptAuth();
         await pumpEventLoop();
 
         // A second WS generation was opened.
@@ -166,7 +166,7 @@ void main() {
       // but we deliberately do NOT accept it — the new socket is open yet
       // unauthenticated.
       unawaited(conn.reconnect());
-      await Future<void>.delayed(const Duration(milliseconds: 10));
+      await factory.generation(2);
       expect(factory.pairs, hasLength(2));
       final secondGen = factory.pairs.last;
 
@@ -229,8 +229,7 @@ void main() {
 
         // Start reconnect and let the reconnect loop open a new generation.
         unawaited(conn.reconnect());
-        await Future<void>.delayed(const Duration(milliseconds: 10));
-        await factory.latest.acceptAuth();
+        await (await factory.generation(2)).acceptAuth();
         await pumpEventLoop();
         expect(factory.pairs, hasLength(2), reason: 'new WS generation opened');
 
@@ -296,8 +295,7 @@ void main() {
 
       // Reconnect with the new credential.
       unawaited(conn.reconnect());
-      await Future<void>.delayed(const Duration(milliseconds: 10));
-      await factory.latest.acceptAuth();
+      await (await factory.generation(2)).acceptAuth();
       await pumpEventLoop();
 
       expect(factory.pairs, hasLength(2));
@@ -351,8 +349,7 @@ void main() {
 
       // Call reconnect() via RemoteScope.
       unawaited(scope.reconnect());
-      await Future<void>.delayed(const Duration(milliseconds: 10));
-      await factory.latest.acceptAuth();
+      await (await factory.generation(2)).acceptAuth();
       await pumpEventLoop();
 
       expect(

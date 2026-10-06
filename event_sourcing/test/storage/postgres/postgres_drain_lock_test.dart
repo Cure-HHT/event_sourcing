@@ -102,6 +102,11 @@ Future<int?> _epoch(PostgresTestDatabase db) => _withConnection(db, (c) async {
   return r.isEmpty ? null : r.first[0] as int?;
 });
 
+/// What a timer that is due, and the steps it starts, may be delayed by on a
+/// loaded runner: the margin a wall-clock bound adds to the bound the library
+/// configures.
+const _schedulingSlack = Duration(milliseconds: 300);
+
 /// A TCP forwarder in front of the Postgres server, for the lock session:
 /// it can stop relaying (freeze) without closing either socket, so the
 /// client sees a black hole while the server session stays alive.
@@ -114,6 +119,16 @@ final class _Forwarder {
 
   /// New connections are accepted and never relayed.
   bool freezeNew = false;
+
+  /// When set, the forwarder relays the server's answer to the next
+  /// statement run inside a transaction and then freezes every connection
+  /// and every new one, so the client's next exchange (the driver's close
+  /// of that statement's portal) meets a black hole.
+  bool freezeAfterStatementInTransaction = false;
+
+  /// Completes when [freezeAfterStatementInTransaction] has frozen.
+  Future<void> get frozenAfterStatement => _frozenAfterStatement.future;
+  final Completer<void> _frozenAfterStatement = Completer<void>();
 
   /// Connections accepted so far.
   int accepted = 0;
@@ -152,7 +167,15 @@ final class _Forwarder {
       );
       upstream.listen(
         (data) {
-          if (!pair.frozen) client.add(data);
+          if (pair.frozen) return;
+          client.add(data);
+          if (freezeAfterStatementInTransaction &&
+              _answersStatementInTransaction(data)) {
+            freezeAfterStatementInTransaction = false;
+            freeze();
+            freezeNew = true;
+            _frozenAfterStatement.complete();
+          }
         },
         onError: (Object _) {},
         onDone: () {
@@ -167,6 +190,18 @@ final class _Forwarder {
     for (final p in _pairs) {
       p.frozen = true;
     }
+  }
+
+  /// True when [data] is a server answer to a statement, ending with a
+  /// ReadyForQuery that reports an open transaction: `Z`, length 5, `T`. A
+  /// CloseComplete (`3`) ends the same way but answers a portal's close.
+  static bool _answersStatementInTransaction(List<int> data) {
+    const end = <int>[0x5A, 0, 0, 0, 5, 0x54];
+    if (data.length <= end.length || data.first == 0x33) return false;
+    for (var i = 0; i < end.length; i++) {
+      if (data[data.length - end.length + i] != end[i]) return false;
+    }
+    return true;
   }
 
   Future<void> close() async {
@@ -886,12 +921,17 @@ void main() {
 
   group('a lock session behind a black hole', () {
     // Verifies: EVS-DEV-destination-drain-lock/C
-    // a lock session that stops answering is declared lost within the
-    //   query timeout plus a second; the drainer stands by, and once new
-    //   connections reach the server again the replacement ends the old
-    //   server session, which still holds the drain key, and the drainer
-    //   takes the lock again with a higher epoch and delivers.
+    // a lock session that stops answering is declared lost within one
+    //   heartbeat and the bound on one stalled exchange (the query timeout
+    //   plus the connect timeout, which the lock session sets equal to it);
+    //   the drainer stands by, and once new connections reach the server
+    //   again the replacement ends the old server session, which still holds
+    //   the drain key, and the drainer takes the lock again with a higher
+    //   epoch and delivers.
     test('a frozen lock connection: loss, then re-acquisition', () async {
+      const lockHeartbeat = Duration(milliseconds: 200);
+      const lockQueryTimeout = Duration(seconds: 1);
+      final lossBound = lockHeartbeat + lockQueryTimeout * 2 + _schedulingSlack;
       final forwarder = _Forwarder(Uri.parse(db.adminUrl));
       await forwarder.start();
       addTearDown(forwarder.close);
@@ -901,8 +941,8 @@ void main() {
       );
       final a = await process(
         lockUrl: forwarder.route(db.runtimeUrl),
-        lockHeartbeat: const Duration(milliseconds: 200),
-        lockQueryTimeout: const Duration(seconds: 1),
+        lockHeartbeat: lockHeartbeat,
+        lockQueryTimeout: lockQueryTimeout,
         destinations: <Destination>[receiver],
       );
       final cycle = await start(
@@ -920,13 +960,10 @@ void main() {
       final watch = Stopwatch()..start();
       await until(
         () => cycle.state == SyncCycleState.standby,
-        bound: const Duration(seconds: 3),
+        bound: lossBound,
         reason: 'the loss',
       );
-      expect(
-        watch.elapsed,
-        lessThan(const Duration(seconds: 2, milliseconds: 500)),
-      );
+      expect(watch.elapsed, lessThan(lossBound));
       // The old server session is alive behind the frozen connection and
       // still holds the key.
       expect(await _holdersOf(db, key), oldHolders);
@@ -947,18 +984,53 @@ void main() {
       );
     });
 
-    // Verifies: EVS-DEV-destination-drain-lock/C
-    // closing a drainer while its lock session does not answer returns
-    //   within the query timeout plus a second, and no epoch is raised
-    //   afterwards.
-    test('close while the lock connection is frozen', () async {
+    // Verifies: EVS-DEV-postgres-backend/J
+    // every exchange on the lock session is bounded, the driver's close of a
+    //   statement's portal included: a connection that stops answering
+    //   right after a statement's result is declared lost within the query
+    //   timeout plus the connect timeout, which the lock session sets equal
+    //   to it.
+    test('a connection frozen after a statement result: loss', () async {
+      const lockQueryTimeout = Duration(seconds: 1);
+      final lossBound = lockQueryTimeout * 2 + _schedulingSlack;
       final forwarder = _Forwarder(Uri.parse(db.adminUrl));
       await forwarder.start();
       addTearDown(forwarder.close);
       final a = await process(
         lockUrl: forwarder.route(db.runtimeUrl),
         lockHeartbeat: const Duration(milliseconds: 200),
-        lockQueryTimeout: const Duration(seconds: 1),
+        lockQueryTimeout: lockQueryTimeout,
+      );
+      expect(a.backend.generationStatus, GenerationStatus.registered);
+      forwarder.freezeAfterStatementInTransaction = true;
+      await forwarder.frozenAfterStatement;
+      final watch = Stopwatch()..start();
+      await until(
+        () => a.backend.generationStatus == GenerationStatus.lost,
+        bound: lossBound,
+        reason: 'the loss',
+      );
+      expect(watch.elapsed, lessThan(lossBound));
+    });
+
+    // Verifies: EVS-DEV-destination-drain-lock/C
+    // closing a drainer while its lock session does not answer returns
+    //   once the operation the session was running has failed: within one
+    //   heartbeat and the bound on one stalled exchange (the query timeout
+    //   plus the connect timeout, which the lock session sets equal to it)
+    //   of the freeze; and no epoch is raised afterwards.
+    test('close while the lock connection is frozen', () async {
+      const lockHeartbeat = Duration(milliseconds: 200);
+      const lockQueryTimeout = Duration(seconds: 1);
+      final closeBound =
+          lockHeartbeat + lockQueryTimeout * 2 + _schedulingSlack;
+      final forwarder = _Forwarder(Uri.parse(db.adminUrl));
+      await forwarder.start();
+      addTearDown(forwarder.close);
+      final a = await process(
+        lockUrl: forwarder.route(db.runtimeUrl),
+        lockHeartbeat: lockHeartbeat,
+        lockQueryTimeout: lockQueryTimeout,
       );
       final cycle = await start(
         a,
@@ -968,10 +1040,10 @@ void main() {
       forwarder
         ..freeze()
         ..freezeNew = true;
-      await Future<void>.delayed(const Duration(milliseconds: 300));
       final watch = Stopwatch()..start();
+      await Future<void>.delayed(const Duration(milliseconds: 300));
       await cycle.close();
-      expect(watch.elapsed, lessThan(const Duration(seconds: 2)));
+      expect(watch.elapsed, lessThan(closeBound));
       final epoch = await _epoch(db);
       await Future<void>.delayed(const Duration(milliseconds: 600));
       expect(await _epoch(db), epoch);
