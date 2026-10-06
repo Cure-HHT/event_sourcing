@@ -102,6 +102,14 @@ S. The Postgres backend SHALL refuse to open a database, before it registers a g
 
 T. The Postgres backend SHALL take a connection URL's user name from the percent-decoded user information before its first colon, and its password from the percent-decoded user information after that colon.
 
+U. Every library statement on a connection of `PostgresBackend`'s pool, with every exchange the driver makes for it, SHALL end, with its result or with an error, within a bound derived from the statement timeout the application configures.
+
+V. A pool statement that exceeds that bound SHALL fail with an error the library classifies as transient.
+
+W. A pool connection on which a statement exceeded that bound SHALL serve no further statement.
+
+X. The statement timeout SHALL default to the default statement timeout of the Postgres driver the library depends on.
+
 ## Rationale
 
 **Why JSONB-blob for view rows?** Closest fit to sembast semantics;
@@ -218,12 +226,17 @@ The check runs at open. A grant made while an instance runs is seen at the next 
 
 **Why percent-decode the connection URL's credentials (assertion T)?** A connection URL carries its user name and password in the user information, where a reserved character is percent-encoded. A managed database's IAM user is named like an e-mail address, so its `@` reaches the URL as `%40`; a generated password can hold `:`, `/`, `@`, `%` or `+`. The user information splits at its first colon, because a user name cannot carry a literal colon and a password can; each part is then decoded on its own, so an encoded colon in the user name does not move the split. Decoding treats `+` as itself, since form encoding is not URL encoding.
 
+**Why bound every statement on the pool (assertions U to X)?** A connection can go silent without being reset: a network path that drops packets, a proxy or a server host that stops answering while the socket stays open. The Postgres driver bounds a statement's result by its query timeout, but it waits without any limit for the reply to the close of the statement's portal, which it sends after a statement inside a transaction has returned, and for the reply to a transaction's `BEGIN`. A connection that goes silent in either window would hold its caller, and the pool connection it occupies, until the operating system abandons the socket, which takes many minutes, or forever. The library therefore bounds each statement as a whole, and the `BEGIN` on its own, by the statement timeout plus the connect timeout, which is the limit the driver puts on a statement's result; the pool sets its connect timeout equal to the statement timeout, so the bound is twice the configured value. Past the bound the connection is closed, so its exchanges end and the pool disposes of it (W), and the statement fails with an error the library classifies as transient, the classification it gives every timeout (V). The bound serves liveness, not safety: what a transaction may commit is decided by the server, by `SERIALIZABLE` isolation and by the generation fence each write transaction runs first, and a caller that stops waiting changes none of that. A transaction that timed out has the outcome the server reached without the client, as for any connection lost before its commit was acknowledged. The statement timeout is one setting for every statement on the pool, a wait for a lock included. Its default is the driver's own default statement timeout (X), which governed every pool statement before the bound existed, so the bound shortens no wait that the server answers. A deployment lowers the timeout to detect a silent connection sooner, and keeps it above the longest lock wait it expects.
+
 **Why declared roles (assertion P)?** Instances of one deployment may connect under different roles: a canary or a blue-green deployment beside the serving instances, a credential rotated by swapping roles, or a separate delivery process. If the admitted set were the opener's own roles, each such instance would find the other's grants foreign and refuse. Provisioning, run as the owner, records the roles the deployment declares; every instance admits them all and refuses a role that is not declared. A role rotation declares the new role, deploys it, and retires the old role with a second provisioning once no instance uses it.
 
 **Why a documented setup for an application's own tables (assertion O)?** An application often keeps state of its own beside the library's, an idempotency store or a job table for instance. A connection of its own, under a role of its own, in a schema of its own, gives it that while the database refuses that role every write to the library's tables, and assertion M refuses a database whose grants would allow one. The library's idempotency table stays in the library's schema, written only by the idempotency store the library builds over its own storage (EVS-DEV-storage-capability).
 
 ## Changelog
 
+- 2026-10-06 | c1bd7f7b | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-10-06 | 69e5e695 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-10-06 | - | - | Michael Lewis (<michael@anspar.org>) | Add U, V, W, X: every statement on a pool connection, with every exchange the driver makes for it, ends within a bound derived from the configured statement timeout; a statement past the bound fails with a transient error, and its connection serves no further statement; the statement timeout defaults to the driver's default
 - 2026-10-03 | 6c8aa9e4 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-10-03 | cccad2fc | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-10-03 | - | - | Michael Lewis (<michael@anspar.org>) | Add S: open refuses a declared library role holding a privilege on a library table, or a column of one, outside the documented runtime-role privileges, or able to act as pg_write_all_data, naming the role, the privilege and any table it is on. Add T: a connection URL's user name and password are percent-decoded after the split at the first colon
@@ -245,4 +258,4 @@ The check runs at open. A grant made while an instance runs is seen at the next 
 - 2026-08-10 | 4e78d64b | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-07-02 | e69b5a15 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
-*End* *Postgres backend reference impl* | **Hash**: 6c8aa9e4
+*End* *Postgres backend reference impl* | **Hash**: c1bd7f7b

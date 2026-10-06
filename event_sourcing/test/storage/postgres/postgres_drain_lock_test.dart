@@ -14,7 +14,6 @@
 library;
 
 import 'dart:async';
-import 'dart:io';
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing/postgres.dart';
@@ -32,6 +31,7 @@ import '../../test_support/delivery_cycle_conformance.dart'
 import '../../test_support/drain_isolate_harness.dart';
 import '../../test_support/hand_driven_cycle.dart';
 import '../../test_support/manual_timers.dart';
+import '../../test_support/silent_connection_forwarder.dart';
 import 'test_postgres_url.dart';
 
 Future<T> _withConnection<T>(
@@ -107,119 +107,6 @@ Future<int?> _epoch(PostgresTestDatabase db) => _withConnection(db, (c) async {
 /// loaded runner: the margin a wall-clock bound adds to the bound the library
 /// configures.
 const _schedulingSlack = Duration(milliseconds: 300);
-
-/// A TCP forwarder in front of the Postgres server, for the lock session:
-/// it can stop relaying (freeze) without closing either socket, so the
-/// client sees a black hole while the server session stays alive.
-final class _Forwarder {
-  _Forwarder(this._target);
-
-  final Uri _target;
-  late final ServerSocket _server;
-  final List<_Pair> _pairs = <_Pair>[];
-
-  /// New connections are accepted and never relayed.
-  bool freezeNew = false;
-
-  /// When set, the forwarder relays the server's answer to the next
-  /// statement run inside a transaction and then freezes every connection
-  /// and every new one, so the client's next exchange (the driver's close
-  /// of that statement's portal) meets a black hole.
-  bool freezeAfterStatementInTransaction = false;
-
-  /// Completes when [freezeAfterStatementInTransaction] has frozen.
-  Future<void> get frozenAfterStatement => _frozenAfterStatement.future;
-  final Completer<void> _frozenAfterStatement = Completer<void>();
-
-  /// Connections accepted so far.
-  int accepted = 0;
-
-  int get port => _server.port;
-
-  /// [url] with its host and port replaced by this forwarder's.
-  String route(String url) => Uri.parse(
-    url,
-  ).replace(host: InternetAddress.loopbackIPv4.address, port: port).toString();
-
-  Future<void> start() async {
-    _server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
-    _server.listen((client) async {
-      accepted += 1;
-      final pair = _Pair(client);
-      _pairs.add(pair);
-      if (freezeNew) {
-        pair.frozen = true;
-        client.listen((_) {}, onError: (Object _) {});
-        return;
-      }
-      final upstream = await Socket.connect(
-        _target.host,
-        _target.hasPort ? _target.port : 5432,
-      );
-      pair.upstream = upstream;
-      client.listen(
-        (data) {
-          if (!pair.frozen) upstream.add(data);
-        },
-        onError: (Object _) {},
-        onDone: () {
-          if (!pair.frozen) upstream.destroy();
-        },
-      );
-      upstream.listen(
-        (data) {
-          if (pair.frozen) return;
-          client.add(data);
-          if (freezeAfterStatementInTransaction &&
-              _answersStatementInTransaction(data)) {
-            freezeAfterStatementInTransaction = false;
-            freeze();
-            freezeNew = true;
-            _frozenAfterStatement.complete();
-          }
-        },
-        onError: (Object _) {},
-        onDone: () {
-          if (!pair.frozen) client.destroy();
-        },
-      );
-    });
-  }
-
-  /// Stops relaying on every connection accepted so far.
-  void freeze() {
-    for (final p in _pairs) {
-      p.frozen = true;
-    }
-  }
-
-  /// True when [data] is a server answer to a statement, ending with a
-  /// ReadyForQuery that reports an open transaction: `Z`, length 5, `T`. A
-  /// CloseComplete (`3`) ends the same way but answers a portal's close.
-  static bool _answersStatementInTransaction(List<int> data) {
-    const end = <int>[0x5A, 0, 0, 0, 5, 0x54];
-    if (data.length <= end.length || data.first == 0x33) return false;
-    for (var i = 0; i < end.length; i++) {
-      if (data[data.length - end.length + i] != end[i]) return false;
-    }
-    return true;
-  }
-
-  Future<void> close() async {
-    await _server.close();
-    for (final p in _pairs) {
-      p.client.destroy();
-      p.upstream?.destroy();
-    }
-  }
-}
-
-final class _Pair {
-  _Pair(this.client);
-  final Socket client;
-  Socket? upstream;
-  bool frozen = false;
-}
 
 /// One process in this isolate.
 final class _Process {
@@ -933,7 +820,7 @@ void main() {
       const lockHeartbeat = Duration(milliseconds: 200);
       const lockQueryTimeout = Duration(seconds: 1);
       final lossBound = lockHeartbeat + lockQueryTimeout * 2 + _schedulingSlack;
-      final forwarder = _Forwarder(Uri.parse(db.adminUrl));
+      final forwarder = SilentConnectionForwarder(Uri.parse(db.adminUrl));
       await forwarder.start();
       addTearDown(forwarder.close);
       final receiver = Receiver(
@@ -994,7 +881,7 @@ void main() {
     test('a connection frozen after a statement result: loss', () async {
       const lockQueryTimeout = Duration(seconds: 1);
       final lossBound = lockQueryTimeout * 2 + _schedulingSlack;
-      final forwarder = _Forwarder(Uri.parse(db.adminUrl));
+      final forwarder = SilentConnectionForwarder(Uri.parse(db.adminUrl));
       await forwarder.start();
       addTearDown(forwarder.close);
       final a = await process(
@@ -1025,7 +912,7 @@ void main() {
       const lockQueryTimeout = Duration(seconds: 1);
       final closeBound =
           lockHeartbeat + lockQueryTimeout * 2 + _schedulingSlack;
-      final forwarder = _Forwarder(Uri.parse(db.adminUrl));
+      final forwarder = SilentConnectionForwarder(Uri.parse(db.adminUrl));
       await forwarder.start();
       addTearDown(forwarder.close);
       final a = await process(
@@ -1056,7 +943,7 @@ void main() {
     //   timeout plus a second, and makes no connection attempt after its
     //   backend closed.
     test('close while the lock session reconnects into a black hole', () async {
-      final forwarder = _Forwarder(Uri.parse(db.adminUrl));
+      final forwarder = SilentConnectionForwarder(Uri.parse(db.adminUrl));
       await forwarder.start();
       addTearDown(forwarder.close);
       final a = await process(

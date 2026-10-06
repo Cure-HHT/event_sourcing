@@ -23,7 +23,7 @@ class LibVersion {
   /// The version of the event_sourcing library compiled into this build.
   /// Update in lockstep with `pubspec.yaml`'s `version` field. Recorded in
   /// the log; it decides nothing.
-  static const String version = '0.6.0';
+  static const String version = '0.6.1';
 
   /// The data-format version of this build: what it stores and sends,
   /// distinct from [version]. Stamped on every event the library appends.

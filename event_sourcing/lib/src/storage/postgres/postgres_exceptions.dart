@@ -7,6 +7,12 @@
 // PostgresRoleRefusedException names each role open refuses and the
 //   privilege, attribute, membership or missing declaration it refuses it
 //   for.
+// Implements: EVS-DEV-postgres-backend/V
+// PostgresStatementTimeoutException is the typed failure of a statement whose
+//   bound passed; as a TimeoutException the library classifies it as
+//   transient.
+
+import 'dart:async' show TimeoutException;
 
 /// Thrown by `PostgresBackend.open`, by the generation guard's boot lock,
 /// and by `PostgresBackend.provision`, when the database's schema is not one
@@ -192,4 +198,39 @@ class PostgresRoleRefusedException implements Exception {
       'of its roles, or the pool or lock role is undeclared or could change '
       "the schema: ${refusals.join('; ')}. Revoke what is named, or declare "
       'the role with PostgresBackend.provision, before opening the database.';
+}
+
+/// Thrown by a statement the library runs on Postgres, on a connection of
+/// the backend's pool or on its lock session, that did not end, with every
+/// exchange the driver makes for it, within its bound: the statement
+/// timeout (`queryTimeout` for the pool, `lockQueryTimeout` for the lock
+/// session) plus the connect timeout, which the library sets equal to it.
+/// The connection is closed by force: the pool does not hand it out again,
+/// and the lock session is declared lost.
+///
+/// It is a [TimeoutException], which `classifyStorageException` classifies
+/// as `StorageTransientException`: the caller may retry after a backoff.
+/// The outcome of a transaction whose statement timed out is the outcome
+/// the server reached without the client, as for any connection lost
+/// before its commit was acknowledged.
+class PostgresStatementTimeoutException extends TimeoutException {
+  /// A timeout of a statement on [where] whose exchanges are bounded by
+  /// [bound]: it ran past [bound], or the driver cancelled it at its
+  /// statement timeout.
+  PostgresStatementTimeoutException({
+    required this.where,
+    required Duration bound,
+  }) : super(
+         'a statement on $where timed out (its exchanges are bounded by '
+         '$bound)',
+         bound,
+       );
+
+  /// The connection the statement ran on.
+  final String where;
+
+  @override
+  String toString() =>
+      'PostgresStatementTimeoutException: $message; the connection was '
+      'closed. The failure is transient: retry after a backoff.';
 }

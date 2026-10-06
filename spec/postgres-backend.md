@@ -355,6 +355,16 @@ store to the dedicated `backend_state` table.
   and no idle-session timeout on it; a proxy between the process and the
   database has client-side timeouts of its own, which the deployment
   configures. The lock role must be allowed to end its own sessions.
+- Every statement on the pool carries the statement timeout the
+  application configures (`queryTimeout`), and ends, with every exchange
+  the driver makes for it, within twice that timeout: a pool connection
+  that goes silent past the bound is closed, never handed out again, and
+  the statement fails with `PostgresStatementTimeoutException`, a
+  transient failure (EVS-DEV-postgres-backend/U+V+W). The timeout also
+  bounds a wait for a lock. It defaults to the driver's own default
+  statement timeout (EVS-DEV-postgres-backend/X); a deployment that lowers
+  it keeps it above the longest lock wait it expects, an append's wait for
+  a boot included.
 - The drain lock lives on the same lock session: a session advisory lock
   whose key derives from the database, the schema and the database
   identity (EVS-DEV-destination-drain-lock/A). Every acquisition raises

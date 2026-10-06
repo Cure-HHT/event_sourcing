@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.6.1
+
+Data: data format 3.0, unchanged. A database written by 0.6.0 opens.
+
+### Postgres
+
+- Every statement the library runs on the Postgres backend's pool carries
+  a statement timeout, `queryTimeout` on `PostgresStorage` and
+  `PostgresBackend.open` (positive, or `open` throws `ArgumentError`),
+  which also bounds the wait for a pool connection. Its default,
+  `defaultPostgresQueryTimeout`, is the driver's own default statement
+  timeout of 5 minutes, so no statement waits less than it did. A
+  statement, with every exchange the driver makes for it, ends within twice
+  `queryTimeout`: the driver waits without a limit for the reply to the
+  close of a statement's portal inside a transaction and to a
+  transaction's `BEGIN`, so a pool connection that went silent without
+  being reset held its caller until the operating system abandoned the
+  socket. Past the bound the connection is closed, the pool does not hand
+  it out again, and the statement throws `PostgresStatementTimeoutException`,
+  a `TimeoutException` that `classifyStorageException` classifies as
+  transient. A statement on the lock session that runs past its bound
+  throws it too.
+- A deployment lowers `queryTimeout` to detect a silent connection sooner.
+  A statement that waits on a lock waits at most `queryTimeout`, so a
+  lowered value stays above the longest lock wait the deployment expects,
+  an append's wait for a boot that holds the lock on appends included.
+
 ## 0.6.0
 
 Data: data format 3.0, unchanged. A database written by 0.5.1 opens.

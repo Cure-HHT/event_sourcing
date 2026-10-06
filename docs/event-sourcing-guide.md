@@ -464,6 +464,20 @@ implementation, say) enters only as
 `ApplicationSuppliedStorage(backend, securityContexts)`; the application
 holds that backend and closes it, and the event store over it does not.
 
+Every statement the library runs on the pool carries `queryTimeout`,
+which also bounds the wait for a pool connection. Its default,
+`defaultPostgresQueryTimeout`, is the driver's own default statement
+timeout of 5 minutes. A
+statement, with every exchange the driver makes for it, ends within twice
+`queryTimeout`: a connection that goes silent without being reset (a
+network path that drops packets) is closed past that bound, the pool does
+not hand it out again, and the statement throws
+`PostgresStatementTimeoutException`, which `classifyStorageException`
+classifies as transient. Lower `queryTimeout` to detect a silent
+connection sooner. The timeout bounds a wait for a lock too, so keep it
+above the longest such wait the deployment expects: an append waits for a
+boot that holds the lock on appends for the boot's whole duration.
+
 `open` runs no DDL: it verifies the provisioned schema version and
 refuses, naming `provision`, a database that was never provisioned or
 whose schema this build does not support. A schema a newer build

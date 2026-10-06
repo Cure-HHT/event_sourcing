@@ -65,6 +65,7 @@ import 'package:event_sourcing/src/storage/fifo_entry.dart';
 import 'package:event_sourcing/src/storage/final_status.dart';
 import 'package:event_sourcing/src/storage/generation.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
+import 'package:event_sourcing/src/storage/postgres/postgres_bounded_statements.dart';
 import 'package:event_sourcing/src/storage/postgres/postgres_exceptions.dart';
 import 'package:event_sourcing/src/storage/postgres/postgres_grants.dart'
     show postgresRuntimeRoleGrants;
@@ -103,6 +104,13 @@ part '../../security/postgres_security_context_store.dart';
 /// beyond its internal random state. Parallels the sembast backend's
 /// module-private `_uuidGen` to keep the two impls structurally aligned.
 const _uuidGen = Uuid();
+
+/// The default timeout of a statement on the Postgres backend's pool: the
+/// postgres driver's own default statement timeout. A pool statement without
+/// the library's bound ran under it, so the bound shortens no wait the
+/// server answers.
+// Implements: EVS-DEV-postgres-backend/X
+const Duration defaultPostgresQueryTimeout = Duration(minutes: 5);
 
 /// Thrown by every public [PostgresBackend] I/O method after
 /// `PostgresBackend.close` has run. Implements [Exception] (not [Error])
@@ -183,9 +191,11 @@ class PostgresBackend extends StorageBackend {
     this._pool, {
     required String schema,
     required Duration bootLockWait,
+    required Duration queryTimeout,
     required PostgresGenerationGuard guard,
   }) : _schema = schema,
        _bootLockWait = bootLockWait,
+       _queryTimeout = queryTimeout,
        _guard = guard;
 
   final Pool<void> _pool;
@@ -209,6 +219,9 @@ class PostgresBackend extends StorageBackend {
   /// How long [bootTransaction] keeps re-running a boot that a concurrent
   /// commit aborted before it gives up.
   final Duration _bootLockWait;
+
+  /// The timeout of every statement on the pool that gives none.
+  final Duration _queryTimeout;
 
   /// Latches true on the first call to [close]. Subsequent I/O on this
   /// backend instance throws [PostgresBackendClosedException]; the flag
@@ -328,6 +341,21 @@ class PostgresBackend extends StorageBackend {
   /// deployment expects: a boot that promotes a large view holds the boot
   /// lock, and every instance's appends, for its whole duration.
   ///
+  /// [queryTimeout] is the timeout of every statement the backend runs on
+  /// its pool, and of the wait for a pool connection. Its default is the
+  /// driver's own default statement timeout. Every such statement, with
+  /// every exchange the driver makes for it (the close of its portal after
+  /// its result, and a transaction's `BEGIN`, included), ends within twice
+  /// [queryTimeout]. A connection that stays silent past that bound is
+  /// closed, so the pool does not hand it out again, and the statement
+  /// throws [PostgresStatementTimeoutException], a transient failure the
+  /// caller may retry. A statement that waits on a lock waits at most
+  /// [queryTimeout] too. A deployment that lowers it, to detect a silent
+  /// connection sooner, keeps it above the longest lock wait it expects: an
+  /// append waits for a boot that holds the lock on appends (see
+  /// [bootLockWait]) for the boot's whole duration. It must be positive, or
+  /// `open` throws [ArgumentError].
+  ///
   /// The default [sslMode], `SslMode.require`, matches a managed Postgres's
   /// default "require SSL" posture. Local development against an
   /// unencrypted Postgres passes `SslMode.disable`; a deployment reaching a
@@ -346,25 +374,45 @@ class PostgresBackend extends StorageBackend {
   // Implements: EVS-PRD-storage-barrier/F
   // open refuses a database on which a role outside the owner and the
   //   declared roles may write a library table or act as one of those roles.
+  // Implements: EVS-DEV-postgres-backend/U+X
+  // the pool's statements carry the configured statement timeout, the
+  //   driver's default unless given, and every one of them, with every
+  //   exchange the driver makes for it, is bounded by twice that timeout.
   static Future<PostgresBackend> open({
     required String url,
     required String schema,
     String? lockUrl,
     SslMode sslMode = SslMode.require,
+    Duration queryTimeout = defaultPostgresQueryTimeout,
     Duration lockQueryTimeout = const Duration(seconds: 5),
     Duration lockHeartbeat = const Duration(seconds: 5),
     Duration bootLockWait = const Duration(seconds: 60),
   }) async {
     quotePostgresIdentifier(schema);
+    if (queryTimeout <= Duration.zero) {
+      throw ArgumentError.value(
+        queryTimeout,
+        'queryTimeout',
+        'the timeout of a statement on the pool must be positive',
+      );
+    }
     final schemaVersion = effectivePostgresMigrations().last.toVersion;
     final endpoint = endpointFromUrl(url);
     final lockEndpoint = lockUrl == null ? endpoint : endpointFromUrl(lockUrl);
-    final pool = Pool<void>.withEndpoints(
-      [endpoint],
-      settings: PoolSettings(
-        maxConnectionCount: _poolConnections,
-        sslMode: sslMode,
+    final pool = BoundedPool(
+      Pool<void>.withEndpoints(
+        [endpoint],
+        settings: PoolSettings(
+          maxConnectionCount: _poolConnections,
+          sslMode: sslMode,
+          queryTimeout: queryTimeout,
+        ),
       ),
+      queryTimeout: queryTimeout,
+      // The margin past the driver's own statement timeout before the
+      // connection is closed. The pool's connects keep the driver's default
+      // connect timeout.
+      connectTimeout: queryTimeout,
     );
     PostgresLockSession? session;
     try {
@@ -408,6 +456,7 @@ class PostgresBackend extends StorageBackend {
         pool,
         schema: schema,
         bootLockWait: bootLockWait,
+        queryTimeout: queryTimeout,
         guard: guard,
       );
     } catch (_) {
@@ -1110,8 +1159,13 @@ class PostgresBackend extends StorageBackend {
                 "SET LOCAL lock_timeout = '${remaining < 1 ? 1 : remaining}ms'",
               );
               try {
+                // The lock timeout ends this wait, which may outlast the
+                // pool's statement timeout.
                 await tx.execute(
                   'LOCK TABLE backend_state IN SHARE ROW EXCLUSIVE MODE',
+                  timeout:
+                      Duration(milliseconds: remaining < 1 ? 1 : remaining) +
+                      _queryTimeout,
                 );
               } on ServerException catch (e) {
                 if (e.code != '55P03') rethrow;
