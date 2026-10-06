@@ -370,6 +370,11 @@ const _mustBeInternal = <String, String>{
 
 /// Raw-handle members; each must be internal.
 const _sanctionedRawHandles = <String>{
+  'BoundedPool.run',
+  'BoundedPool.runTx',
+  'BoundedPool.withConnection',
+  '_BoundedPoolConnection.run',
+  '_BoundedPoolConnection.runTx',
   'PostgresBackend.pool',
   'PostgresGenerationGuard.runOnSession',
   'PostgresLockSession.connection',

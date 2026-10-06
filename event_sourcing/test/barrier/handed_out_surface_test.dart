@@ -35,6 +35,14 @@ const Map<String, String> _constructorsOverApplicationStorage =
       'PostgresIdempotencyStore.over':
           'an idempotency store over a pool the application opened under its '
           'own role, in its own schema',
+      'BoundedStatements.new':
+          'a library-internal wrapper, exported by no public library, that '
+          'bounds the statements of a connection the library opened; it '
+          'builds no store',
+      'BoundedPool.new':
+          'a library-internal wrapper, exported by no public library, that '
+          'bounds the statements of the pool the library opened; it builds '
+          'no store',
     };
 
 const List<String> _storeDirectories = <String>[

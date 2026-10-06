@@ -1,6 +1,6 @@
 // Implements: EVS-DEV-storage-capability/A
 // the Postgres description carries the library's schema and the
-//   connection, lock-session and wait settings the Postgres backend opens
+//   connection, statement-timeout, lock-session and wait settings the Postgres backend opens
 //   with.
 // Implements: EVS-PRD-storage-barrier/A
 // the library opens a Postgres database it runs on from the description the
@@ -22,6 +22,7 @@ final class PostgresStorage extends CompanionBackendStorage {
     required this.schema,
     this.lockUrl,
     this.sslMode = SslMode.require,
+    this.queryTimeout = defaultPostgresQueryTimeout,
     this.lockQueryTimeout = const Duration(seconds: 5),
     this.lockHeartbeat = const Duration(seconds: 5),
     this.bootLockWait = const Duration(seconds: 60),
@@ -40,6 +41,14 @@ final class PostgresStorage extends CompanionBackendStorage {
   /// The TLS mode of every connection.
   final SslMode sslMode;
 
+  /// The timeout of every statement on the pool and of the wait for a pool
+  /// connection, [defaultPostgresQueryTimeout] unless given; a statement,
+  /// with every exchange the driver makes for it, ends within twice this, or
+  /// its connection is closed and it fails with
+  /// `PostgresStatementTimeoutException`. Positive, and longer than the
+  /// longest lock wait the deployment expects (`PostgresBackend.open`).
+  final Duration queryTimeout;
+
   /// Bounds every statement on the lock session and its connect.
   final Duration lockQueryTimeout;
 
@@ -57,6 +66,7 @@ final class PostgresStorage extends CompanionBackendStorage {
       schema: schema,
       lockUrl: lockUrl,
       sslMode: sslMode,
+      queryTimeout: queryTimeout,
       lockQueryTimeout: lockQueryTimeout,
       lockHeartbeat: lockHeartbeat,
       bootLockWait: bootLockWait,

@@ -9,6 +9,7 @@ import 'dart:math' show Random;
 
 import 'package:crypto/crypto.dart';
 import 'package:event_sourcing/src/logging.dart';
+import 'package:event_sourcing/src/storage/postgres/postgres_bounded_statements.dart';
 import 'package:event_sourcing/src/storage/postgres/postgres_exceptions.dart';
 import 'package:event_sourcing/src/storage/postgres/postgres_search_path.dart';
 import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
@@ -168,7 +169,7 @@ const int lockSessionKeepaliveCount = 3;
 /// and a timed-out statement's cancel request cancels whatever the session
 /// runs, so no library statement waits on the connection behind another.
 /// Every statement, with every exchange the driver makes for it, is bounded
-/// by the query timeout plus the connect timeout ([_BoundedStatements]). A
+/// by the query timeout plus the connect timeout ([BoundedStatements]). A
 /// connection failure or a timeout of any operation declares the session
 /// lost.
 @internal
@@ -242,9 +243,12 @@ final class PostgresLockSession {
       applicationName: 'event_sourcing.lock_session',
     );
     final connection = await Connection.open(endpoint, settings: settings);
-    final statements = _BoundedStatements(
+    final statements = BoundedStatements(
       connection,
-      settings.queryTimeout! + settings.connectTimeout!,
+      connection,
+      queryTimeout: settings.queryTimeout!,
+      connectTimeout: settings.connectTimeout!,
+      where: 'the lock session',
     );
     try {
       final token = _randomToken();
@@ -443,74 +447,5 @@ final class PostgresLockSession {
       16,
       (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0'),
     ).join();
-  }
-}
-
-/// The lock session's connection, with every statement bounded as a whole
-/// by [_bound]: the query timeout plus the connect timeout, the limit the
-/// driver itself puts on a statement's result. The driver closes a
-/// statement's portal, after its result, in an exchange no timeout bounds;
-/// a connection that stops answering in that window would otherwise hold the
-/// statement, and the one operation the session runs, for as long as it is
-/// silent. Once [_bound] passes the connection is closed by force, which ends
-/// whatever exchange is waiting, and the statement throws a
-/// [TimeoutException], which declares the session lost.
-final class _BoundedStatements implements Session {
-  _BoundedStatements(this._connection, this._bound);
-
-  final Connection _connection;
-  final Duration _bound;
-
-  @override
-  bool get isOpen => _connection.isOpen;
-
-  @override
-  Future<void> get closed => _connection.closed;
-
-  /// The lock session runs no prepared statement: a prepared statement's
-  /// runs would escape [_bound].
-  @override
-  Future<Statement> prepare(Object query) => Future<Statement>.error(
-    UnsupportedError('the lock session runs no prepared statement'),
-  );
-
-  @override
-  Future<Result> execute(
-    Object query, {
-    Object? parameters,
-    bool ignoreRows = false,
-    QueryMode? queryMode,
-    Duration? timeout,
-  }) async {
-    var expired = false;
-    final timer = Timer(_bound, () {
-      expired = true;
-      unawaited(_connection.close(force: true));
-    });
-    Result? result;
-    Object? error;
-    StackTrace? stackTrace;
-    try {
-      result = await _connection.execute(
-        query,
-        parameters: parameters,
-        ignoreRows: ignoreRows,
-        queryMode: queryMode,
-        timeout: timeout,
-      );
-    } on Object catch (e, st) {
-      error = e;
-      stackTrace = st;
-    } finally {
-      timer.cancel();
-    }
-    if (expired) {
-      throw TimeoutException(
-        'a statement on the lock session did not complete within $_bound',
-        _bound,
-      );
-    }
-    if (error != null) Error.throwWithStackTrace(error, stackTrace!);
-    return result!;
   }
 }
