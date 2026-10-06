@@ -5,7 +5,7 @@
 import 'dart:async';
 
 import 'package:event_sourcing/src/logging.dart';
-import 'package:event_sourcing/src/storage/postgres/postgres_migration.dart';
+import 'package:event_sourcing/src/storage/postgres_migration_step.dart';
 import 'package:event_sourcing/src/versions.dart';
 import 'package:meta/meta.dart';
 

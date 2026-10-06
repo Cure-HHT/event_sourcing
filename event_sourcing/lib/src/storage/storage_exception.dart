@@ -1,9 +1,8 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:event_sourcing/src/storage/postgres/postgres_backend.dart'
-    show TransactionRetryExhaustedException;
 import 'package:event_sourcing/src/storage/transaction_rerun_limit.dart';
+import 'package:meta/meta.dart' show internal;
 import 'package:sembast/sembast.dart';
 
 /// Storage-layer failure taxonomy. Callers that catch exceptions from the
@@ -58,6 +57,14 @@ class StorageCorruptException extends StorageException {
   String toString() => 'StorageCorruptException: $message (cause: $cause)';
 }
 
+/// A failure a backend raises once its bounded retry of a transaction that
+/// conflicted with concurrent transactions is exhausted. The data is intact
+/// and a re-drive can still commit, so [classifyStorageException] classifies
+/// it as transient. The Postgres backend's `TransactionRetryExhaustedException`
+/// implements it.
+@internal
+abstract interface class ContentionRetryExhausted implements Exception {}
+
 /// Classify a caught error from the storage layer into one of the three
 /// [StorageException] buckets. Pure function: never throws, always returns.
 ///
@@ -92,7 +99,7 @@ StorageException classifyStorageException(Object error, StackTrace stack) {
     // Bounded serialization-conflict retry exhausted: contention-driven and
     // probabilistic, so a re-drive (with backoff/backpressure) can still
     // commit — retryable, never a data-integrity failure.
-    final TransactionRetryExhaustedException e => StorageTransientException(
+    final ContentionRetryExhausted e => StorageTransientException(
       e.toString(),
       e,
       stack,

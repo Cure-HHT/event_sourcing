@@ -285,8 +285,11 @@ same conformance harness:
   desktop and the browser. In the browser the tabs of an origin share one
   IndexedDB database: the delivery cycle of one visible tab drains it,
   holding a Web Lock, and the others stand by (`EVS-PRD-destinations/V`).
-- **`PostgresBackend`** — server-side; view rows persist as JSONB blobs in
-  a `view_rows(view_name, row_key, row_data, …)` table. The schema is
+- **`PostgresBackend`** — server-side, imported from
+  `package:event_sourcing/postgres.dart` with `PostgresStorage` and the
+  rest of the backend. The main library does not export it, so a web
+  build never compiles the Postgres driver. View rows persist as JSONB
+  blobs in a `view_rows(view_name, row_key, row_data, …)` table. The schema is
   provisioned once per deployment with `PostgresBackend.provision`, as the
   role that owns the schema, declaring the runtime and lock roles the
   instances connect as; `open` performs no DDL and refuses a schema its

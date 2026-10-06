@@ -10,7 +10,7 @@
 @TestOn('vm')
 library;
 
-import 'package:event_sourcing/event_sourcing.dart';
+import 'package:event_sourcing/postgres.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../barrier/run_time_barrier_conformance.dart';

@@ -7,6 +7,7 @@
 library;
 
 import 'package:event_sourcing/event_sourcing.dart';
+import 'package:event_sourcing/postgres.dart';
 import 'package:event_sourcing/src/lifecycle/lib_version.dart'
     show LibVersionEvents;
 import 'package:event_sourcing/src/security/security_context_store.dart';

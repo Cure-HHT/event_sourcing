@@ -3,7 +3,7 @@
 // provisions it declaring the roles the servers connect as, and grants those
 // roles their privileges. Application code; cites no library requirement.
 
-import 'package:event_sourcing/event_sourcing.dart';
+import 'package:event_sourcing/postgres.dart';
 import 'package:postgres/postgres.dart';
 
 /// The schema the demo keeps the library's tables in.

@@ -5,7 +5,7 @@
 @TestOn('vm')
 library;
 
-import 'package:event_sourcing/event_sourcing.dart';
+import 'package:event_sourcing/postgres.dart';
 import 'package:test/test.dart';
 
 import '../storage_backend_conformance.dart';

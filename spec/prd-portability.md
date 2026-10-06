@@ -19,7 +19,7 @@ D. The library SHALL abstract platform-divergent capabilities (persistent storag
 
 ## Rationale
 
-**Why pure Dart core?** A core that pulled in Flutter or platform-specific packages would force every consumer onto that toolchain. A server-side relay does not run Flutter; a CLI auditing tool does not run any platform stack at all. By keeping the core pure-Dart, the library is reusable across all the runtimes a deployment topology actually spans. Two capabilities under the library's `lib/` are platform-specific: the wrapper of the browser's lock manager, which the incompatible-generation guard and the drain lock use on the web, and the selection of the Sembast database factory, which is the native file factory where `dart:io` exists and the browser factory where the browser's interop exists. Each is reached only through a conditional import, with a counterpart on every other runtime, so the core still loads on every runtime.
+**Why pure Dart core?** A core that pulled in Flutter or platform-specific packages would force every consumer onto that toolchain. A server-side relay does not run Flutter; a CLI auditing tool does not run any platform stack at all. By keeping the core pure-Dart, the library is reusable across all the runtimes a deployment topology actually spans. Three pieces of the library's `lib/` are platform-specific. Two are capabilities the main library uses: the wrapper of the browser's lock manager, which the incompatible-generation guard and the drain lock use on the web, and the selection of the Sembast database factory, which is the native file factory where `dart:io` exists and the browser factory where the browser's interop exists. Each is reached only through a conditional import, with a counterpart on every other runtime, so the main library loads on every runtime. The third is the Postgres backend, which runs only on the Dart VM, because its driver declares 64-bit integer constants that the web compiler refuses. The backend is a public library of its own (`package:event_sourcing/postgres.dart`) that the main library never imports, so a web build never compiles the driver.
 
 **Why all Dart-supported runtimes?** Different parts of a deployment topology run on different platforms. A mobile app on a participant's phone (Flutter on iOS/Android), a web client accessed by users in a browser (Flutter on web), a relay or server-side service running in a container (Dart VM) — all use the same library. Excluding any runtime forces a parallel codebase for that tier; the audit divergence costs of parallel codebases are exactly what the library exists to prevent.
 
@@ -33,6 +33,8 @@ Deferred work for this area (horizontal scaling beyond a single backend instance
 
 ## Changelog
 
+- 2026-10-05 | 4fd789d6 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: sync changelog hash
+- 2026-10-05 | - | - | Michael Lewis (<michael@anspar.org>) | Rationale of A (why a pure Dart core): three pieces of `lib/` are platform-specific; the Postgres backend is a public library of its own that the main library never imports, so a web build never compiles its driver
 - 2026-09-25 | 4fd789d6 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-24 | - | - | Michael Lewis (<michael@anspar.org>) | Amend D: the application implements storage only beside the storage the library opens for its shipped backends; the library selects the Sembast factory per runtime
 - 2026-09-23 | 9a3f1e98 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: sync changelog hash

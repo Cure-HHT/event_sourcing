@@ -1,4 +1,5 @@
 import 'package:event_sourcing/event_sourcing.dart';
+import 'package:event_sourcing/postgres.dart';
 
 /// Takes the drain lock directly through the backend.
 Future<DrainLock> acquireDirectly(StorageBackend backend) =>

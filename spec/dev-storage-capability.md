@@ -53,12 +53,16 @@ L. The library SHALL provide an operation that deletes the Sembast database a de
 
 **Why name the application-supplied path (assertion J).** An application may implement a backend (the storage trust boundary admits that), and it then holds the backend. The description that carries the backend says so, so the composition code shows which databases the barrier covers.
 
+**The companion Postgres description (assertion J).** The Postgres description is declared in the library's companion Postgres library, outside the main library, so it extends the one internal storage description that `EventStore.open` opens through an internal member. The description carries connection settings, not a backend instance. The analyzer reports every other subclass of that internal description and every other call to its internal member (`invalid_use_of_internal_member`). Code that imports the library's private source files to reach it is outside the public API this assertion governs.
+
 **Why the test-only constructor refuses without assertions (assertion K).** `openForTest` takes a raw backend and appends no library-version event (EVS-DEV-event-store-open/A). The analyzer reports a production call to it, but only at analysis time. Refusing it at run time in a build with assertions disabled uses the same gate as the library's test seams (EVS-DEV-destination-drain-lock/F), which are never read in such a build. In production, then, neither can admit a backend or change what the library records.
 
 **Why a delete operation (assertion L).** A database written by an earlier data format is refused as one that must be reset (EVS-DEV-event-store-open/F). With the library holding the handle, the application has no sanctioned way to remove the database at the location it named. The library deletes it by location once no event store of the isolate holds it open; a failed open has already closed its storage (EVS-PRD-storage-barrier/I). Resetting a Postgres database is a deployment step taken as the owner, as provisioning is.
 
 ## Changelog
 
+- 2026-10-05 | 4cba8786 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: sync changelog hash
+- 2026-10-05 | - | - | Michael Lewis (<michael@anspar.org>) | Rationale of J: the Postgres description extends the one internal storage description, carries connection settings rather than a backend instance, and the analyzer reports every other use of it; code that imports the library's private source files is outside the public API J governs
 - 2026-09-25 | 4cba8786 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-25 | b0b8ed22 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-25 | - | - | Michael Lewis (<michael@anspar.org>) | A: the Sembast description takes no codec, and the Postgres description names the library's schema. C: a writing member is private unless it is one of the library's public operations, and a reserved-appending member unless it is one of the public operations that may append reserved events

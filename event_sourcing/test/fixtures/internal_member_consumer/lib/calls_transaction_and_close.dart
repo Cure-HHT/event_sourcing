@@ -1,4 +1,5 @@
 import 'package:event_sourcing/event_sourcing.dart';
+import 'package:event_sourcing/postgres.dart';
 
 /// Runs a transaction body, reads the queues, and closes the backend: all
 /// stay public.

@@ -431,9 +431,15 @@ application resets a database an earlier data format wrote.
 
 Or, for server-side, provision the schema once per deployment (a step
 of its own, before any instance starts), then describe the database the
-instances open:
+instances open. The Postgres backend is its own public library: import
+`package:event_sourcing/postgres.dart` beside the main library. The main
+library does not export it, so a web build, which imports only the main
+library, never compiles the Postgres driver.
 
 ```dart
+import 'package:event_sourcing/event_sourcing.dart';
+import 'package:event_sourcing/postgres.dart';
+
 // As the role that owns the schema, declaring the roles instances connect
 // as (a lock session opened without lockUrl runs as the runtime role).
 await PostgresBackend.provision(

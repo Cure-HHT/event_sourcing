@@ -12,7 +12,7 @@ import 'package:action_permissions_demo/server/bootstrap.dart';
 import 'package:action_permissions_demo/server/demo_routes.dart';
 import 'package:action_permissions_demo/server/demo_state_projection.dart';
 import 'package:action_permissions_demo/shared/wire_types.dart';
-import 'package:event_sourcing/event_sourcing.dart';
+import 'package:event_sourcing/postgres.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shelf/shelf_io.dart' as shelf_io;
 

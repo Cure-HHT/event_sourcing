@@ -53,6 +53,7 @@ const _expected = <String, Set<String>>{
   },
   'calls_security_context_internal.dart': _internalUse,
   'calls_third_party_internal.dart': _internalUse,
+  'calls_companion_storage_internal.dart': _internalUse,
   // The test-only open, called from production code.
   'calls_test_only_open.dart': <String>{
     'invalid_use_of_visible_for_testing_member',
@@ -82,6 +83,9 @@ const _minimumInternalUses = <String, int>{
   // The abstract store's deleteInTxn and the concrete store's override.
   'calls_security_context_internal.dart': 2,
   'calls_third_party_internal.dart': 1,
+  // The CompanionBackendStorage class and StorageBackend's
+  // idempotencyStoreOverThis.
+  'calls_companion_storage_internal.dart': 2,
 };
 
 /// One machine-format diagnostic line: file name and error code.

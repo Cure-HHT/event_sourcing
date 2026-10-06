@@ -16,6 +16,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:event_sourcing/event_sourcing.dart';
+import 'package:event_sourcing/postgres.dart';
 import 'package:event_sourcing/src/event_store.dart' show PublishCollector;
 import 'package:event_sourcing/src/lifecycle/lib_version.dart'
     show LibVersionEvents;
@@ -24,9 +25,9 @@ import 'package:event_sourcing/src/permissions/wait_for_current_views.dart'
     show waitForViewsCurrent;
 import 'package:event_sourcing/src/storage/postgres/postgres_lock_session.dart'
     show PostgresScope, postgresAdvisoryKey;
-import 'package:event_sourcing/src/storage/postgres/postgres_migration.dart';
 import 'package:event_sourcing/src/storage/postgres/postgres_schema.dart'
     show postgresMigrations;
+import 'package:event_sourcing/src/storage/postgres_migration_step.dart';
 import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:postgres/postgres.dart';
 import 'package:test/test.dart';

@@ -346,6 +346,12 @@ The currently-trusted inputs are:
   application. Its internal members are guarded by the analyzer alone,
   and a backend in another package keeps that guard only by marking its
   own overrides `@internal`.
+  The Postgres backend is a public library of its own
+  (`package:event_sourcing/postgres.dart`), so its description extends
+  `CompanionBackendStorage`, the one storage description a library outside
+  the main library can extend. The analyzer alone guards it, reporting any
+  other use as `invalid_use_of_internal_member`; code that imports `src/`
+  to reach it is outside the public API the barrier governs.
 - **The library's storage credentials and location.** The Postgres
   credentials of the library's runtime and lock roles, and the location
   of a Sembast database the library opens, reach the library in the

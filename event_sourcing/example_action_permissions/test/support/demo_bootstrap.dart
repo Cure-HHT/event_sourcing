@@ -4,6 +4,7 @@
 // StorageBackend. This file declares no tests, so it carries no citation.
 
 import 'package:event_sourcing/event_sourcing.dart';
+import 'package:event_sourcing/postgres.dart';
 
 /// Backend pair handed to each runner per-test. The factory produces a
 /// fresh pair for every `setUp` invocation so tests do not share state.

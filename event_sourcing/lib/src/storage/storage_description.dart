@@ -1,8 +1,9 @@
 // Implements: EVS-DEV-storage-capability/A
 // EventStore.open takes a storage description for the backends the library
 //   ships: a Sembast description naming a file path, a browser database
-//   name or an in-memory database name, and a Postgres description carrying
-//   the schema and the connection, lock-session and wait settings.
+//   name or an in-memory database name, and a Postgres description, which
+//   package:event_sourcing/postgres.dart declares as a companion-backend
+//   description.
 // Implements: EVS-DEV-storage-capability/J
 // a backend instance reaches EventStore.open only inside the description
 //   that names it application-supplied.
@@ -13,12 +14,10 @@
 // a backend the application constructed is accepted only through the
 //   description that names it application-supplied.
 import 'package:event_sourcing/src/security/security_context_store.dart';
-import 'package:event_sourcing/src/storage/postgres/postgres_backend.dart';
 import 'package:event_sourcing/src/storage/sembast_backend.dart';
 import 'package:event_sourcing/src/storage/sembast_factory.dart';
 import 'package:event_sourcing/src/storage/storage_backend.dart';
 import 'package:meta/meta.dart' show internal;
-import 'package:postgres/postgres.dart' show SslMode;
 
 /// Where and how an event store's storage lives: the input of
 /// `EventStore.open` and `bootstrapEventStore`.
@@ -85,45 +84,31 @@ final class SembastStorage extends StorageDescription {
   String toString() => 'SembastStorage.${_kind.name}($location)';
 }
 
-/// A Postgres database the library opens with `PostgresBackend.open`: the
-/// library's tables live in [schema], the pool connects to [url], and the
-/// lock session to [lockUrl] (or [url]). Provisioning is a separate
-/// deployment step run as the owner (`PostgresBackend.provision`).
-final class PostgresStorage extends StorageDescription {
-  const PostgresStorage({
-    required this.url,
-    required this.schema,
-    this.lockUrl,
-    this.sslMode = SslMode.require,
-    this.lockQueryTimeout = const Duration(seconds: 5),
-    this.lockHeartbeat = const Duration(seconds: 5),
-    this.bootLockWait = const Duration(seconds: 60),
-  });
+/// Storage on a backend the library ships behind a public library of its
+/// own, which declares the description: the Postgres backend, through
+/// `package:event_sourcing/postgres.dart`. The library opens the storage
+/// from the description, holds it, and closes it when the event store
+/// closes.
+///
+/// This class exists because the Postgres backend lives in its own library:
+/// the Postgres driver does not compile for the web, and the main library
+/// must load on every runtime. It is the one storage description that a
+/// library other than this one can extend, so the family is closed by
+/// `@internal` here rather than by the language: the analyzer reports a
+/// subclass or a call outside the package, and nothing refuses one at run
+/// time. When the driver compiles with dart2js, the Postgres backend can
+/// return to the main library, and this class can then be removed, leaving
+/// every storage description declared in this library.
+@internal
+abstract base class CompanionBackendStorage extends StorageDescription {
+  @internal
+  const CompanionBackendStorage();
 
-  /// The pool's connection URL, as a runtime role the deployment declared.
-  final String url;
-
-  /// The schema that holds the library's tables.
-  final String schema;
-
-  /// The lock session's connection URL, as a lock role the deployment
-  /// declared; the pool's URL when null.
-  final String? lockUrl;
-
-  /// The TLS mode of every connection.
-  final SslMode sslMode;
-
-  /// Bounds every statement on the lock session and its connect.
-  final Duration lockQueryTimeout;
-
-  /// How often the idle lock session is probed.
-  final Duration lockHeartbeat;
-
-  /// Bounds each wait of `EventStore.open` for a boot lock.
-  final Duration bootLockWait;
-
-  @override
-  String toString() => 'PostgresStorage(schema: $schema)';
+  /// Opens the backend this description names and builds the
+  /// security-context store over it. `EventStore.open` calls it and holds
+  /// what it returns.
+  @internal
+  Future<(StorageBackend, MutableSecurityContextStore)> openBackend();
 }
 
 /// A storage backend the application constructed, with the security-context
@@ -193,10 +178,10 @@ final class OpenedStorage {
 
 /// Opens the storage [description] names. For a Sembast description the
 /// library opens the database with the factory it selects and records the
-/// location as held by this isolate; for a Postgres description it opens a
-/// `PostgresBackend`; in both cases it builds the matching security-context
-/// store. An application-supplied description is returned as it is, not
-/// owned.
+/// location as held by this isolate; a companion-backend description (the
+/// Postgres one) opens its backend itself; in both cases the matching
+/// security-context store is built over the backend. An
+/// application-supplied description is returned as it is, not owned.
 @internal
 Future<OpenedStorage> openDescribedStorage(
   StorageDescription description,
@@ -224,21 +209,9 @@ Future<OpenedStorage> openDescribedStorage(
         owned: true,
         heldLocation: description,
       );
-    case PostgresStorage():
-      final backend = await PostgresBackend.open(
-        url: description.url,
-        schema: description.schema,
-        lockUrl: description.lockUrl,
-        sslMode: description.sslMode,
-        lockQueryTimeout: description.lockQueryTimeout,
-        lockHeartbeat: description.lockHeartbeat,
-        bootLockWait: description.bootLockWait,
-      );
-      return OpenedStorage._(
-        backend,
-        PostgresSecurityContextStore(backend: backend),
-        owned: true,
-      );
+    case CompanionBackendStorage():
+      final (backend, securityContexts) = await description.openBackend();
+      return OpenedStorage._(backend, securityContexts, owned: true);
     case ApplicationSuppliedStorage():
       return OpenedStorage._(
         description.backend,

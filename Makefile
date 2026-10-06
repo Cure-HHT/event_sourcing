@@ -5,8 +5,8 @@
 # asks elspais for a group's targets and holds the help text. `make` alone
 # prints it.
 #
-# Variables (see `make help`): SHARDS, JOBS, UNIT_PIECES, PG_IMAGE,
-# PG_TEST_URL, PG_TEST_URLS, PG_TEST_URL_OTHER_SERVER, PG_PART.
+# Variables (see `make help`): MEMORY_MAX, SHARDS, JOBS, UNIT_PIECES,
+# PG_IMAGE, PG_TEST_URL, PG_TEST_URLS, PG_TEST_URL_OTHER_SERVER, PG_PART.
 # Works with GNU make 3.81 and later.
 
 SHELL := /bin/sh
@@ -14,7 +14,7 @@ SHELL := /bin/sh
 
 RUN_CHECKS := ./tools/run-checks.sh
 
-export SHARDS JOBS UNIT_PIECES PG_IMAGE PG_TEST_URL PG_TEST_URLS \
+export MEMORY_MAX SHARDS JOBS UNIT_PIECES PG_IMAGE PG_TEST_URL PG_TEST_URLS \
 	PG_TEST_URL_OTHER_SERVER PG_PART
 
 TARGETS := help analyze test-unit test-web test-desktop test-postgres \

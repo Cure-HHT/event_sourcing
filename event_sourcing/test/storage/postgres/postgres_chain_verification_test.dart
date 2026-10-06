@@ -10,7 +10,7 @@ library;
 
 import 'dart:convert';
 
-import 'package:event_sourcing/event_sourcing.dart';
+import 'package:event_sourcing/postgres.dart';
 import 'package:event_sourcing/src/storage/chain_coordinates.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:postgres/postgres.dart';

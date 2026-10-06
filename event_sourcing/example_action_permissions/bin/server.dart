@@ -27,6 +27,7 @@ import 'package:action_permissions_demo/server/demo_state_projection.dart';
 import 'package:action_permissions_demo/server/postgres_setup.dart';
 import 'package:args/args.dart';
 import 'package:event_sourcing/event_sourcing.dart';
+import 'package:event_sourcing/postgres.dart';
 import 'package:path/path.dart' as p;
 
 Future<void> main(List<String> args) async {

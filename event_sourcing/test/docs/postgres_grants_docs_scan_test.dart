@@ -5,7 +5,7 @@
 // and the constant names every table provisioning creates.
 import 'dart:io';
 
-import 'package:event_sourcing/event_sourcing.dart';
+import 'package:event_sourcing/postgres.dart';
 import 'package:event_sourcing/src/storage/postgres/postgres_schema.dart'
     show postgresLibraryTables;
 import 'package:flutter_test/flutter_test.dart';

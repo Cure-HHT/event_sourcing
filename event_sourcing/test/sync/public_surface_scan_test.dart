@@ -322,6 +322,9 @@ const _mustBeInternal = <String, String>{
       'wedges a queue head for a halt request outside the delivery cycle',
   'fillBatch': 'fills a queue outside the delivery cycle',
   'writeQueueItemsTxn': 'enqueues queue items outside the fill',
+  'CompanionBackendStorage.openBackend':
+      'opens a backend that EventStore.open holds as storage the library '
+      'opened',
   'AggregateFold.applyEvent': 'writes view rows',
   'TableFold.applyEvent': 'writes view rows',
   'ProjectionInterpreter.applyEvent': 'writes view rows',
@@ -628,6 +631,10 @@ class EventStoreBundle {
   Future<void> stageViewTargets(String v, String e, int n) async {}
 }
 
+abstract class CompanionBackendStorage {
+  Future<Object> openBackend();
+}
+
 class AggregateFold {
   static Future<void> applyEvent() async {}
 }
@@ -739,15 +746,26 @@ Future<Map<String, List<CompilationUnit>>> _unitsUnderLib(
   };
 }
 
+/// The library's public surface: every public library of the package,
+/// exported together from one in-memory file so that each barrel rule
+/// judges the main library and the Postgres library at once.
+const _publicSurfacePath = 'lib/scan_public_surface.dart';
+const _publicSurface = '''
+export 'package:event_sourcing/event_sourcing.dart';
+export 'package:event_sourcing/postgres.dart';
+''';
+
 void main() {
   late SurfaceScanner scanner;
   late List<LibraryElement> libraries;
   late LibraryElement barrel;
 
   setUpAll(() async {
-    scanner = SurfaceScanner();
+    scanner = SurfaceScanner(
+      overlays: const <String, String>{_publicSurfacePath: _publicSurface},
+    );
     libraries = await scanner.librariesUnder('lib');
-    barrel = (await scanner.library('lib/event_sourcing.dart'))!;
+    barrel = (await scanner.library(_publicSurfacePath))!;
   });
 
   InterfaceElement contractOf(Iterable<LibraryElement> libs) => classNamed(

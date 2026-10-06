@@ -8,6 +8,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:event_sourcing/event_sourcing.dart';
+import 'package:event_sourcing/postgres.dart';
 
 Future<void> main(List<String> args) async {
   final [url, schema] = args;

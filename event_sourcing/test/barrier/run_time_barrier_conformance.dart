@@ -19,6 +19,7 @@
 import 'dart:async';
 
 import 'package:event_sourcing/event_sourcing.dart';
+import 'package:event_sourcing/postgres.dart';
 import 'package:event_sourcing/src/security/security_context_store.dart'
     show MutableSecurityContextStore;
 import 'package:flutter_test/flutter_test.dart';

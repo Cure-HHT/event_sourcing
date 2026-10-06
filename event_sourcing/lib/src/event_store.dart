@@ -141,7 +141,6 @@ import 'package:event_sourcing/src/storage/fifo_entry.dart';
 import 'package:event_sourcing/src/storage/final_status.dart';
 import 'package:event_sourcing/src/storage/generation.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
-import 'package:event_sourcing/src/storage/postgres/postgres_backend.dart';
 import 'package:event_sourcing/src/storage/queue_records.dart';
 import 'package:event_sourcing/src/storage/record_characters.dart';
 import 'package:event_sourcing/src/storage/send_result.dart';
@@ -517,10 +516,8 @@ class EventStore {
   /// the application supplies an idempotency store of its own.
   // Implements: EVS-DEV-storage-capability/I
   // the library builds the idempotency store over the storage it opened.
-  late final IdempotencyStore? idempotencyStore = switch (_backend) {
-    final PostgresBackend postgres => postgres.idempotencyStoreOverThis(),
-    _ => null,
-  };
+  late final IdempotencyStore? idempotencyStore = _backend
+      .idempotencyStoreOverThis();
 
   /// The transaction handles this store has issued whose body is running.
   final Set<Transaction> _liveHandles = Set<Transaction>.identity();
@@ -603,9 +600,10 @@ class EventStore {
   /// production entry point. The returned store is fully configured and
   /// ready for use.
   ///
-  /// For a [SembastStorage] or [PostgresStorage] description the library
-  /// opens the storage itself, with the Sembast factory it selects for the
-  /// description or with `PostgresBackend.open`, builds the security-context
+  /// For a [SembastStorage] or a `PostgresStorage` description (exported by
+  /// `package:event_sourcing/postgres.dart`) the library opens the storage
+  /// itself, with the Sembast factory it selects for the description or
+  /// with `PostgresBackend.open`, builds the security-context
   /// store over it, and holds both: [close] closes that storage, and an open
   /// that fails after the storage opened closes it before the error reaches
   /// the caller. An [ApplicationSuppliedStorage] carries a backend the
