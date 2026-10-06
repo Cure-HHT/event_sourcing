@@ -40,6 +40,13 @@ elspais for a group's targets and runs one `elspais test --targets <target>`
 per target, `JOBS` at a time. CI runs the same targets the same way. `make`
 alone lists the make targets and variables.
 
+A run is capped at `MEMORY_MAX`, 60% of the memory available when it starts
+unless set. On Linux with systemd the run starts inside a scope with that cap
+and no swap: if the run exceeds the cap, then the kernel kills processes in
+the run, not the desktop, and the summary says so. The defaults of `JOBS`,
+`SHARDS` and `UNIT_PIECES` shrink to fit the cap, and the summary reports the
+run's peak memory. `MEMORY_MAX=off` removes the cap.
+
 | Target | What it runs |
 | --- | --- |
 | `make analyze` | `flutter analyze` / `dart analyze` in every package a target runs in (infos fatal) |

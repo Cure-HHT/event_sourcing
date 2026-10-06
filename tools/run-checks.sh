@@ -12,6 +12,9 @@
 # (.github/workflows/event-sourcing-tests.yml) runs the same targets the same
 # way and verifies the snapshot.
 #
+# A run that executes targets starts inside a systemd scope capped at
+# MEMORY_MAX (enter_memory_scope), and the parallelism defaults fit that cap.
+#
 # The tool versions come from .github/versions.env: the Postgres image the
 # throwaway containers run, and the Flutter and elspais versions the Evidence
 # Snapshot requires.
@@ -85,6 +88,31 @@ cpu_count() {
   echo "$n"
 }
 
+# Bytes of memory the system reports available for new processes. Prints
+# nothing where the system has no /proc/meminfo (macOS).
+mem_available_bytes() {
+  if [ -r /proc/meminfo ]; then
+    awk '/^MemAvailable:/ { printf "%d\n", $2 * 1024 }' /proc/meminfo
+  fi
+}
+
+# Converts a size with an optional K, M, G or T suffix (powers of 1024) to
+# bytes. Prints nothing for any other form.
+size_bytes() {
+  local n="${1%[KMGTkmgt]}" unit="${1#"${1%[KMGTkmgt]}"}"
+  case "$n" in '' | *[!0-9]*) return 1 ;; esac
+  case "$unit" in
+    "") echo "$n" ;;
+    K | k) echo $((n * 1024)) ;;
+    M | m) echo $((n * 1024 * 1024)) ;;
+    G | g) echo $((n * 1024 * 1024 * 1024)) ;;
+    T | t) echo $((n * 1024 * 1024 * 1024 * 1024)) ;;
+  esac
+}
+
+# A size in bytes as gigabytes with one decimal.
+gb() { awk -v b="$1" 'BEGIN { printf "%.1f GB\n", b / 1073741824 }'; }
+
 CORES="$(cpu_count)"
 default_shards=$((CORES / 3))
 if [ "$default_shards" -lt 1 ]; then default_shards=1; fi
@@ -95,6 +123,42 @@ if [ "$default_jobs" -gt 8 ]; then default_jobs=8; fi
 default_unit_pieces=$((CORES / 6))
 if [ "$default_unit_pieces" -lt 1 ]; then default_unit_pieces=1; fi
 if [ "$default_unit_pieces" -gt 4 ]; then default_unit_pieces=4; fi
+
+# MEMORY_MAX caps the memory of a whole run (enter_memory_scope). Its default
+# is 60% of the memory available when the run starts. The run's copy inside
+# the cap inherits the value, so both copies derive the same defaults.
+if [ -z "${MEMORY_MAX:-}" ]; then
+  MEMORY_MAX="$(mem_available_bytes)" || MEMORY_MAX=""
+  if [ -n "$MEMORY_MAX" ]; then MEMORY_MAX=$((MEMORY_MAX * 6 / 10)); else MEMORY_MAX=off; fi
+fi
+MEMORY_MAX_BYTES=""
+if [ "$MEMORY_MAX" != off ]; then
+  MEMORY_MAX_BYTES="$(size_bytes "$MEMORY_MAX")" || MEMORY_MAX_BYTES=""
+  if [ -z "$MEMORY_MAX_BYTES" ] || [ "$MEMORY_MAX_BYTES" -eq 0 ]; then
+    echo "MEMORY_MAX must be a positive size such as 24G, or off (got '$MEMORY_MAX')" >&2
+    exit 2
+  fi
+fi
+
+# A slot is one test process at a time: a target, a Postgres shard or a unit
+# piece. A Flutter test process with its compiler uses about 1 GB, and the web
+# and desktop builds use more, so a slot is budgeted at 2 GB. The defaults
+# fit JOBS x max(SHARDS, UNIT_PIECES) slots into MEMORY_MAX. A value given
+# explicitly is used as given.
+SLOT_BYTES=$((2 * 1024 * 1024 * 1024))
+if [ -n "$MEMORY_MAX_BYTES" ]; then
+  slots=$((MEMORY_MAX_BYTES / SLOT_BYTES))
+  if [ "$slots" -lt 1 ]; then slots=1; fi
+  # Targets are many and short, so JOBS takes the slots first, leaving at
+  # least two per job where the memory allows.
+  fit=$((slots / 2))
+  if [ "$fit" -lt 1 ]; then fit=1; fi
+  if [ "$default_jobs" -gt "$fit" ]; then default_jobs=$fit; fi
+  fit=$((slots / ${JOBS:-$default_jobs}))
+  if [ "$fit" -lt 1 ]; then fit=1; fi
+  if [ "$default_shards" -gt "$fit" ]; then default_shards=$fit; fi
+  if [ "$default_unit_pieces" -gt "$fit" ]; then default_unit_pieces=$fit; fi
+fi
 
 SHARDS="${SHARDS:-$default_shards}"
 UNIT_PIECES="${UNIT_PIECES:-$default_unit_pieces}"
@@ -114,7 +178,7 @@ if [ "$PART_I" -gt "$PART_N" ]; then
   exit 2
 fi
 # Every child process re-reads these, so they carry the resolved values.
-export SHARDS JOBS UNIT_PIECES PG_IMAGE PG_PART
+export SHARDS JOBS UNIT_PIECES PG_IMAGE PG_PART MEMORY_MAX
 
 usage() {
   cat <<EOF
@@ -180,13 +244,21 @@ Subcommands of this script only:
                      start where \`evidence\` refuses.
 
 Variables (current value in brackets):
+  MEMORY_MAX
+            Memory the whole run may use, in bytes or with a K, M, G or T
+            suffix, or off [$MEMORY_MAX; default 60% of the memory available
+            at start]. On Linux with systemd the run starts inside a scope
+            with this cap and no swap, so a run that exceeds it is killed
+            instead of the desktop. The defaults below shrink to fit it.
   SHARDS    Postgres servers a Postgres target shards its files across when
-            it starts its own containers [$SHARDS; default cores/3, 1..8].
+            it starts its own containers [$SHARDS; default cores/3, 1..8,
+            then fit to MEMORY_MAX].
   JOBS      Targets (and analyzers) run at once [$JOBS; default cores/3,
-            2..8].
+            2..8, then fit to MEMORY_MAX].
   UNIT_PIECES
             Pieces event_sourcing's one-file-at-a-time unit suite is split
-            into, run side by side [$UNIT_PIECES; default cores/6, 1..4].
+            into, run side by side [$UNIT_PIECES; default cores/6, 1..4, then
+            fit to MEMORY_MAX].
   PG_IMAGE  Postgres image for the containers [$PG_IMAGE; default
             POSTGRES_IMAGE of .github/versions.env]. \`evidence\` refuses
             another image.
@@ -1274,6 +1346,71 @@ on_signal() {
   exit 130
 }
 
+# The cgroup v2 directory of this process. Prints nothing where there is none.
+cgroup_dir() {
+  local rel=""
+  if [ -r /proc/self/cgroup ]; then
+    rel="$(sed -n 's/^0:://p' /proc/self/cgroup)" || rel=""
+  fi
+  if [ -n "$rel" ] && [ -f "/sys/fs/cgroup$rel/memory.max" ]; then
+    echo "/sys/fs/cgroup$rel"
+  fi
+}
+
+# Restarts this command inside a systemd scope capped at MEMORY_MAX, with no
+# swap. If the run exceeds the cap, then the kernel kills processes in the
+# scope only, and the rest of the machine keeps running. systemd-run replaces
+# itself with the command, so the exit status and signals pass through. Where
+# systemd cannot give the cap, the run continues uncapped and says so.
+enter_memory_scope() {
+  if [ -n "${EVS_CHECKS_IN_SCOPE:-}" ]; then return 0; fi
+  EVS_CHECKS_IN_SCOPE=1
+  export EVS_CHECKS_IN_SCOPE
+  if [ "$MEMORY_MAX" = off ]; then return 0; fi
+  if ! command -v systemd-run >/dev/null 2>&1 \
+    || ! systemd-run --user --scope --quiet true >/dev/null 2>&1; then
+    echo "note: no systemd user scope here, so the run is not capped at MEMORY_MAX=$MEMORY_MAX" >&2
+    return 0
+  fi
+  exec systemd-run --user --scope --quiet -p MemoryMax="$MEMORY_MAX_BYTES" \
+    -p MemorySwapMax=0 -- "$SELF" "$@"
+}
+
+# One line: the cap this run is under, as the kernel reports it, and the
+# parallelism the run uses.
+memory_cap_line() {
+  local d max="" parallel="JOBS=$JOBS SHARDS=$SHARDS UNIT_PIECES=$UNIT_PIECES"
+  d="$(cgroup_dir)" || d=""
+  if [ -n "$d" ]; then max="$(cat "$d/memory.max")" || max=""; fi
+  case "$max" in
+    '' | max)
+      if [ "$MEMORY_MAX" = off ] || [ -z "${EVS_CHECKS_IN_SCOPE:-}" ]; then
+        echo "memory: not capped  ($parallel)"
+      else
+        echo "memory: cap MEMORY_MAX=$MEMORY_MAX requested but not enforced  ($parallel)"
+      fi
+      ;;
+    *) echo "memory: capped at $(gb "$max")  ($parallel)" ;;
+  esac
+}
+
+# The run's peak memory against its cap, and the processes the cap killed.
+# Prints nothing outside a capped scope.
+memory_report() {
+  local d max peak kills
+  d="$(cgroup_dir)" || d=""
+  if [ -z "$d" ] || [ ! -f "$d/memory.peak" ]; then return 0; fi
+  max="$(cat "$d/memory.max")" || max=""
+  case "$max" in '' | max) return 0 ;; esac
+  peak="$(cat "$d/memory.peak")" || peak=""
+  kills="$(awk '$1 == "oom_kill" { print $2 }' "$d/memory.events")" || kills=""
+  if [ -n "$peak" ]; then echo "---- memory: peak $(gb "$peak") of the $(gb "$max") cap"; fi
+  if [ -n "$kills" ] && [ "$kills" -gt 0 ]; then
+    echo "---- the memory cap killed $kills process(es): a failure above can be that, not a test."
+    echo "     Lower JOBS, SHARDS or UNIT_PIECES, or raise MEMORY_MAX."
+  fi
+}
+
 new_run() {
   RUNID="$(new_runid)"
   LOGDIR="$ROOT/.check-logs/$RUNID"
@@ -1285,6 +1422,7 @@ new_run() {
   trap on_signal INT TERM
   load_targets
   echo "run $RUNID  (logs: $(rel "$LOGDIR"))"
+  memory_cap_line
 }
 
 # `pub get` in each package the selected targets (or analyzers) run in, before
@@ -1438,6 +1576,7 @@ summarize() {
     esac
   done <"$LOGDIR/order.expanded"
   echo "---- $pass passed, $fail failed, $skip skipped"
+  memory_report
   [ "$fail" -eq 0 ]
 }
 
@@ -1556,6 +1695,7 @@ main() {
     # test fails instead of skipping. Both runs then record the same outcome.
     export EVS_REQUIRE_PREREQUISITES=1
   fi
+  enter_memory_scope "$@"
   new_run
   TASKS=()
   case "$cmd" in
