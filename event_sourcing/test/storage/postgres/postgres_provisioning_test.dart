@@ -7,6 +7,7 @@
 library;
 
 import 'dart:async';
+import 'dart:io' show pid;
 import 'dart:isolate';
 
 import 'package:event_sourcing/event_sourcing.dart';
@@ -171,6 +172,29 @@ void main() {
       postgresMinCompatibleSchemaVersion,
       postgresMigrations.last.minCompatibleVersion,
     );
+  });
+
+  // Verifies: EVS-DEV-postgres-backend/T
+  // the user name and the password are percent-decoded, split at the first
+  //   colon of the user information.
+  test('a connection URL percent-decodes its user name and password', () {
+    const user = 'db-owner@proj.iam';
+    const password = 'p:a/s@s%w+rd';
+    final endpoint = PostgresBackend.endpointFromUrl(
+      'postgres://${Uri.encodeComponent(user)}:'
+      '${Uri.encodeComponent(password)}@db.example:6543/app',
+    );
+    expect(endpoint.username, user);
+    expect(endpoint.password, password);
+    expect(endpoint.host, 'db.example');
+    expect(endpoint.port, 6543);
+    expect(endpoint.database, 'app');
+    final colon = PostgresBackend.endpointFromUrl('postgres://a%3Ab:c:d@h/x');
+    expect(colon.username, 'a:b');
+    expect(colon.password, 'c:d');
+    final bare = PostgresBackend.endpointFromUrl('postgres://only@h/x');
+    expect(bare.username, 'only');
+    expect(bare.password, isNull);
   });
 
   final db = PostgresTestDatabase.fromEnvironment();
@@ -623,5 +647,68 @@ void main() {
     expect(await record(), before);
     await _openStore(backend);
     expect(await record(), isNotNull);
+  });
+  // Verifies: EVS-DEV-postgres-backend/T
+  // an owner named as an IAM database user, written percent-encoded in the
+  //   URL with a password holding reserved characters, provisions the
+  //   schema, and the runtime role opens it.
+  test('an owner whose URL user name and password are percent-encoded '
+      'provisions', () async {
+    if (db == null) return;
+    final owner = 'db-owner-$pid@proj.iam';
+    const password = 'p:a/s@s%w+rd';
+    final schema = 'evs_iam_$pid';
+    final o = quoteIdent(owner);
+    final s = quoteIdent(schema);
+    final r = quoteIdent(db.runtime);
+    Future<void> dropIam(Connection admin) async {
+      await admin.execute('DROP SCHEMA IF EXISTS $s CASCADE');
+      final exists = await admin.execute(
+        Sql.named('SELECT 1 FROM pg_roles WHERE rolname = @r'),
+        parameters: <String, Object?>{'r': owner},
+      );
+      if (exists.isEmpty) return;
+      await admin.execute('DROP OWNED BY $o');
+      await admin.execute('DROP ROLE $o');
+    }
+
+    await db.asAdmin((admin) async {
+      await dropIam(admin);
+      await admin.execute(
+        "CREATE ROLE $o LOGIN PASSWORD '${password.replaceAll("'", "''")}' "
+        'NOSUPERUSER NOCREATEDB NOCREATEROLE',
+      );
+      await admin.execute('CREATE SCHEMA $s AUTHORIZATION $o');
+      await admin.execute('REVOKE CREATE ON SCHEMA $s FROM PUBLIC');
+      await admin.execute('GRANT USAGE ON SCHEMA $s TO $r');
+    });
+    addTearDown(() => db.asAdmin(dropIam));
+    final admin = Uri.parse(db.adminUrl);
+    final ownerUrl =
+        '${admin.scheme}://${Uri.encodeComponent(owner)}:'
+        '${Uri.encodeComponent(password)}@${admin.host}:${admin.port}'
+        '${admin.path}';
+    expect(ownerUrl, contains('db-owner-$pid%40proj.iam'));
+    await PostgresBackend.provision(
+      ownerUrl,
+      schema: schema,
+      runtimeRoles: <String>{db.runtime},
+      lockRoles: <String>{db.runtime},
+      sslMode: SslMode.disable,
+    );
+    await db.asAdmin((admin) async {
+      for (final MapEntry(key: table, value: privileges)
+          in postgresRuntimeRoleGrants.entries) {
+        await admin.execute(
+          'GRANT ${privileges.join(', ')} ON $s.${quoteIdent(table)} TO $r',
+        );
+      }
+    });
+    final backend = await PostgresBackend.open(
+      url: db.runtimeUrl,
+      schema: schema,
+      sslMode: SslMode.disable,
+    );
+    await backend.close();
   });
 }

@@ -6,6 +6,8 @@
 //   tables, columns, sequences and schema, memberships walked transitively,
 //   ownership and role attributes.
 import 'package:event_sourcing/src/storage/postgres/postgres_exceptions.dart';
+import 'package:event_sourcing/src/storage/postgres/postgres_grants.dart'
+    show postgresRuntimeRoleGrants;
 import 'package:event_sourcing/src/storage/postgres/postgres_schema.dart'
     show postgresLibraryTables;
 import 'package:meta/meta.dart' show internal;
@@ -223,6 +225,46 @@ WHERE up.member NOT IN (SELECT oid FROM owners)
   AND up.member NOT IN (SELECT oid FROM declared)
 ''';
 
+// Every privilege a declared role holds on a table of the library's schema,
+// or on a column of one: the grantee, the privilege, the table and the
+// refusal's detail.
+const String _declaredTableGrants =
+    '''
+$_scope
+SELECT pg_catalog.pg_get_userbyid(a.grantee)::text, a.privilege_type,
+  c.relname::text, 'on table ' || c.relname
+FROM pg_catalog.pg_class c JOIN lib ON c.relnamespace = lib.oid
+CROSS JOIN LATERAL pg_catalog.aclexplode(c.relacl) a
+WHERE c.relkind IN $_tableKinds AND a.grantee IN (SELECT oid FROM declared)
+UNION ALL
+SELECT pg_catalog.pg_get_userbyid(a.grantee)::text, a.privilege_type,
+  c.relname::text, 'on column ' || c.relname || '.' || att.attname
+FROM pg_catalog.pg_class c JOIN lib ON c.relnamespace = lib.oid
+JOIN pg_catalog.pg_attribute att
+  ON att.attrelid = c.oid AND att.attnum > 0 AND NOT att.attisdropped
+CROSS JOIN LATERAL pg_catalog.aclexplode(att.attacl) a
+WHERE c.relkind IN $_tableKinds AND a.grantee IN (SELECT oid FROM declared)
+''';
+
+// A declared role that can act, through a chain of memberships, as
+// `pg_write_all_data`.
+const String _declaredWriteAllData =
+    '''
+$_scope,
+up(member) AS (
+  SELECT m.member FROM pg_catalog.pg_auth_members m
+  JOIN pg_catalog.pg_roles r ON r.oid = m.roleid
+  WHERE r.rolname = 'pg_write_all_data' AND $_actsAs
+  UNION
+  SELECT m.member
+  FROM pg_catalog.pg_auth_members m JOIN up ON m.roleid = up.member
+  WHERE $_actsAs
+)
+SELECT pg_catalog.pg_get_userbyid(up.member)::text
+FROM up
+WHERE up.member IN (SELECT oid FROM declared)
+''';
+
 // What the role @role owns in the library's schema: the schema itself, or a
 // relation in it.
 const String _ownedByRole =
@@ -256,6 +298,17 @@ SELECT r.rolname::text, r.rolsuper, r.rolcreaterole,
 FROM reach JOIN pg_catalog.pg_roles r ON r.oid = reach.oid
 ''';
 
+/// Whether a declared library role may hold [privilege] on the table
+/// [table] of the library's schema: `SELECT` on any table, and otherwise
+/// only a privilege the runtime role's grants list for that table.
+// Implements: EVS-DEV-postgres-backend/S
+// the admitted privileges of a declared role are SELECT and the runtime
+//   role's privileges on the table, so a subset of them opens.
+@internal
+bool declaredRoleMayHold(String table, String privilege) =>
+    privilege == 'SELECT' ||
+    (postgresRuntimeRoleGrants[table]?.contains(privilege) ?? false);
+
 /// Every reason to refuse the database, read in [tx], a library transaction
 /// on the pool whose current schema is the library's: [poolRoles] and
 /// [lockRoles] are the roles the pool and the lock session connect and run
@@ -273,6 +326,11 @@ FROM reach JOIN pg_catalog.pg_roles r ON r.oid = reach.oid
 //   a role outside the owner and the declared roles; any privilege of
 //   PUBLIC on a library table; and CREATE on the schema for any role but
 //   the owner, are refused.
+// Implements: EVS-DEV-postgres-backend/S
+// a declared role holding a privilege on a library table, or a column of
+//   one, beyond the runtime role's privileges on that table, or able to act
+//   as pg_write_all_data, is refused, whether or not this instance connects
+//   as it.
 // Implements: EVS-PRD-storage-barrier/F
 // a database on which a role outside the owner and the declared roles may
 //   write a library table, or act as one of those roles, is refused.
@@ -339,6 +397,22 @@ Future<List<PostgresRoleRefusal>> findLibraryRoleRefusals(
         refuse(role, 'MEMBER', 'of role $reached, the owner of the tables');
       }
     }
+  }
+
+  for (final row in await tx.execute(
+    Sql.named(_declaredTableGrants),
+    parameters: <String, Object?>{'tables': tables},
+  )) {
+    final privilege = row[1]! as String;
+    if (!declaredRoleMayHold(row[2]! as String, privilege)) {
+      refuse(row[0]! as String, privilege, row[3]! as String);
+    }
+  }
+  for (final row in await tx.execute(
+    Sql.named(_declaredWriteAllData),
+    parameters: <String, Object?>{'tables': tables},
+  )) {
+    refuse(row[0]! as String, 'MEMBER', 'of role pg_write_all_data');
   }
 
   for (final query in <String>[

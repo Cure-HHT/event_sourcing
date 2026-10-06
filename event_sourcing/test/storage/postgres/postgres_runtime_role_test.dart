@@ -707,6 +707,44 @@ void main() {
     });
 
     // Verifies: EVS-DEV-postgres-backend/K
+    // Verifies: EVS-PRD-event-log/A
+    // the log is append-only for the runtime role: it cannot update,
+    //   delete, truncate or alter the events table or drop the schema, and
+    //   the stored event row stays byte-identical. Each statement runs in a
+    //   transaction of its own, so each refusal is its own 42501.
+    test('the runtime role cannot change or remove a stored event', () async {
+      await roles.reset();
+      final w = await _World.open(await roles.openRuntimeBackend());
+      final stored = await w.note('kept');
+      await w.close();
+      Future<List<String>> rows() => roles.asOwner((c) async {
+        final r = await c.execute(
+          'SELECT e::text FROM events e ORDER BY sequence_number',
+        );
+        return <String>[for (final row in r) row[0]! as String];
+      });
+      final before = await rows();
+      expect(before.where((r) => r.contains(stored.eventId)), hasLength(1));
+      for (final statement in <String>[
+        "UPDATE events SET event_type = 'changed'",
+        'DELETE FROM events',
+        'TRUNCATE events',
+        'ALTER TABLE events ADD COLUMN changed integer',
+        'ALTER TABLE events DISABLE TRIGGER ALL',
+        'DROP SCHEMA ${quoteIdent(roles.schema)} CASCADE',
+      ]) {
+        await expectLater(
+          roles.asRuntime((c) => c.runTx((tx) => tx.execute(statement))),
+          throwsA(
+            isA<ServerException>().having((e) => e.code, 'code', '42501'),
+          ),
+          reason: statement,
+        );
+      }
+      expect(await rows(), before);
+    });
+
+    // Verifies: EVS-DEV-postgres-backend/K
     // redaction, the retention sweep (compaction and purge) and a view
     //   rebuild run as the runtime role.
     test('redaction, retention and a view rebuild run as the runtime '

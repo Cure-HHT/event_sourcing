@@ -15,7 +15,8 @@ dedicated lock session. Outside provisioning, the backend runs as a role that
 neither owns nor can create its tables, holding only the documented table
 privileges. Provisioning records which runtime and lock roles the deployment
 declares. Opening refuses an undeclared role, a runtime or lock role that
-could change the schema, and a database on which a role outside the owner
+could change the schema, a declared role holding more than the runtime
+role's privileges, and a database on which a role outside the owner
 and the declared roles may write the library's tables or act as one of those
 roles. Every transaction the library runs sets its search path, for that
 transaction, to the library's schema, which the storage description names,
@@ -96,6 +97,10 @@ P. `PostgresBackend.provision` SHALL record, in a table of the library's schema 
 Q. Every statement the library runs on a Postgres database -- through its pool, on its lock session and for provisioning -- SHALL run inside a transaction whose first statement sets the search path, for that transaction only, to exactly the schema the storage description names, `pg_catalog` and `pg_temp`, in that order.
 
 R. `PostgresBackend.open` SHALL refuse, before it registers a generation and naming both schemas, when the current schema inside a library transaction is not the schema the storage description names.
+
+S. The Postgres backend SHALL refuse to open a database, before it registers a generation and naming the role, the privilege and any table the privilege is on, when a declared library role holds a privilege other than `SELECT` on a library table, or on a column of one, that the documented runtime-role privileges for that table do not include, or can inherit the privileges of, or set its role to, `pg_write_all_data` through a chain of memberships.
+
+T. The Postgres backend SHALL take a connection URL's user name from the percent-decoded user information before its first colon, and its password from the percent-decoded user information after that colon.
 
 ## Rationale
 
@@ -209,12 +214,19 @@ The check runs at open. A grant made while an instance runs is seen at the next 
 
 **Why a search path set in every transaction (assertions Q and R)?** The library's SQL names tables, functions and operators without a schema, so the search path in effect decides what they resolve to. Under the server's default (`"$user", public`), any role holding `CREATE` on the database, an application role included, can create a schema named after the runtime role and fill it with tables of the library's names; the library would then open and write those, and its grant checks would read them. With the path set to the library's schema, `pg_catalog` and `pg_temp`, no other schema takes part in resolution, whoever may create one, and the library's schema admits objects from its owner alone (assertion M). The library's schema comes first because provisioning's DDL creates the tables there; `pg_temp` comes last so a temporary table cannot shadow a library table. A setting made for the session would reach only the server session it ran on: behind a transaction-mode pooler the pool's next transaction runs on another server session, under that session's setting. A setting made as the first statement of each transaction, for that transaction only, travels with the transaction to whatever server session runs it, so the pool's path needs no session guarantee, and the lock session's statements are covered the same way. The first statement calls `pg_catalog.set_config` with local scope, so it resolves before any path is set, and the schema name reaches it only as a bound value, quoted as an identifier, never as SQL text. Setting one value is simpler to enforce and test than qualifying every identifier, and it also covers functions and operators. The server skips a schema in the path that does not exist, so a description naming a missing schema would resolve nothing of the library's; open reads the current schema back inside a library transaction and refuses a mismatch (assertion R).
 
+**Why refuse an over-granted declared role (assertion S)?** Privilege makes the Event Log append-only to the runtime role, not a trigger a deployment opts into. The runtime role holds `SELECT` and `INSERT` on the log and nothing that changes a stored event, so the database refuses every update, delete and truncation of the log by the process. An over-grant to a declared role (a `GRANT ALL`, a column-level `UPDATE`, membership in `pg_write_all_data`) would undo that silently. Assertion M admits the declared roles' grants, so it refuses none of these. Open therefore compares each declared role's grants with the documented runtime-role privileges, at table and column level, and refuses a privilege outside them. Every declared role is checked, the ones another instance connects as included, since one over-granted canary role is enough to change the log. `SELECT` is admitted on every table, as for every other role. A declared role may hold a subset: a maintenance role that reads every table and writes only the view tables opens. `TRIGGER` and `REFERENCES` are outside the runtime privileges on every table, for the reasons given under assertion M.
+
+**Why percent-decode the connection URL's credentials (assertion T)?** A connection URL carries its user name and password in the user information, where a reserved character is percent-encoded. A managed database's IAM user is named like an e-mail address, so its `@` reaches the URL as `%40`; a generated password can hold `:`, `/`, `@`, `%` or `+`. The user information splits at its first colon, because a user name cannot carry a literal colon and a password can; each part is then decoded on its own, so an encoded colon in the user name does not move the split. Decoding treats `+` as itself, since form encoding is not URL encoding.
+
 **Why declared roles (assertion P)?** Instances of one deployment may connect under different roles: a canary or a blue-green deployment beside the serving instances, a credential rotated by swapping roles, or a separate delivery process. If the admitted set were the opener's own roles, each such instance would find the other's grants foreign and refuse. Provisioning, run as the owner, records the roles the deployment declares; every instance admits them all and refuses a role that is not declared. A role rotation declares the new role, deploys it, and retires the old role with a second provisioning once no instance uses it.
 
 **Why a documented setup for an application's own tables (assertion O)?** An application often keeps state of its own beside the library's, an idempotency store or a job table for instance. A connection of its own, under a role of its own, in a schema of its own, gives it that while the database refuses that role every write to the library's tables, and assertion M refuses a database whose grants would allow one. The library's idempotency table stays in the library's schema, written only by the idempotency store the library builds over its own storage (EVS-DEV-storage-capability).
 
 ## Changelog
 
+- 2026-10-03 | 6c8aa9e4 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-10-03 | cccad2fc | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-10-03 | - | - | Michael Lewis (<michael@anspar.org>) | Add S: open refuses a declared library role holding a privilege on a library table, or a column of one, outside the documented runtime-role privileges, or able to act as pg_write_all_data, naming the role, the privilege and any table it is on. Add T: a connection URL's user name and password are percent-decoded after the split at the first colon
 - 2026-09-25 | 3f6c533e | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-26 | - | - | Michael Lewis (<michael@anspar.org>) | Amend J: no convergence lease; the generation locks include the registrations of the view definitions the instance registers. J is cited by code and tests (listed in the integration report)
 - 2026-09-25 | 686483cf | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
@@ -233,4 +245,4 @@ The check runs at open. A grant made while an instance runs is seen at the next 
 - 2026-08-10 | 4e78d64b | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-07-02 | e69b5a15 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
-*End* *Postgres backend reference impl* | **Hash**: 3f6c533e
+*End* *Postgres backend reference impl* | **Hash**: 6c8aa9e4

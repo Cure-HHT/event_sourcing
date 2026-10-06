@@ -644,20 +644,26 @@ class PostgresBackend extends StorageBackend {
     return scope;
   }
 
+  /// The endpoint [url] names. The user information splits at its first
+  /// `:` into the user name and the password, and each is percent-decoded,
+  /// so a user name such as an IAM database user's `name@project.iam`,
+  /// written `name%40project.iam`, reaches the server as itself.
+  // Implements: EVS-DEV-postgres-backend/T
+  // the URL's user name and password are percent-decoded after the split
+  //   at the first colon of the user information.
   @visibleForTesting
   static Endpoint endpointFromUrl(String url) {
     final uri = Uri.parse(url);
-    final userInfoParts = uri.userInfo.isEmpty
-        ? const <String>[]
-        : uri.userInfo.split(':');
+    final userInfo = uri.userInfo;
+    final colon = userInfo.indexOf(':');
+    final rawUser = colon < 0 ? userInfo : userInfo.substring(0, colon);
+    final rawPassword = colon < 0 ? null : userInfo.substring(colon + 1);
     return Endpoint(
       host: uri.host,
       port: uri.port == 0 ? 5432 : uri.port,
       database: uri.pathSegments.isEmpty ? '' : uri.pathSegments.first,
-      username: userInfoParts.isEmpty ? null : userInfoParts.first,
-      password: userInfoParts.length < 2
-          ? null
-          : userInfoParts.sublist(1).join(':'),
+      username: userInfo.isEmpty ? null : Uri.decodeComponent(rawUser),
+      password: rawPassword == null ? null : Uri.decodeComponent(rawPassword),
     );
   }
 

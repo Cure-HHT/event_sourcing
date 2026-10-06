@@ -2,6 +2,8 @@
 // the privileges the Postgres runtime role needs on each table the
 //   library provisions, stated once for the deployment's grants and for the
 //   documentation.
+// Implements: EVS-DEV-postgres-backend/S
+// the grants are the most a declared role may hold.
 // Implements: EVS-DEV-postgres-backend/O
 // beside the runtime role's privileges, the setup for an application's own
 //   tables: a schema and a role of its own, at most SELECT on a library
@@ -39,6 +41,13 @@
 /// declared role, on which `PUBLIC` holds any privilege on a library table,
 /// or on which a role other than the owner holds `CREATE` on the schema.
 /// `SELECT` is admitted, so a read-only reporting role keeps working.
+///
+/// A declared role holds at most these privileges. `PostgresBackend.open`
+/// refuses a database on which a declared runtime or lock role holds a
+/// privilege other than `SELECT` that this map does not list for the table,
+/// on the table or on a column of it, or can act as `pg_write_all_data`. A
+/// declared role may hold a subset: a maintenance role that reads every
+/// table and writes only `view_rows` and `view_copies` opens.
 ///
 /// ## An application's own tables
 ///

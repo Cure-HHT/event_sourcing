@@ -27,7 +27,9 @@
 #                 against its own Postgres service and the second server one
 #                 file compares against.
 #                 event_sourcing/test/ci/postgres_ci_listing_test.dart fails
-#                 when a gated file is not run by a target this job runs.
+#                 when a gated file is not run by a target this job runs,
+#                 and the job fails when a gated test skipped for want of
+#                 PG_TEST_URL.
 #   throughput  -- the `throughput` group: the throughput guard checks out the
 #                 baseline commit into a temporary worktree, so it needs the
 #                 full history (fetch-depth 0). It is blocking, and its result
@@ -305,6 +307,26 @@ jobs:
         working-directory: event_sourcing/example_action_permissions
       - name: Postgres-gated files (elspais group postgres)
         run: elspais test --targets postgres
+      # A gated test that finds no server skips itself with a reason naming
+      # PG_TEST_URL (a shared harness says "no database for ..."). Here a
+      # server is configured, so a skip means a file ran without it.
+      - name: No Postgres-gated test skipped
+        run: |
+          targets=".results/event_sourcing-postgres .results/event_sourcing-example_action_permissions-postgres"
+          results=""
+          for dir in $targets; do
+            if [ -d "$dir" ]; then results="$results $dir"; fi
+          done
+          if [ -z "$results" ] || [ -z "$(find $results -name '*.jsonl' -print -quit)" ]; then
+            echo "::error::no Postgres test results under $targets"
+            exit 1
+          fi
+          pattern='PG_TEST_URL( is)? (unset|not set)|no (database|backend available) for '
+          if grep -rEl --include='*.jsonl' "$pattern" $results; then
+            echo "::error::Postgres-gated tests skipped although PG_TEST_URL is set:"
+            grep -rhoE --include='*.jsonl' '"messageType":"skip","message":"[^"]*"' $results | sort | uniq -c
+            exit 1
+          fi
       - name: Upload results
         if: always()
         uses: actions/upload-artifact@v4

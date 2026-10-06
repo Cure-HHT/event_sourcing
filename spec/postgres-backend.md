@@ -210,9 +210,9 @@ creates them (EVS-DEV-postgres-backend/K):
   guard and rewrite the log.
 - **Runtime.** The role an application's `PostgresBackend` opens its pool
   and, unless `lockUrl` names another role, its lock session as. It holds
-  `USAGE` on the schema and exactly the table privileges below (exported
+  `USAGE` on the schema and at most the table privileges below (exported
   as `postgresRuntimeRoleGrants`), and every library operation other than
-  provisioning works under them. The log is append-only for it. For a
+  provisioning works under all of them. The log is append-only for it. For a
   lock session opened as another role, `USAGE` on the schema and the
   runtime role's privileges on `backend_state` suffice; every lock role
   must be allowed to end its own sessions, as the role that owns them is.
@@ -262,6 +262,18 @@ supported server major.
 Grants cannot separate the library from the application that embeds it, because the application supplies the credentials of the library's roles in the storage description. They separate the process from the schema, and every other role from the library's tables.
 
 Opening a backend checks the grants and memberships the server records. It refuses a role not declared at provisioning, a runtime or lock role that could change the schema, a role other than the owner holding `CREATE` on the library's schema, and a database on which a role outside the owner and the declared roles may write a table of the library's schema (through a grant, `pg_write_all_data`, or membership in the owner or a declared role) (EVS-DEV-postgres-backend/M+N+P).
+
+The table posture is a decision, and the runtime privileges follow from it:
+
+- **The Event Log is append-only to the runtime role.** It holds `SELECT` and `INSERT` on `events` and nothing else. Privilege enforces this, not a trigger a deployment opts into: the database refuses the runtime role every update, delete and truncation of `events`, and every change to its definition.
+- **`library_roles` is owner-written and runtime-read.** Provisioning writes it as the owner; the runtime role holds `SELECT` only.
+- **`view_rows` and `view_copies` are derived.** Every row is a fold of the Event Log under a view definition, and a rebuild replays the log to produce it again. The runtime role writes them freely.
+- **`fifo_entries` is non-derived delivery state.** A pending item's payload can be built again from the log by a refill, but the delivery record cannot: the attempts, the final status (`sent`, `wedged`, `tombstoned`), `sent_at`, and each item's place on its delivery channel (`delivery_number`, `delivery_hash`). A successful send marks the item sent and appends no event, and rows with a final status are kept for the database's lifetime as the delivery record. A receiver checks the channel positions against its own, so they are not regenerated either.
+- **`backend_state`, `security_context` and `idempotency` are non-derived bookkeeping and audit state.** The log cannot rebuild them: they hold the sequence counter, the generation and drain records, the persisted security contexts with their redactions and retention, and the recorded action outcomes. The runtime role writes them, as its grants allow, but they are not derived.
+
+A deployment may grant a declared role a subset of the runtime privileges: a maintenance role that reads every table and writes only `view_rows` and `view_copies`, with no `INSERT` on `events`, opens. Opening refuses a declared runtime or lock role that holds any privilege other than `SELECT` outside the table below, on a table or on a column of it, or that can act as `pg_write_all_data` through a membership it can inherit or set (EVS-DEV-postgres-backend/S).
+
+The connection URL's user name and password are percent-decoded after the user information splits at its first colon, so an IAM database user written `name%40project.iam` connects as `name@project.iam`, and a password may hold any character in encoded form (EVS-DEV-postgres-backend/T).
 
 What remains is the storage precondition (EVS-PRD-destinations/L): code that connects with the library's credentials, and the database's administrators, meaning the owner, superusers, and roles holding `CREATEROLE` or the admin option over a library role.
 
