@@ -167,12 +167,15 @@ const int lockSessionKeepaliveCount = 3;
 /// statement's timeout clock before the statement reaches the connection,
 /// and a timed-out statement's cancel request cancels whatever the session
 /// runs, so no library statement waits on the connection behind another.
-/// A connection failure or a timeout of any operation declares the session
+/// Every statement, with every exchange the driver makes for it, is bounded
+/// by the query timeout plus the connect timeout ([_BoundedStatements]). A
+/// connection failure or a timeout of any operation declares the session
 /// lost.
 @internal
 final class PostgresLockSession {
   PostgresLockSession._(
-    this._connection, {
+    this._connection,
+    this._statements, {
     required this.schema,
     required this.scope,
     required this.identity,
@@ -180,6 +183,9 @@ final class PostgresLockSession {
   });
 
   final Connection _connection;
+
+  /// [_connection] with every statement bounded as a whole.
+  final Session _statements;
 
   /// The schema every library transaction on the session puts first on
   /// its search path.
@@ -236,10 +242,14 @@ final class PostgresLockSession {
       applicationName: 'event_sourcing.lock_session',
     );
     final connection = await Connection.open(endpoint, settings: settings);
+    final statements = _BoundedStatements(
+      connection,
+      settings.queryTimeout! + settings.connectTimeout!,
+    );
     try {
       final token = _randomToken();
       // Session settings made inside a transaction outlive its commit.
-      await runLibraryTransactionOnConnection<void>(connection, schema, (
+      await runLibraryTransactionOnConnection<void>(statements, schema, (
         tx,
       ) async {
         await tx.execute(
@@ -268,7 +278,7 @@ final class PostgresLockSession {
       final observed = <(int, String?)>[];
       try {
         for (var i = 0; i < 3; i++) {
-          final via = (second != null && i.isOdd) ? second : connection;
+          final via = (second != null && i.isOdd) ? second : statements;
           // Separate transactions: a transaction-mode pooler keeps one
           // transaction on one server session, so only separate ones can
           // show that the connection is not one.
@@ -294,7 +304,7 @@ final class PostgresLockSession {
         );
       }
       final scope = await runLibraryTransactionOnConnection(
-        connection,
+        statements,
         schema,
         PostgresScope.read,
       );
@@ -305,7 +315,7 @@ final class PostgresLockSession {
         );
       }
       final started = await runLibraryTransactionOnConnection(
-        connection,
+        statements,
         schema,
         (tx) => tx.execute(
           'SELECT backend_start FROM pg_stat_activity '
@@ -315,6 +325,7 @@ final class PostgresLockSession {
       final backendStart = (started.first[0]! as DateTime).toUtc();
       return PostgresLockSession._(
         connection,
+        statements,
         schema: schema,
         scope: scope,
         identity: (pid: pid, backendStart: backendStart),
@@ -342,7 +353,7 @@ final class PostgresLockSession {
     bool serializable = false,
   }) => _serialized(
     () => runLibraryTransactionOnConnection<T>(
-      _connection,
+      _statements,
       schema,
       op,
       serializable: serializable,
@@ -432,5 +443,74 @@ final class PostgresLockSession {
       16,
       (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0'),
     ).join();
+  }
+}
+
+/// The lock session's connection, with every statement bounded as a whole
+/// by [_bound]: the query timeout plus the connect timeout, the limit the
+/// driver itself puts on a statement's result. The driver closes a
+/// statement's portal, after its result, in an exchange no timeout bounds;
+/// a connection that stops answering in that window would otherwise hold the
+/// statement, and the one operation the session runs, for as long as it is
+/// silent. Once [_bound] passes the connection is closed by force, which ends
+/// whatever exchange is waiting, and the statement throws a
+/// [TimeoutException], which declares the session lost.
+final class _BoundedStatements implements Session {
+  _BoundedStatements(this._connection, this._bound);
+
+  final Connection _connection;
+  final Duration _bound;
+
+  @override
+  bool get isOpen => _connection.isOpen;
+
+  @override
+  Future<void> get closed => _connection.closed;
+
+  /// The lock session runs no prepared statement: a prepared statement's
+  /// runs would escape [_bound].
+  @override
+  Future<Statement> prepare(Object query) => Future<Statement>.error(
+    UnsupportedError('the lock session runs no prepared statement'),
+  );
+
+  @override
+  Future<Result> execute(
+    Object query, {
+    Object? parameters,
+    bool ignoreRows = false,
+    QueryMode? queryMode,
+    Duration? timeout,
+  }) async {
+    var expired = false;
+    final timer = Timer(_bound, () {
+      expired = true;
+      unawaited(_connection.close(force: true));
+    });
+    Result? result;
+    Object? error;
+    StackTrace? stackTrace;
+    try {
+      result = await _connection.execute(
+        query,
+        parameters: parameters,
+        ignoreRows: ignoreRows,
+        queryMode: queryMode,
+        timeout: timeout,
+      );
+    } on Object catch (e, st) {
+      error = e;
+      stackTrace = st;
+    } finally {
+      timer.cancel();
+    }
+    if (expired) {
+      throw TimeoutException(
+        'a statement on the lock session did not complete within $_bound',
+        _bound,
+      );
+    }
+    if (error != null) Error.throwWithStackTrace(error, stackTrace!);
+    return result!;
   }
 }

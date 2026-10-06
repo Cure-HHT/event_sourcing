@@ -383,6 +383,11 @@ created by an earlier release is dropped and provisioned again with
   handle in an isolate; in the browser a Web Lock that only a visible tab
   requests. Each acquisition raises a drain epoch that every
   queue-changing transaction of the drainer checks (fencing).
+- Every statement on the Postgres lock session is bounded by
+  `lockQueryTimeout` plus its connect timeout, including the exchange the
+  driver runs after a statement inside a transaction. A connection that
+  goes silent at any point is closed when the bound runs out, and the
+  session is declared lost, so a dead session never keeps the drain lock.
 - New exports: `SyncCycleState`, `DrainLock`, `DrainLockRequest`,
   `DrainLockLossReason`, `DrainLockUnavailableException`,
   `DrainLockLostException`, `DrainLockConfigurationException`,

@@ -1630,7 +1630,7 @@ void main() {
           .timeout(const Duration(minutes: 3), onTimeout: () => '');
       if (ready.isEmpty) {
         const reason = 'the instance process did not become ready';
-        if (runningInCi) fail(reason);
+        if (prerequisitesRequired) fail(reason);
         markTestSkipped(reason);
         return;
       }

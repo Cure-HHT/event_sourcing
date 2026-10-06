@@ -53,9 +53,10 @@ Future<T> runLibraryTransaction<T>(
 
 /// Runs [body] in a library transaction on [connection], one connection the
 /// caller holds, issuing the transaction's control statements (`BEGIN`,
-/// `COMMIT`, `ROLLBACK`) as ordinary statements, so the connection's query
-/// timeout bounds each of them as it bounds every statement of [body]. With
-/// [serializable] the transaction runs at `SERIALIZABLE`.
+/// `COMMIT`, `ROLLBACK`) as ordinary statements, so whatever bounds a
+/// statement of [connection] bounds each of them as it bounds every
+/// statement of [body]. With [serializable] the transaction runs at
+/// `SERIALIZABLE`.
 ///
 /// An error [body] throws rolls the transaction back and is rethrown; a
 /// rollback that fails is reported to [onRollbackFailure], since the
@@ -63,7 +64,7 @@ Future<T> runLibraryTransaction<T>(
 /// still the one rethrown.
 @internal
 Future<T> runLibraryTransactionOnConnection<T>(
-  Connection connection,
+  Session connection,
   String schema,
   Future<T> Function(Session session) body, {
   bool serializable = false,

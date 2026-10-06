@@ -23,14 +23,21 @@ repos:
       # exclude them. (The read-only bit is only a local "don't edit" nudge:
       # git doesn't track it, so it doesn't survive a fresh checkout; the
       # exclude is the portable guard.)
+      #
+      # The Evidence Snapshot (test-evidence/) is elspais's output too, and
+      # CI verifies it byte for byte: a hook that rewrites or rejects a byte of
+      # it would make the committed snapshot differ from the run it describes.
+      # It is a whole suite's results, so it is also exempt from the size
+      # limit. The confidential-terms scan and gitleaks still read it.
       - id: trailing-whitespace
-        exclude: '^spec/(INDEX\.md$|_generated/)'
+        exclude: '^(spec/(INDEX\.md$|_generated/)|test-evidence/)'
       - id: end-of-file-fixer
-        exclude: '^spec/(INDEX\.md$|_generated/)'
+        exclude: '^(spec/(INDEX\.md$|_generated/)|test-evidence/)'
       - id: check-merge-conflict
       - id: check-yaml
       - id: check-added-large-files
         args: [--maxkb=500]
+        exclude: '^test-evidence/'
 
   # Cure-HHT cross-cutting hooks — shared house rules enforced across repos.
   # Implements: HHT-OPS-confidential-keywords-scrubbing/H+I
@@ -63,6 +70,7 @@ repos:
     hooks:
       - id: markdownlint
         args: [--ignore, .github/]
+        exclude: '^test-evidence/'
 
   # Dart formatting — local hook (no public pre-commit-hooks repo).
   # Runs `dart format --set-exit-if-changed` against staged Dart files;
@@ -78,11 +86,13 @@ repos:
 
   # elspais checks — requirements-traceability validation. Runs at
   # pre-push only (the full graph scan is too slow for pre-commit).
-  # `--lenient` exits 0 on warnings (e.g., unlinked files, coverage
-  # gaps) but non-zero on hard errors (broken references, format
-  # violations, retired-ref citations). Treat the warnings as a
-  # backlog: opportunistic annotation work tightens the surface
-  # without blocking unrelated pushes.
+  # Strict: a warning fails the push as well as an error. The push judges the
+  # spec, the code citations and the defined terms. It does not judge test
+  # results: CI's gate does that, by verifying the committed Evidence
+  # Snapshot (test-evidence/) against a new run and running every check
+  # strictly. Consequently, work in progress can be pushed without a full
+  # suite run, and nothing merges without current evidence. --spec-dir builds
+  # the graph in this process rather than asking a daemon.
   - repo: local
     hooks:
       # Sole elspais version pin lives in .github/versions.env; this gate fails
@@ -97,7 +107,7 @@ repos:
         stages: [pre-push]
       - id: elspais-checks
         name: elspais checks
-        entry: elspais checks --lenient
+        entry: elspais --spec-dir spec checks --spec --code-checks --terms
         language: system
         pass_filenames: false
         always_run: true

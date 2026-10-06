@@ -3,12 +3,16 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 
-/// True when the test runs under continuous integration, where a test that
-/// cannot run its subprocess fails instead of skipping.
-bool get runningInCi {
-  final ci = Platform.environment['CI'];
-  return ci != null && ci.isNotEmpty && ci != 'false';
-}
+/// True when a test whose tool prerequisite is missing fails instead of
+/// skipping. It is true under continuous integration (`CI`) and in a run that
+/// records the Evidence Snapshot (`EVS_REQUIRE_PREREQUISITES`), so that both
+/// runs record the same outcome for such a test.
+bool get prerequisitesRequired =>
+    _isSet(Platform.environment['CI']) ||
+    _isSet(Platform.environment['EVS_REQUIRE_PREREQUISITES']);
+
+bool _isSet(String? value) =>
+    value != null && value.isNotEmpty && value != 'false';
 
 /// Path of the `flutter` or `dart` tool of the SDK running this test.
 String sdkTool(String name) {

@@ -39,11 +39,9 @@ void main() {
       await factory.latest.serverCloseClient(1006);
 
       // The reconnect loop awakes after `backoff.initial` (1ms), opens
-      // a fresh channel (factory.latest now points at it), and re-issues
-      // the subscribe. Accept auth on the new generation so the loop
-      // can complete.
-      await Future<void>.delayed(const Duration(milliseconds: 5));
-      await factory.latest.acceptAuth();
+      // a fresh channel, and re-issues the subscribe. Accept auth on the
+      // new generation once it exists so the loop can complete.
+      await (await factory.generation(2)).acceptAuth();
       await pumpEventLoop();
 
       expect(transitions, [
@@ -213,8 +211,7 @@ void main() {
 
       // Drop + reconnect.
       await factory.latest.serverCloseClient(1006);
-      await Future<void>.delayed(const Duration(milliseconds: 5));
-      await factory.latest.acceptAuth();
+      await (await factory.generation(2)).acceptAuth();
       await pumpEventLoop();
 
       // Second generation: one fresh auth + both subscribes re-issued.

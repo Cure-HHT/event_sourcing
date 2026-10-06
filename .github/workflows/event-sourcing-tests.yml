@@ -1,48 +1,51 @@
-# Tests, analyzers and the traceability gate — every package in the
-# repository, on every PR and push to main.
+# Tests, analyzers, the Evidence Snapshot and the traceability gate -- every
+# package in the repository, on every PR and push to main.
 #
 # The test suites are the [[scanning.test.targets]] of .elspais.toml; this
 # workflow lists no test command. Each job runs its targets through
-# `elspais checks --run-tests --targets <group or target>` (lenient: the
-# checks of one job see only its own results) and uploads each target's folder
-# under .results/: its results, its coverage and the fingerprint of the inputs
-# it ran against (a dotfile, hence include-hidden-files). The traceability job
-# downloads every job's folders and runs `elspais checks --expect default` once
-# over all of them as the gate, so a target with no results fails it. The
-# postgres parts write into one folder per target; each part's fingerprint
+# `elspais test --targets <group or target>`, which runs them and evaluates no
+# check, and uploads each target's folder under .results/: its results, its
+# coverage and its Result Fingerprint (.elspais-run.json, a dotfile, hence
+# include-hidden-files). The traceability job downloads every job's folders,
+# which recreates .results/<target>/ as each job left it, and judges them once.
+# The postgres parts write into one folder per target; each part's fingerprint
 # replaces the last, and they agree, because every part runs the same commit
 # and .elspais.toml skips everything a job writes.
 #
 # Jobs:
-#   unit        — per package (matrix): its analyzer (`flutter analyze
+#   pins        -- reads the Flutter version and the Postgres image from
+#                 .github/versions.env, for the jobs below.
+#   unit        -- per package (matrix): its analyzer (`flutter analyze
 #                 --no-pub`, infos fatal; `dart analyze` in pure Dart
 #                 packages), then its unit target. Postgres-gated files skip
 #                 there (the targets remove PG_TEST_URL).
-#   browser     — the `web` group: event_sourcing/test/web/ in Chrome.
-#   desktop     — the `desktop` group: event_sourcing/example's dual-pane
+#   browser     -- the `web` group: event_sourcing/test/web/ in Chrome.
+#   desktop     -- the `desktop` group: event_sourcing/example's dual-pane
 #                 integration test on a Linux desktop build under a virtual
 #                 display.
-#   postgres    — the `postgres` group, cut into PG_PART slices (matrix), each
-#                 against its own postgres:16 service and the second server
-#                 one file compares against.
+#   postgres    -- the `postgres` group, cut into PG_PART slices (matrix), each
+#                 against its own Postgres service and the second server one
+#                 file compares against.
 #                 event_sourcing/test/ci/postgres_ci_listing_test.dart fails
 #                 when a gated file is not run by a target this job runs,
 #                 and the job fails when a gated test skipped for want of
 #                 PG_TEST_URL.
-#   throughput  — the `throughput` group: the throughput guard checks out the
+#   throughput  -- the `throughput` group: the throughput guard checks out the
 #                 baseline commit into a temporary worktree, so it needs the
-#                 full history (fetch-depth 0).
-#   traceability — the gate: `elspais checks` over every job's results (the
-#                 pre-push hook's --lenient; the spec carries warnings a
-#                 strict run would fail on), a strict check that results
-#                 were ingested and every results and coverage file a target
-#                 names was read, and the coverage summary. It fails when any
-#                 test job did not succeed.
+#                 full history (fetch-depth 0). It is blocking, and its result
+#                 is not part of the Evidence Snapshot.
+#   traceability -- the gate. It verifies the committed Evidence Snapshot
+#                 (test-evidence/) against the `evidence` group's results of
+#                 this run, byte for byte, with the facts the snapshot claims
+#                 (`tools/run-checks.sh evidence-verify`). It then runs a strict
+#                 `elspais checks` that expects the results of every target,
+#                 and writes the coverage summary. It fails on any difference,
+#                 on any failing check, and when any other job did not succeed.
 #
 # The required Validation Summary check waits at most 30 minutes for every
-# other check, so no job may run longer. The Flutter SDK is pinned
-# (flutter-version) so a new stable release or lint set cannot change a run's
-# outcome; bump it deliberately. elspais is pinned in .github/versions.env.
+# other check, so no job may run longer. The Flutter SDK, the Postgres image
+# and elspais are pinned in .github/versions.env, so a new release cannot
+# change a run's outcome; bump them there.
 
 name: Event sourcing tests
 
@@ -59,8 +62,32 @@ permissions:
   contents: read
 
 jobs:
+  pins:
+    name: Tool pins
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      flutter_version: ${{ steps.read.outputs.flutter_version }}
+      postgres_image: ${{ steps.read.outputs.postgres_image }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/versions.env
+          sparse-checkout-cone-mode: false
+      - name: Read .github/versions.env
+        id: read
+        run: |
+          . .github/versions.env
+          : "${FLUTTER_VERSION:?FLUTTER_VERSION not set in .github/versions.env}"
+          : "${POSTGRES_IMAGE:?POSTGRES_IMAGE not set in .github/versions.env}"
+          {
+            echo "flutter_version=$FLUTTER_VERSION"
+            echo "postgres_image=$POSTGRES_IMAGE"
+          } >>"$GITHUB_OUTPUT"
+
   unit:
     name: ${{ matrix.package }} analyze + test
+    needs: pins
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -94,7 +121,7 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
-          flutter-version: 3.44.7
+          flutter-version: ${{ needs.pins.outputs.flutter_version }}
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -121,7 +148,7 @@ jobs:
       - name: Test (elspais target ${{ matrix.target }})
         env:
           TARGET: ${{ matrix.target }}
-        run: elspais checks --run-tests --lenient --targets "$TARGET"
+        run: elspais test --targets "$TARGET"
       - name: Upload results
         if: always()
         uses: actions/upload-artifact@v4
@@ -139,6 +166,7 @@ jobs:
 
   browser:
     name: event_sourcing browser tests
+    needs: pins
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -146,7 +174,7 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
-          flutter-version: 3.44.7
+          flutter-version: ${{ needs.pins.outputs.flutter_version }}
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -158,7 +186,7 @@ jobs:
         run: flutter pub get
         working-directory: event_sourcing
       - name: Browser tests (elspais group web)
-        run: elspais checks --run-tests --lenient --targets web
+        run: elspais test --targets web
       - name: Upload results
         if: always()
         uses: actions/upload-artifact@v4
@@ -174,6 +202,7 @@ jobs:
 
   desktop:
     name: event_sourcing/example desktop integration
+    needs: pins
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -181,7 +210,7 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
-          flutter-version: 3.44.7
+          flutter-version: ${{ needs.pins.outputs.flutter_version }}
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -198,7 +227,7 @@ jobs:
         run: flutter pub get
         working-directory: event_sourcing/example
       - name: Dual-pane integration test (elspais group desktop)
-        run: elspais checks --run-tests --lenient --targets desktop
+        run: elspais test --targets desktop
       - name: Upload results
         if: always()
         uses: actions/upload-artifact@v4
@@ -214,6 +243,7 @@ jobs:
 
   postgres:
     name: Postgres suites (part ${{ matrix.part }} of 6)
+    needs: pins
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:
@@ -225,7 +255,7 @@ jobs:
         part: [1, 2, 3, 4, 5, 6]
     services:
       postgres:
-        image: postgres:16
+        image: ${{ needs.pins.outputs.postgres_image }}
         env:
           POSTGRES_USER: evs
           POSTGRES_PASSWORD: evs
@@ -240,7 +270,7 @@ jobs:
       # A second server whose database and schema have the same names, for
       # the check that a lock session reaches the pool's server.
       postgres_other:
-        image: postgres:16
+        image: ${{ needs.pins.outputs.postgres_image }}
         env:
           POSTGRES_USER: evs
           POSTGRES_PASSWORD: evs
@@ -261,7 +291,7 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
-          flutter-version: 3.44.7
+          flutter-version: ${{ needs.pins.outputs.flutter_version }}
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -276,7 +306,7 @@ jobs:
         run: flutter pub get
         working-directory: event_sourcing/example_action_permissions
       - name: Postgres-gated files (elspais group postgres)
-        run: elspais checks --run-tests --lenient --targets postgres
+        run: elspais test --targets postgres
       # A gated test that finds no server skips itself with a reason naming
       # PG_TEST_URL (a shared harness says "no database for ..."). Here a
       # server is configured, so a skip means a file ran without it.
@@ -313,11 +343,12 @@ jobs:
 
   throughput:
     name: Postgres throughput guard against the baseline build
+    needs: pins
     runs-on: ubuntu-latest
     timeout-minutes: 30
     services:
       postgres:
-        image: postgres:16
+        image: ${{ needs.pins.outputs.postgres_image }}
         env:
           POSTGRES_USER: evs
           POSTGRES_PASSWORD: evs
@@ -340,7 +371,7 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
-          flutter-version: 3.44.7
+          flutter-version: ${{ needs.pins.outputs.flutter_version }}
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -358,7 +389,7 @@ jobs:
         run: flutter pub get
         working-directory: event_sourcing
       - name: Throughput guard (elspais group throughput)
-        run: elspais checks --run-tests --lenient --targets throughput
+        run: elspais test --targets throughput
       - name: Upload results
         if: always()
         uses: actions/upload-artifact@v4
@@ -373,8 +404,8 @@ jobs:
           retention-days: 7
 
   traceability:
-    name: Traceability gate (elspais checks over every result)
-    needs: [unit, browser, desktop, postgres, throughput]
+    name: Traceability gate (Evidence Snapshot and elspais checks)
+    needs: [pins, unit, browser, desktop, postgres, throughput]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -387,6 +418,8 @@ jobs:
         run: |
           . .github/versions.env
           python -m pip install "elspais==${ELSPAIS_VERSION}"
+      # merge-multiple restores every file to its own path, so each target's
+      # folder, fingerprint included, is .results/<target>/ again.
       - name: Download every job's results
         uses: actions/download-artifact@v4
         with:
@@ -395,12 +428,18 @@ jobs:
           path: .
       - name: Merge the coverage of each target's pieces and shards
         run: tools/run-checks.sh merge-coverage
+      # `elspais evidence verify --targets evidence` with the facts the
+      # snapshot claims, read from .github/versions.env: a difference in any
+      # outcome, result, fact, target, tree digest or report fails the step.
+      - name: The committed Evidence Snapshot describes this run
+        run: tools/run-checks.sh evidence-verify
       # --spec-dir (the configured one) builds the graph in this process
       # rather than through a daemon, which does not watch the results files.
-      - name: elspais checks (the gate)
-        run: elspais --spec-dir spec checks --lenient --expect default
-      - name: Every target's results ingested (strict)
-        run: tools/run-checks.sh results-ingested
+      # Strict: any warning fails it. --expect names every target, so a target
+      # with no results is a fault rather than one not run.
+      - name: elspais checks (strict, every target expected)
+        if: always()
+        run: elspais --spec-dir spec checks --expect evidence throughput
       - name: Coverage summary
         if: always()
         run: |
@@ -420,6 +459,6 @@ jobs:
           print(" ".join(k + "=" + v["result"] for k, v in needs.items() if v["result"] != "success"))
           ')"
           if [ -n "$failed" ]; then
-            echo "::error::test jobs that did not succeed: $failed"
+            echo "::error::jobs that did not succeed: $failed"
             exit 1
           fi
