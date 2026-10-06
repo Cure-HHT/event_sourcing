@@ -21,7 +21,7 @@
 | EVS-DEV-find-all-events-extended-filters | Extended findAllEvents filters | DEV | Active | A-D (100%) | A-D (100%) [4P 0F 0A] | A-D (100%) | 0/4 (0%) | 0/4 (0%) | n/a | n/a |
 | EVS-DEV-flow-token | Flow Correlation Token | DEV | Active | A-D (100%) | A-D (100%) [4P 0F 0A] | A-D (100%) | 0/4 (0%) | 0/4 (0%) | n/a | n/a |
 | EVS-DEV-ingest-promotes-before-fold | Ingest-time promoter chain | DEV | Active | A-D (100%) | A,C,D (75%) [3P 0F 0A] | A,C,D (75%) | 0/4 (0%) | 0/4 (0%) | n/a | n/a |
-| EVS-DEV-postgres-backend | Postgres backend reference impl | DEV | Active | B-R (100%) | B-D,F-R (94%) [16P 0F 0A] | B-D,F-R (94%) | 0/17 (0%) | 0/17 (0%) | n/a | n/a |
+| EVS-DEV-postgres-backend | Postgres backend reference impl | DEV | Active | B-T (100%) | B-D,F-T (95%) [18P 0F 0A] | B-D,F-T (95%) | 0/19 (0%) | 0/19 (0%) | n/a | n/a |
 | EVS-DEV-security-findings | Security findings | DEV | Active | A-M,O,Q-U (100%) | A-M,O,Q-U (100%) [19P 0F 0A] | A-M,O,Q-U (100%) | 0/19 (0%) | 0/19 (0%) | n/a | n/a |
 | EVS-DEV-severe-log-default | Severe log records reach standard error | DEV | Active | A (100%) | A (100%) [1P 0F 0A] | A (100%) | 0/1 (0%) | 0/1 (0%) | n/a | n/a |
 | EVS-DEV-storage-capability | The storage capability the library keeps | DEV | Active | A-L (100%) | A-L (100%) [12P 0F 0A] | A-L (100%) | 0/12 (0%) | 0/12 (0%) | n/a | n/a |
@@ -77,7 +77,7 @@ Code:
 - event_sourcing/lib/src/event_store.dart:3680
 - event_sourcing/lib/src/ingest/chain_checks.dart:64
 - event_sourcing/lib/src/storage/chain_coordinates.dart:43
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1291
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1297
 - event_sourcing/lib/src/storage/postgres/postgres_schema.dart:18
 - event_sourcing/lib/src/storage/storage_backend.dart:1514
 - event_sourcing/lib/src/storage/storage_backend.dart:1536
@@ -111,7 +111,7 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/event_store.dart:3614
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:3585
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:3591
 - event_sourcing/lib/src/storage/sembast_backend.dart:861
 - event_sourcing/lib/src/storage/storage_backend.dart:1453
 
@@ -485,7 +485,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1014
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1020
 - event_sourcing/lib/src/storage/sembast_backend.dart:420
 - event_sourcing/lib/src/storage/storage_backend.dart:153
 - event_sourcing/lib/src/verification/chain_walk.dart:215
@@ -648,7 +648,7 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/event_store.dart:3656
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:3685
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:3691
 - event_sourcing/lib/src/storage/sembast_backend.dart:1173
 - event_sourcing/lib/src/storage/sembast_backend.dart:885
 - event_sourcing/lib/src/storage/sembast_backend.dart:896
@@ -1272,7 +1272,7 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/storage/fifo_entry.dart:335
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2722
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2728
 - event_sourcing/lib/src/storage/sembast_backend.dart:3360
 - event_sourcing/lib/src/storage/storage_backend.dart:1346
 
@@ -1489,7 +1489,7 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/ingest/receiver_endpoint.dart:414
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:3606
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:3612
 - event_sourcing/lib/src/storage/sembast_backend.dart:1057
 - event_sourcing/lib/src/storage/storage_backend.dart:1467
 
@@ -1962,7 +1962,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2812
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2818
 - event_sourcing/lib/src/storage/storage_backend.dart:1381
 - event_sourcing/lib/src/sync/drain.dart:1395
 
@@ -2398,7 +2398,7 @@ Code:
 - event_sourcing/lib/src/event_store.dart:4112
 - event_sourcing/lib/src/event_store.dart:4159
 - event_sourcing/lib/src/projections/view_read.dart:4
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1830
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1836
 - event_sourcing/lib/src/storage/sembast_backend.dart:2582
 
 Tests:
@@ -2575,7 +2575,7 @@ Code:
 
 - event_sourcing/lib/src/storage/drain_lock.dart:1
 - event_sourcing/lib/src/storage/isolate_drain_lock.dart:1
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:3021
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:3027
 - event_sourcing/lib/src/storage/postgres/postgres_drain_lock.dart:1
 - event_sourcing/lib/src/storage/sembast_backend.dart:2100
 - event_sourcing/lib/src/storage/web_locks.dart:12
@@ -2642,7 +2642,7 @@ Code:
 
 - event_sourcing/lib/src/storage/drain_lock.dart:1
 - event_sourcing/lib/src/storage/isolate_drain_lock.dart:1
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:3021
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:3027
 - event_sourcing/lib/src/storage/postgres/postgres_drain_lock.dart:1
 - event_sourcing/lib/src/storage/web_locks.dart:17
 - event_sourcing/lib/src/sync/sync_cycle.dart:31
@@ -2812,7 +2812,7 @@ Code:
 
 - event_sourcing/lib/src/destinations/destination_registry.dart:11
 - event_sourcing/lib/src/destinations/destination_registry.dart:691
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2877
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2883
 - event_sourcing/lib/src/storage/queue_records.dart:4
 - event_sourcing/lib/src/storage/sembast_backend.dart:1707
 
@@ -2888,7 +2888,7 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/storage/final_status.dart:48
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2651
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2657
 - event_sourcing/lib/src/storage/sembast_backend.dart:3298
 
 Tests:
@@ -3048,7 +3048,7 @@ Code:
 - event_sourcing/lib/src/destinations/destination_registry.dart:850
 - event_sourcing/lib/src/destinations/destination_registry.dart:931
 - event_sourcing/lib/src/storage/drain_records.dart:4
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2840
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2846
 - event_sourcing/lib/src/storage/queue_records.dart:4
 - event_sourcing/lib/src/sync/declared_configuration.dart:1
 - event_sourcing/lib/src/sync/fill_batch.dart:25
@@ -5009,7 +5009,7 @@ Code:
 - event_sourcing/lib/src/event_store.dart:1061
 - event_sourcing/lib/src/event_store.dart:26
 - event_sourcing/lib/src/event_store.dart:729
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1078
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1084
 - event_sourcing/lib/src/storage/web_locks.dart:125
 
 Tests:
@@ -5023,7 +5023,7 @@ Tests:
 - event_sourcing/test/storage/postgres/postgres_data_format_compatibility_test.dart:215 rollback between two builds of one data-format major (postgres) the compiled and a newer build open in turn on separate backends; the log records each change in order; two concurrent opens of the older build append one change -- passed, skipped
 - event_sourcing/test/storage/postgres/postgres_database_identity_test.dart:61 two concurrent first opens record one identity in exactly one initialization -- passed, skipped
 - event_sourcing/test/storage/postgres/postgres_database_identity_test.dart:82 two concurrent opens of a build that changes the recorded version append exactly one change -- passed, skipped
-- event_sourcing/test/storage/postgres/postgres_provisioning_test.dart:592 a boot that fails after its library-version event leaves the generation record as it was -- passed, skipped
+- event_sourcing/test/storage/postgres/postgres_provisioning_test.dart:616 a boot that fails after its library-version event leaves the generation record as it was -- passed, skipped
 - event_sourcing/test/storage/storage_backend_conformance.dart:4175 StorageBackend conformance (postgres) backend_state boot record write, overwrite and rollback -- passed, skipped
 - event_sourcing/test/storage/storage_backend_conformance.dart:4175 StorageBackend conformance (postgres, runtime role) backend_state boot record write, overwrite and rollback -- passed
 - event_sourcing/test/storage/storage_backend_conformance.dart:4175 StorageBackend conformance (sembast (memory)) backend_state boot record write, overwrite and rollback -- passed
@@ -5200,7 +5200,7 @@ Code:
 
 - event_sourcing/lib/src/event_store.dart:732
 - event_sourcing/lib/src/lifecycle/boot_progress.dart:1
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:899
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:905
 - event_sourcing/lib/src/storage/sembast_backend.dart:318
 
 Tests:
@@ -5247,7 +5247,7 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:14
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1482
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1488
 - event_sourcing/lib/src/storage/sembast_backend.dart:610
 - event_sourcing/lib/src/storage/storage_backend.dart:268
 
@@ -5268,7 +5268,7 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:14
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1520
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1526
 - event_sourcing/lib/src/storage/sembast_backend.dart:770
 - event_sourcing/lib/src/storage/storage_backend.dart:310
 
@@ -5283,8 +5283,8 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:14
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1482
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1520
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1488
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1526
 - event_sourcing/lib/src/storage/sembast_backend.dart:613
 - event_sourcing/lib/src/storage/storage_backend.dart:270
 - event_sourcing/lib/src/storage/storage_backend.dart:313
@@ -5306,9 +5306,9 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:14
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1485
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1520
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1562
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1491
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1526
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1568
 - event_sourcing/lib/src/storage/sembast_backend.dart:665
 - event_sourcing/lib/src/storage/sembast_backend.dart:774
 
@@ -5468,16 +5468,16 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1715
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1737
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1760
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1777
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1721
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1743
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1766
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1783
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:18
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1803
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1855
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1903
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1969
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2033
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1809
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1861
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1909
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1975
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2039
 
 Tests:
 
@@ -5487,7 +5487,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:862
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:868
 - event_sourcing/lib/src/storage/postgres/postgres_txn.dart:1
 
 Tests:
@@ -5501,11 +5501,11 @@ Code:
 - event_sourcing/lib/src/security/postgres_security_context_store.dart:12
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:114
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:214
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:3327
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:3513
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:4038
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:674
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:818
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:3333
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:3519
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:4044
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:680
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:824
 
 Tests:
 
@@ -5587,19 +5587,19 @@ Tests:
 - event_sourcing/test/storage/postgres/postgres_backend_schema_test.dart:30 PostgresBackend schema provisioning creates every expected table -- passed
 - event_sourcing/test/storage/postgres/postgres_backend_schema_test.dart:54 PostgresBackend schema provisioning creates the non-unique event-table indexes the chain lookups and the latest eligible version read -- passed
 - event_sourcing/test/storage/postgres/postgres_library_roles_test.dart:197 declared roles a provisioning below the stored schema version records the declared roles and leaves the schema untouched -- passed
-- event_sourcing/test/storage/postgres/postgres_provisioning_test.dart:168 the exported schema versions are the last migration step's -- passed, skipped
-- event_sourcing/test/storage/postgres/postgres_provisioning_test.dart:263 provision a second provisioning leaves the schema untouched -- passed, skipped
-- event_sourcing/test/storage/postgres/postgres_provisioning_test.dart:274 provision two provisionings of an empty schema at once both succeed and leave the schema one provisioning leaves -- passed, skipped
-- event_sourcing/test/storage/postgres/postgres_provisioning_test.dart:291 provision two provisionings from two isolates both succeed -- passed, skipped
-- event_sourcing/test/storage/postgres/postgres_provisioning_test.dart:321 provision an upgrade applies only the steps above the stored version, and an instance at the older version still opens -- passed, skipped
-- event_sourcing/test/storage/postgres/postgres_provisioning_test.dart:365 provision a provisioning that fails before it records the version leaves no library table on a fresh schema -- passed, skipped
-- event_sourcing/test/storage/postgres/postgres_provisioning_test.dart:379 provision an upgrade that fails before it records the version leaves no probe table and the pair as it was -- passed, skipped
-- event_sourcing/test/storage/postgres/postgres_provisioning_test.dart:398 provision a schema holding library tables but no schema version is refused, naming a reset, and nothing is written -- passed, skipped
-- event_sourcing/test/storage/postgres/postgres_provisioning_test.dart:423 provision a provisioning waits while a boot holds the boot lock, then refuses the minimum that boot registered below -- passed, skipped
-- event_sourcing/test/storage/postgres/postgres_provisioning_test.dart:484 provision a provisioning that waits longer than bootLockWait for the boot lock is refused and creates nothing -- passed, skipped
-- event_sourcing/test/storage/postgres/postgres_provisioning_test.dart:504 provision a provisioning whose lock connection reaches another database is refused and creates nothing -- passed, skipped
-- event_sourcing/test/storage/postgres/postgres_provisioning_test.dart:532 provision an instance at the older schema version keeps committing while an upgrade that keeps its minimum is provisioned -- passed, skipped
-- event_sourcing/test/storage/postgres/postgres_provisioning_test.dart:560 provision a schema that is not the current schema is refused, naming both schemas, and nothing is created -- passed, skipped
+- event_sourcing/test/storage/postgres/postgres_provisioning_test.dart:169 the exported schema versions are the last migration step's -- passed, skipped
+- event_sourcing/test/storage/postgres/postgres_provisioning_test.dart:287 provision a second provisioning leaves the schema untouched -- passed, skipped
+- event_sourcing/test/storage/postgres/postgres_provisioning_test.dart:298 provision two provisionings of an empty schema at once both succeed and leave the schema one provisioning leaves -- passed, skipped
+- event_sourcing/test/storage/postgres/postgres_provisioning_test.dart:315 provision two provisionings from two isolates both succeed -- passed, skipped
+- event_sourcing/test/storage/postgres/postgres_provisioning_test.dart:345 provision an upgrade applies only the steps above the stored version, and an instance at the older version still opens -- passed, skipped
+- event_sourcing/test/storage/postgres/postgres_provisioning_test.dart:389 provision a provisioning that fails before it records the version leaves no library table on a fresh schema -- passed, skipped
+- event_sourcing/test/storage/postgres/postgres_provisioning_test.dart:403 provision an upgrade that fails before it records the version leaves no probe table and the pair as it was -- passed, skipped
+- event_sourcing/test/storage/postgres/postgres_provisioning_test.dart:422 provision a schema holding library tables but no schema version is refused, naming a reset, and nothing is written -- passed, skipped
+- event_sourcing/test/storage/postgres/postgres_provisioning_test.dart:447 provision a provisioning waits while a boot holds the boot lock, then refuses the minimum that boot registered below -- passed, skipped
+- event_sourcing/test/storage/postgres/postgres_provisioning_test.dart:508 provision a provisioning that waits longer than bootLockWait for the boot lock is refused and creates nothing -- passed, skipped
+- event_sourcing/test/storage/postgres/postgres_provisioning_test.dart:528 provision a provisioning whose lock connection reaches another database is refused and creates nothing -- passed, skipped
+- event_sourcing/test/storage/postgres/postgres_provisioning_test.dart:556 provision an instance at the older schema version keeps committing while an upgrade that keeps its minimum is provisioned -- passed, skipped
+- event_sourcing/test/storage/postgres/postgres_provisioning_test.dart:584 provision a schema that is not the current schema is refused, naming both schemas, and nothing is created -- passed, skipped
 
 **H**
 
@@ -5612,11 +5612,11 @@ Code:
 Tests:
 
 - event_sourcing/test/storage/postgres/postgres_generation_guard_test.dart:1540 the transaction fence the schema pair is re-checked under the boot lock, and a provisioning during a lost-session window fences the instance -- passed, skipped
-- event_sourcing/test/storage/postgres/postgres_provisioning_test.dart:203 open verifies the stored schema pair an unprovisioned schema is refused, naming provision, and nothing is created -- passed, skipped
-- event_sourcing/test/storage/postgres/postgres_provisioning_test.dart:222 open verifies the stored schema pair a schema below this build's version is refused -- passed, skipped
-- event_sourcing/test/storage/postgres/postgres_provisioning_test.dart:236 open verifies the stored schema pair a newer schema whose minimum this build meets opens -- passed, skipped
-- event_sourcing/test/storage/postgres/postgres_provisioning_test.dart:245 open verifies the stored schema pair a schema whose minimum is above this build is refused -- passed, skipped
-- event_sourcing/test/storage/postgres/postgres_provisioning_test.dart:532 provision an instance at the older schema version keeps committing while an upgrade that keeps its minimum is provisioned -- passed, skipped
+- event_sourcing/test/storage/postgres/postgres_provisioning_test.dart:227 open verifies the stored schema pair an unprovisioned schema is refused, naming provision, and nothing is created -- passed, skipped
+- event_sourcing/test/storage/postgres/postgres_provisioning_test.dart:246 open verifies the stored schema pair a schema below this build's version is refused -- passed, skipped
+- event_sourcing/test/storage/postgres/postgres_provisioning_test.dart:260 open verifies the stored schema pair a newer schema whose minimum this build meets opens -- passed, skipped
+- event_sourcing/test/storage/postgres/postgres_provisioning_test.dart:269 open verifies the stored schema pair a schema whose minimum is above this build is refused -- passed, skipped
+- event_sourcing/test/storage/postgres/postgres_provisioning_test.dart:556 provision an instance at the older schema version keeps committing while an upgrade that keeps its minimum is provisioned -- passed, skipped
 
 **I**
 
@@ -5627,9 +5627,9 @@ Code:
 Tests:
 
 - event_sourcing/test/storage/postgres/postgres_generation_guard_test.dart:1540 the transaction fence the schema pair is re-checked under the boot lock, and a provisioning during a lost-session window fences the instance -- passed, skipped
-- event_sourcing/test/storage/postgres/postgres_provisioning_test.dart:333 provision a provisioning that raises the minimum above what a live instance requires is refused and changes nothing -- passed, skipped
-- event_sourcing/test/storage/postgres/postgres_provisioning_test.dart:354 provision once the live instance has stopped, the same provisioning runs -- passed, skipped
-- event_sourcing/test/storage/postgres/postgres_provisioning_test.dart:423 provision a provisioning waits while a boot holds the boot lock, then refuses the minimum that boot registered below -- passed, skipped
+- event_sourcing/test/storage/postgres/postgres_provisioning_test.dart:357 provision a provisioning that raises the minimum above what a live instance requires is refused and changes nothing -- passed, skipped
+- event_sourcing/test/storage/postgres/postgres_provisioning_test.dart:378 provision once the live instance has stopped, the same provisioning runs -- passed, skipped
+- event_sourcing/test/storage/postgres/postgres_provisioning_test.dart:447 provision a provisioning waits while a boot holds the boot lock, then refuses the minimum that boot registered below -- passed, skipped
 
 **J**
 
@@ -5657,9 +5657,9 @@ Tests:
 - event_sourcing/test/storage/postgres/postgres_generation_guard_test.dart:925 the lock session a lock connection that does not stay one server session is refused, and no lock is taken -- passed, skipped
 - event_sourcing/test/storage/postgres/postgres_generation_guard_test.dart:940 the lock session a lock connection to another database is refused -- passed, skipped
 - event_sourcing/test/storage/postgres/postgres_generation_guard_test.dart:960 the lock session a lock connection to another server, whose database and schema have the same names, is refused -- passed, skipped
-- event_sourcing/test/storage/postgres/postgres_provisioning_test.dart:504 provision a provisioning whose lock connection reaches another database is refused and creates nothing -- passed, skipped
-- event_sourcing/test/storage/postgres/postgres_runtime_role_test.dart:792 runtime role a stalled probe is replaced and the old session ended by the lock role -- passed
-- event_sourcing/test/storage/postgres/postgres_runtime_role_test.dart:792 runtime role a stalled probe is replaced and the old session ended by the runtime role -- passed
+- event_sourcing/test/storage/postgres/postgres_provisioning_test.dart:528 provision a provisioning whose lock connection reaches another database is refused and creates nothing -- passed, skipped
+- event_sourcing/test/storage/postgres/postgres_runtime_role_test.dart:830 runtime role a stalled probe is replaced and the old session ended by the lock role -- passed
+- event_sourcing/test/storage/postgres/postgres_runtime_role_test.dart:830 runtime role a stalled probe is replaced and the old session ended by the runtime role -- passed
 
 **K**
 
@@ -5674,19 +5674,20 @@ Tests:
 - event_sourcing/test/storage/postgres/postgres_runtime_role_test.dart:606 runtime role provisioning as the runtime role fails and creates nothing -- passed
 - event_sourcing/test/storage/postgres/postgres_runtime_role_test.dart:628 runtime role the runtime role cannot create a table and owns none -- passed
 - event_sourcing/test/storage/postgres/postgres_runtime_role_test.dart:655 runtime role the runtime role cannot remove the guard, which still holds -- passed
-- event_sourcing/test/storage/postgres/postgres_runtime_role_test.dart:712 runtime role redaction, retention and a view rebuild run as the runtime role -- passed
-- event_sourcing/test/storage/postgres/postgres_runtime_role_test.dart:760 runtime role an open through the generation guard runs as the runtime role -- passed
-- event_sourcing/test/storage/postgres/postgres_runtime_role_test.dart:792 runtime role a stalled probe is replaced and the old session ended by the lock role -- passed
-- event_sourcing/test/storage/postgres/postgres_runtime_role_test.dart:792 runtime role a stalled probe is replaced and the old session ended by the runtime role -- passed
-- event_sourcing/test/storage/postgres/postgres_runtime_role_test.dart:845 runtime role a lock role holding only the backend_state privileges carries the boot and the drain lock -- passed
-- event_sourcing/test/storage/postgres/postgres_runtime_role_test.dart:877 runtime role every granted privilege is needed by a named case -- passed
+- event_sourcing/test/storage/postgres/postgres_runtime_role_test.dart:715 runtime role the runtime role cannot change or remove a stored event -- passed
+- event_sourcing/test/storage/postgres/postgres_runtime_role_test.dart:750 runtime role redaction, retention and a view rebuild run as the runtime role -- passed
+- event_sourcing/test/storage/postgres/postgres_runtime_role_test.dart:798 runtime role an open through the generation guard runs as the runtime role -- passed
+- event_sourcing/test/storage/postgres/postgres_runtime_role_test.dart:830 runtime role a stalled probe is replaced and the old session ended by the lock role -- passed
+- event_sourcing/test/storage/postgres/postgres_runtime_role_test.dart:830 runtime role a stalled probe is replaced and the old session ended by the runtime role -- passed
+- event_sourcing/test/storage/postgres/postgres_runtime_role_test.dart:883 runtime role a lock role holding only the backend_state privileges carries the boot and the drain lock -- passed
+- event_sourcing/test/storage/postgres/postgres_runtime_role_test.dart:915 runtime role every granted privilege is needed by a named case -- passed
 
 **L**
 
 Code:
 
 - event_sourcing/lib/src/security/postgres_security_context_store.dart:172
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:4235
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:4241
 - event_sourcing/lib/src/storage/sembast_backend.dart:437
 
 Tests:
@@ -5702,7 +5703,7 @@ Code:
 
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:340
 - event_sourcing/lib/src/storage/postgres/postgres_exceptions.dart:6
-- event_sourcing/lib/src/storage/postgres/postgres_library_roles.dart:270
+- event_sourcing/lib/src/storage/postgres/postgres_library_roles.dart:323
 - event_sourcing/lib/src/storage/postgres/postgres_library_roles.dart:4
 
 Tests:
@@ -5718,8 +5719,8 @@ Tests:
 - event_sourcing/test/storage/postgres/postgres_library_roles_test.dart:446 a foreign write privilege CREATE on the schema for a foreign role is refused -- passed
 - event_sourcing/test/storage/postgres/postgres_library_roles_test.dart:452 a foreign write privilege CREATE on the schema for PUBLIC is refused -- passed
 - event_sourcing/test/storage/postgres/postgres_library_roles_test.dart:459 a foreign write privilege CREATE on the schema for the runtime role is refused -- passed
-- event_sourcing/test/storage/postgres/postgres_library_roles_test.dart:467 admitted a foreign role holding only SELECT is admitted -- passed
-- event_sourcing/test/storage/postgres/postgres_library_roles_test.dart:482 admitted an admin-option-only membership is admitted -- passed
+- event_sourcing/test/storage/postgres/postgres_library_roles_test.dart:566 admitted a foreign role holding only SELECT is admitted -- passed
+- event_sourcing/test/storage/postgres/postgres_library_roles_test.dart:581 admitted an admin-option-only membership is admitted -- passed
 
 **N**
 
@@ -5727,7 +5728,7 @@ Code:
 
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:340
 - event_sourcing/lib/src/storage/postgres/postgres_exceptions.dart:6
-- event_sourcing/lib/src/storage/postgres/postgres_library_roles.dart:266
+- event_sourcing/lib/src/storage/postgres/postgres_library_roles.dart:319
 - event_sourcing/lib/src/storage/postgres/postgres_library_roles.dart:4
 
 Tests:
@@ -5737,13 +5738,13 @@ Tests:
 - event_sourcing/test/storage/postgres/postgres_library_roles_test.dart:357 a pool or lock role that could change the schema membership in the owner with SET only is refused -- passed
 - event_sourcing/test/storage/postgres/postgres_library_roles_test.dart:366 a pool or lock role that could change the schema a pool role owning a table in the schema is refused -- passed
 - event_sourcing/test/storage/postgres/postgres_library_roles_test.dart:373 a pool or lock role that could change the schema a superuser lock role is refused -- passed
-- event_sourcing/test/storage/postgres/postgres_library_roles_test.dart:482 admitted an admin-option-only membership is admitted -- passed
+- event_sourcing/test/storage/postgres/postgres_library_roles_test.dart:581 admitted an admin-option-only membership is admitted -- passed
 
 **O**
 
 Code:
 
-- event_sourcing/lib/src/storage/postgres/postgres_grants.dart:5
+- event_sourcing/lib/src/storage/postgres/postgres_grants.dart:7
 
 Tests:
 
@@ -5758,7 +5759,7 @@ Code:
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:488
 - event_sourcing/lib/src/storage/postgres/postgres_exceptions.dart:6
 - event_sourcing/lib/src/storage/postgres/postgres_library_roles.dart:1
-- event_sourcing/lib/src/storage/postgres/postgres_library_roles.dart:263
+- event_sourcing/lib/src/storage/postgres/postgres_library_roles.dart:316
 - event_sourcing/lib/src/storage/postgres/postgres_schema.dart:23
 
 Tests:
@@ -5775,10 +5776,10 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1017
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1023
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:197
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:902
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:966
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:908
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:972
 - event_sourcing/lib/src/storage/postgres/postgres_search_path.dart:1
 
 Tests:
@@ -5796,8 +5797,40 @@ Code:
 
 Tests:
 
-- event_sourcing/test/storage/postgres/postgres_provisioning_test.dart:560 provision a schema that is not the current schema is refused, naming both schemas, and nothing is created -- passed, skipped
+- event_sourcing/test/storage/postgres/postgres_provisioning_test.dart:584 provision a schema that is not the current schema is refused, naming both schemas, and nothing is created -- passed, skipped
 - event_sourcing/test/storage/postgres/postgres_search_path_test.dart:297 open refuses a schema that is not the current schema, naming both, and registers nothing -- passed
+
+**S**
+
+Code:
+
+- event_sourcing/lib/src/storage/postgres/postgres_grants.dart:5
+- event_sourcing/lib/src/storage/postgres/postgres_library_roles.dart:304
+- event_sourcing/lib/src/storage/postgres/postgres_library_roles.dart:329
+
+Tests:
+
+- event_sourcing/test/storage/postgres/postgres_library_roles_test.dart:470 a declared role holding more than the runtime privileges DELETE on events for the runtime role is refused -- passed
+- event_sourcing/test/storage/postgres/postgres_library_roles_test.dart:470 a declared role holding more than the runtime privileges TRUNCATE on events for the runtime role is refused -- passed
+- event_sourcing/test/storage/postgres/postgres_library_roles_test.dart:470 a declared role holding more than the runtime privileges UPDATE on events for the runtime role is refused -- passed
+- event_sourcing/test/storage/postgres/postgres_library_roles_test.dart:477 a declared role holding more than the runtime privileges TRIGGER and REFERENCES on a derived table are refused -- passed
+- event_sourcing/test/storage/postgres/postgres_library_roles_test.dart:486 a declared role holding more than the runtime privileges UPDATE on one column of events is refused -- passed
+- event_sourcing/test/storage/postgres/postgres_library_roles_test.dart:492 a declared role holding more than the runtime privileges membership in pg_write_all_data is refused -- passed
+- event_sourcing/test/storage/postgres/postgres_library_roles_test.dart:498 a declared role holding more than the runtime privileges an inherited path to pg_write_all_data is refused -- passed
+- event_sourcing/test/storage/postgres/postgres_library_roles_test.dart:507 a declared role holding more than the runtime privileges an over-granted lock role is refused -- passed
+- event_sourcing/test/storage/postgres/postgres_library_roles_test.dart:519 a declared role holding more than the runtime privileges an over-granted declared role the instance does not connect as is refused -- passed
+- event_sourcing/test/storage/postgres/postgres_library_roles_test.dart:530 a declared role holding more than the runtime privileges a declared role holding a subset of the runtime privileges opens -- passed
+
+**T**
+
+Code:
+
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:651
+
+Tests:
+
+- event_sourcing/test/storage/postgres/postgres_provisioning_test.dart:180 a connection URL percent-decodes its user name and password -- passed, skipped
+- event_sourcing/test/storage/postgres/postgres_provisioning_test.dart:655 an owner whose URL user name and password are percent-encoded provisions -- passed, skipped
 
 </details>
 
@@ -5931,7 +5964,7 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/event_store.dart:2091
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:3711
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:3717
 - event_sourcing/lib/src/storage/sembast_backend.dart:1238
 - event_sourcing/lib/src/storage/storage_backend.dart:1641
 
@@ -6608,7 +6641,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:963
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:969
 
 Tests:
 
@@ -6621,7 +6654,7 @@ Code:
 - event_sourcing/lib/src/event_store.dart:518
 - event_sourcing/lib/src/permissions/bootstrap_action_permissions.dart:89
 - event_sourcing/lib/src/permissions/table_backed_authorization_policy.dart:45
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:701
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:707
 - event_sourcing/lib/src/storage/postgres/postgres_idempotency_store.dart:38
 
 Tests:
@@ -6838,7 +6871,7 @@ Code:
 - event_sourcing/lib/src/entry_type_registry.dart:91
 - event_sourcing/lib/src/event_store.dart:985
 - event_sourcing/lib/src/storage/generation.dart:1
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:786
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:792
 - event_sourcing/lib/src/storage/postgres/postgres_generation_guard.dart:1
 - event_sourcing/lib/src/storage/storage_backend.dart:1183
 - event_sourcing/lib/src/storage/web_locks.dart:5
@@ -6875,7 +6908,7 @@ Code:
 
 - event_sourcing/lib/src/event_store.dart:985
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:494
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:786
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:792
 - event_sourcing/lib/src/storage/postgres/postgres_generation_guard.dart:6
 - event_sourcing/lib/src/storage/storage_backend.dart:1183
 - event_sourcing/lib/src/storage/web_locks.dart:9
@@ -6886,10 +6919,10 @@ Tests:
 - event_sourcing/test/storage/postgres/postgres_generation_guard_test.dart:1353 a lost lock session and its replacement two conflicting opens at once on one backend: exactly one opens -- passed, skipped
 - event_sourcing/test/storage/postgres/postgres_generation_guard_test.dart:505 boots serialize on the boot lock an open waits while another holds the boot lock -- passed, skipped
 - event_sourcing/test/storage/postgres/postgres_generation_guard_test.dart:552 boots serialize on the boot lock of two conflicting opens at once exactly one opens, in each of 20 rounds -- passed, skipped
-- event_sourcing/test/storage/postgres/postgres_provisioning_test.dart:274 provision two provisionings of an empty schema at once both succeed and leave the schema one provisioning leaves -- passed, skipped
-- event_sourcing/test/storage/postgres/postgres_provisioning_test.dart:291 provision two provisionings from two isolates both succeed -- passed, skipped
-- event_sourcing/test/storage/postgres/postgres_provisioning_test.dart:423 provision a provisioning waits while a boot holds the boot lock, then refuses the minimum that boot registered below -- passed, skipped
-- event_sourcing/test/storage/postgres/postgres_provisioning_test.dart:484 provision a provisioning that waits longer than bootLockWait for the boot lock is refused and creates nothing -- passed, skipped
+- event_sourcing/test/storage/postgres/postgres_provisioning_test.dart:298 provision two provisionings of an empty schema at once both succeed and leave the schema one provisioning leaves -- passed, skipped
+- event_sourcing/test/storage/postgres/postgres_provisioning_test.dart:315 provision two provisionings from two isolates both succeed -- passed, skipped
+- event_sourcing/test/storage/postgres/postgres_provisioning_test.dart:447 provision a provisioning waits while a boot holds the boot lock, then refuses the minimum that boot registered below -- passed, skipped
+- event_sourcing/test/storage/postgres/postgres_provisioning_test.dart:508 provision a provisioning that waits longer than bootLockWait for the boot lock is refused and creates nothing -- passed, skipped
 - event_sourcing/test/web/generation_guard_web_test.dart:157 a conflicting tab that opens while another is between inspection and registration waits for it and is then refused -- passed
 - event_sourcing/test/web/generation_guard_web_test.dart:229 of two conflicting tabs opening at once exactly one opens, in each of 10 rounds -- passed
 
@@ -6897,7 +6930,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:786
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:792
 - event_sourcing/lib/src/storage/postgres/postgres_generation_guard.dart:10
 - event_sourcing/lib/src/storage/sembast_backend.dart:2050
 - event_sourcing/lib/src/storage/storage_backend.dart:1183
@@ -6921,7 +6954,7 @@ Code:
 
 - event_sourcing/lib/src/event_store.dart:1073
 - event_sourcing/lib/src/storage/generation.dart:5
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:865
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:871
 - event_sourcing/lib/src/storage/postgres/postgres_generation_guard.dart:13
 - event_sourcing/lib/src/storage/postgres/postgres_idempotency_store.dart:35
 
@@ -6945,8 +6978,8 @@ Tests:
 - event_sourcing/test/storage/postgres/postgres_generation_guard_test.dart:1540 the transaction fence the schema pair is re-checked under the boot lock, and a provisioning during a lost-session window fences the instance -- passed, skipped
 - event_sourcing/test/storage/postgres/postgres_generation_guard_test.dart:657 stop-then-start and the generation record a major bump runs after the old build stops; the old build is then refused although no view names the entry type -- passed, skipped
 - event_sourcing/test/storage/postgres/postgres_generation_guard_test.dart:693 stop-then-start and the generation record after a build of another data-format major opened, the compiled build is refused -- passed, skipped
-- event_sourcing/test/storage/postgres/postgres_provisioning_test.dart:532 provision an instance at the older schema version keeps committing while an upgrade that keeps its minimum is provisioned -- passed, skipped
-- event_sourcing/test/storage/postgres/postgres_provisioning_test.dart:592 a boot that fails after its library-version event leaves the generation record as it was -- passed, skipped
+- event_sourcing/test/storage/postgres/postgres_provisioning_test.dart:556 provision an instance at the older schema version keeps committing while an upgrade that keeps its minimum is provisioned -- passed, skipped
+- event_sourcing/test/storage/postgres/postgres_provisioning_test.dart:616 a boot that fails after its library-version event leaves the generation record as it was -- passed, skipped
 - event_sourcing/test/storage/storage_backend_conformance.dart:4243 StorageBackend conformance (postgres) backend_state the generation record: write, merge, rollback -- passed, skipped
 - event_sourcing/test/storage/storage_backend_conformance.dart:4243 StorageBackend conformance (postgres, runtime role) backend_state the generation record: write, merge, rollback -- passed
 - event_sourcing/test/storage/storage_backend_conformance.dart:4243 StorageBackend conformance (sembast (memory)) backend_state the generation record: write, merge, rollback -- passed
@@ -7079,8 +7112,8 @@ Code:
 - event_sourcing/lib/src/projections/view_fingerprint.dart:1
 - event_sourcing/lib/src/projections/view_fingerprint.dart:30
 - event_sourcing/lib/src/promoters/promoter_registry.dart:183
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1415
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2072
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1421
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2078
 - event_sourcing/lib/src/storage/sembast_backend.dart:2674
 - event_sourcing/lib/src/storage/storage_backend.dart:563
 - event_sourcing/lib/src/storage/storage_backend.dart:579
@@ -7119,7 +7152,7 @@ Code:
 - event_sourcing/lib/src/event_store.dart:1067
 - event_sourcing/lib/src/event_store.dart:1215
 - event_sourcing/lib/src/event_store.dart:55
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1415
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1421
 
 Tests:
 
@@ -7132,7 +7165,7 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/event_store.dart:1011
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1415
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1421
 - event_sourcing/lib/src/storage/postgres/postgres_generation_guard.dart:486
 
 Tests:
@@ -7147,7 +7180,7 @@ Code:
 - event_sourcing/lib/src/event_store.dart:1067
 - event_sourcing/lib/src/event_store.dart:1249
 - event_sourcing/lib/src/event_store.dart:59
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1415
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1421
 - event_sourcing/lib/src/storage/postgres/postgres_generation_guard.dart:524
 - event_sourcing/lib/src/storage/web_locks.dart:200
 
@@ -7167,8 +7200,8 @@ Code:
 - event_sourcing/lib/src/event_store.dart:3428
 - event_sourcing/lib/src/projections/interpreter/projection_interpreter.dart:170
 - event_sourcing/lib/src/projections/interpreter/projection_interpreter.dart:305
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1370
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1415
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1376
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1421
 - event_sourcing/lib/src/storage/sembast_backend.dart:527
 - event_sourcing/lib/src/storage/storage_backend.dart:214
 - event_sourcing/lib/src/sync/drain.dart:1577
@@ -7219,7 +7252,7 @@ Code:
 
 - event_sourcing/lib/src/event_store.dart:3431
 - event_sourcing/lib/src/projections/interpreter/projection_interpreter.dart:176
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1415
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1421
 
 Tests:
 
@@ -7233,7 +7266,7 @@ Code:
 
 - event_sourcing/lib/src/projections/view_catch_up.dart:1
 - event_sourcing/lib/src/projections/view_catch_up.dart:281
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1415
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1421
 
 Tests:
 
@@ -7247,7 +7280,7 @@ Code:
 - event_sourcing/lib/src/event_store.dart:1343
 - event_sourcing/lib/src/projections/view_catch_up.dart:292
 - event_sourcing/lib/src/projections/view_catch_up.dart:5
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1415
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1421
 
 Tests:
 
@@ -7260,7 +7293,7 @@ Code:
 - event_sourcing/lib/src/event_store.dart:1344
 - event_sourcing/lib/src/projections/view_catch_up.dart:293
 - event_sourcing/lib/src/projections/view_catch_up.dart:8
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1415
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1421
 
 Tests:
 
@@ -7271,7 +7304,7 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/projections/view_catch_up.dart:11
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1415
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1421
 
 Tests:
 
@@ -7285,7 +7318,7 @@ Code:
 - event_sourcing/lib/src/projections/interpreter/view_row_access.dart:9
 - event_sourcing/lib/src/promoters/promoter_registry.dart:2
 - event_sourcing/lib/src/promoters/promoter_spec.dart:3
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1415
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1421
 
 Tests:
 
@@ -7299,8 +7332,8 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/projections/view_catch_up.dart:16
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1164
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1415
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1170
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1421
 - event_sourcing/lib/src/storage/storage_backend.dart:1161
 
 Tests:
@@ -7312,8 +7345,8 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/projections/view_catch_up.dart:17
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1165
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1415
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1171
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1421
 - event_sourcing/lib/src/storage/sembast_backend.dart:294
 - event_sourcing/lib/src/storage/storage_backend.dart:1162
 - event_sourcing/lib/src/storage/view_copy_lock.dart:1
@@ -7330,7 +7363,7 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/projections/view_catch_up.dart:22
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1415
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1421
 
 Tests:
 
@@ -7343,7 +7376,7 @@ Code:
 
 - event_sourcing/lib/src/projections/view_catch_up.dart:25
 - event_sourcing/lib/src/projections/view_catch_up.dart:506
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1415
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1421
 
 Tests:
 
@@ -7355,7 +7388,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1415
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1421
 
 Tests:
 
@@ -7373,7 +7406,7 @@ Code:
 - event_sourcing/lib/src/projections/view_catch_up.dart:435
 - event_sourcing/lib/src/projections/view_catch_up.dart:642
 - event_sourcing/lib/src/projections/view_catch_up.dart:768
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1415
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1421
 
 Tests:
 
@@ -7387,7 +7420,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1415
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1421
 
 Tests:
 
@@ -7398,7 +7431,7 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/projections/view_catch_up.dart:38
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1415
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1421
 
 Tests:
 
@@ -7411,7 +7444,7 @@ Code:
 - event_sourcing/lib/src/projections/rebuild.dart:19
 - event_sourcing/lib/src/projections/view_catch_up.dart:42
 - event_sourcing/lib/src/projections/view_catch_up.dart:453
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1415
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1421
 
 Tests:
 
@@ -7426,7 +7459,7 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/projections/rebuild.dart:11
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1415
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1421
 
 Tests:
 
@@ -7441,7 +7474,7 @@ Code:
 - event_sourcing/lib/src/permissions/wait_for_current_views.dart:12
 - event_sourcing/lib/src/projections/rebuild.dart:15
 - event_sourcing/lib/src/projections/view_read.dart:142
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1415
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1421
 
 Tests:
 
@@ -7461,7 +7494,7 @@ Code:
 - event_sourcing/lib/src/projections/view_catch_up.dart:108
 - event_sourcing/lib/src/projections/view_catch_up.dart:400
 - event_sourcing/lib/src/projections/view_catch_up.dart:643
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1415
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1421
 
 Tests:
 
@@ -7474,7 +7507,7 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/projections/view_catch_up.dart:112
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1415
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1421
 
 Tests:
 
@@ -7486,7 +7519,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1415
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1421
 
 Tests:
 
@@ -7503,7 +7536,7 @@ Code:
 - event_sourcing/lib/src/projections/view_catch_up.dart:592
 - event_sourcing/lib/src/projections/view_catch_up.dart:665
 - event_sourcing/lib/src/projections/view_catch_up.dart:676
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1415
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1421
 
 Tests:
 
@@ -7535,7 +7568,7 @@ Code:
 - event_sourcing/lib/src/actions/action_submission.dart:1
 - event_sourcing/lib/src/actions/bootstrap_audited_actions.dart:1
 - event_sourcing/lib/src/actions/principal.dart:1
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1866
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1872
 - event_sourcing/lib/src/storage/sembast_backend.dart:2610
 - event_sourcing/lib/src/storage/storage_backend.dart:433
 
@@ -7579,7 +7612,7 @@ Code:
 - event_sourcing/lib/src/actions/permission.dart:1
 - event_sourcing/lib/src/permissions/fail_safe_authorization_policy.dart:1
 - event_sourcing/lib/src/permissions/table_backed_authorization_policy.dart:15
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1866
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1872
 - event_sourcing/lib/src/storage/sembast_backend.dart:2610
 - event_sourcing/lib/src/storage/storage_backend.dart:433
 
@@ -7610,7 +7643,7 @@ Code:
 - event_sourcing/lib/src/actions/dispatch_result.dart:3
 - event_sourcing/lib/src/actions/execution_result.dart:3
 - event_sourcing/lib/src/actions/principal.dart:3
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1866
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1872
 - event_sourcing/lib/src/storage/sembast_backend.dart:2610
 - event_sourcing/lib/src/storage/storage_backend.dart:433
 
@@ -7662,7 +7695,7 @@ Code:
 - event_sourcing/lib/src/actions/idempotency.dart:1
 - event_sourcing/lib/src/actions/idempotency_errors.dart:1
 - event_sourcing/lib/src/actions/idempotency_store.dart:1
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1866
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1872
 - event_sourcing/lib/src/storage/postgres/postgres_idempotency_store.dart:1
 - event_sourcing/lib/src/storage/postgres/postgres_idempotency_store.dart:177
 - event_sourcing/lib/src/storage/postgres/postgres_idempotency_store.dart:193
@@ -7730,7 +7763,7 @@ Code:
 - event_sourcing/lib/src/actions/dispatch_result.dart:7
 - event_sourcing/lib/src/actions/idempotency.dart:3
 - event_sourcing/lib/src/actions/idempotency_store.dart:3
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1866
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1872
 - event_sourcing/lib/src/storage/postgres/postgres_idempotency_store.dart:128
 - event_sourcing/lib/src/storage/postgres/postgres_idempotency_store.dart:65
 - event_sourcing/lib/src/storage/sembast_backend.dart:2610
@@ -7760,7 +7793,7 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/actions/action_dispatcher.dart:13
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1866
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1872
 - event_sourcing/lib/src/storage/sembast_backend.dart:2610
 - event_sourcing/lib/src/storage/storage_backend.dart:433
 
@@ -7917,12 +7950,12 @@ Code:
 - event_sourcing/lib/src/destinations/destination_registry.dart:1
 - event_sourcing/lib/src/destinations/destination_schedule.dart:1
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:22
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2222
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2417
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2472
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2545
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2570
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2631
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2228
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2423
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2478
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2551
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2576
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2637
 
 Tests:
 
@@ -7940,12 +7973,12 @@ Code:
 - event_sourcing/lib/src/destinations/destination.dart:1
 - event_sourcing/lib/src/destinations/subscription_filter.dart:1
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:22
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2222
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2417
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2472
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2545
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2570
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2631
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2228
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2423
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2478
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2551
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2576
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2637
 - event_sourcing/lib/src/sync/fill_batch.dart:1
 - event_sourcing/lib/src/sync/historical_replay.dart:1
 
@@ -7980,12 +8013,12 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:22
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2222
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2417
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2472
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2545
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2570
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2631
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2228
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2423
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2478
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2551
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2576
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2637
 - event_sourcing/lib/src/sync/drain.dart:1
 - event_sourcing/lib/src/sync/fill_batch.dart:5
 - event_sourcing/lib/src/sync/historical_replay.dart:5
@@ -8028,12 +8061,12 @@ Code:
 
 - event_sourcing/lib/src/destinations/destination_registry.dart:1
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:22
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2222
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2417
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2472
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2545
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2570
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2631
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2228
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2423
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2478
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2551
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2576
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2637
 - event_sourcing/lib/src/sync/drain.dart:5
 - event_sourcing/lib/src/sync/fill_batch.dart:9
 
@@ -8055,12 +8088,12 @@ Code:
 - event_sourcing/lib/src/destinations/destination.dart:1
 - event_sourcing/lib/src/destinations/wire_payload.dart:1
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:22
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2222
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2417
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2472
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2545
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2570
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2631
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2228
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2423
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2478
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2551
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2576
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2637
 - event_sourcing/lib/src/sync/drain.dart:8
 - event_sourcing/lib/src/sync/sync_cycle.dart:5
 
@@ -8078,12 +8111,12 @@ Code:
 
 - event_sourcing/lib/src/destinations/destination_registry.dart:1
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:22
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2222
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2417
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2472
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2545
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2570
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2631
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2228
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2423
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2478
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2551
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2576
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2637
 - event_sourcing/lib/src/sync/sync_cycle.dart:8
 
 Tests:
@@ -8100,12 +8133,12 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:22
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2222
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2417
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2472
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2545
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2570
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2631
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2228
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2423
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2478
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2551
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2576
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2637
 - event_sourcing/lib/src/sync/drain.dart:11
 
 Tests:
@@ -8123,12 +8156,12 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:22
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2222
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2417
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2472
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2545
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2570
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2631
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2228
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2423
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2478
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2551
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2576
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2637
 - event_sourcing/lib/src/sync/drain.dart:15
 
 Tests:
@@ -8140,12 +8173,12 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:22
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2222
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2417
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2472
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2545
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2570
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2631
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2228
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2423
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2478
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2551
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2576
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2637
 - event_sourcing/lib/src/sync/drain.dart:19
 
 Tests:
@@ -8157,12 +8190,12 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:22
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2222
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2417
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2472
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2545
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2570
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2631
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2228
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2423
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2478
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2551
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2576
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2637
 - event_sourcing/lib/src/sync/drain.dart:23
 
 Tests:
@@ -8192,12 +8225,12 @@ Code:
 - event_sourcing/lib/src/event_store.dart:488
 - event_sourcing/lib/src/security/security_context_store.dart:42
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:22
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2222
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2417
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2472
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2545
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2570
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2631
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2228
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2423
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2478
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2551
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2576
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2637
 - event_sourcing/lib/src/storage/storage_backend.dart:80
 - event_sourcing/lib/src/sync/clock.dart:1
 
@@ -8217,12 +8250,12 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:22
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2222
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2417
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2472
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2545
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2570
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2631
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2228
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2423
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2478
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2551
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2576
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2637
 - event_sourcing/lib/src/storage/sembast_backend.dart:865
 - event_sourcing/lib/src/storage/sembast_backend.dart:913
 - event_sourcing/lib/src/storage/storage_backend.dart:1056
@@ -8243,12 +8276,12 @@ Code:
 
 - event_sourcing/lib/src/destinations/destination_registry.dart:6
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:22
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2222
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2417
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2472
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2545
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2570
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2631
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2228
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2423
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2478
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2551
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2576
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2637
 
 Tests:
 
@@ -8278,12 +8311,12 @@ Code:
 
 - event_sourcing/lib/src/destinations/destination_registry.dart:6
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:22
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2222
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2417
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2472
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2545
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2570
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2631
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2228
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2423
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2478
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2551
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2576
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2637
 
 Tests:
 
@@ -8306,12 +8339,12 @@ Code:
 
 - event_sourcing/lib/src/destinations/destination_registry.dart:6
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:22
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2222
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2417
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2472
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2545
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2570
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2631
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2228
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2423
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2478
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2551
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2576
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2637
 
 Tests:
 
@@ -8354,12 +8387,12 @@ Code:
 
 - event_sourcing/lib/src/destinations/destination_registry.dart:20
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:22
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2222
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2417
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2472
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2545
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2570
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2631
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2228
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2423
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2478
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2551
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2576
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2637
 - event_sourcing/lib/src/sync/drain.dart:35
 
 Tests:
@@ -8395,12 +8428,12 @@ Code:
 - event_sourcing/lib/src/destinations/destination_registry.dart:20
 - event_sourcing/lib/src/destinations/wedge_cause.dart:1
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:22
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2222
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2417
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2472
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2545
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2570
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2631
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2228
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2423
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2478
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2551
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2576
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2637
 - event_sourcing/lib/src/sync/drain.dart:35
 - event_sourcing/lib/src/sync/drain.dart:376
 
@@ -8433,12 +8466,12 @@ Code:
 
 - event_sourcing/lib/src/destinations/destination_registry.dart:20
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:22
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2222
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2417
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2472
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2545
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2570
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2631
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2228
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2423
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2478
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2551
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2576
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2637
 
 Tests:
 
@@ -8455,12 +8488,12 @@ Code:
 
 - event_sourcing/lib/src/destinations/default_destination_wedges_spec.dart:1
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:22
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2222
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2417
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2472
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2545
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2570
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2631
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2228
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2423
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2478
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2551
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2576
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2637
 
 Tests:
 
@@ -8496,12 +8529,12 @@ Code:
 - event_sourcing/lib/src/destinations/destination_registry.dart:698
 - event_sourcing/lib/src/destinations/destination_registry.dart:935
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:22
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2222
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2417
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2472
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2545
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2570
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2631
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2228
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2423
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2478
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2551
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2576
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2637
 
 Tests:
 
@@ -8522,12 +8555,12 @@ Code:
 
 - event_sourcing/lib/src/destinations/destination_registry.dart:30
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:22
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2222
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2417
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2472
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2545
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2570
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2631
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2228
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2423
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2478
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2551
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2576
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2637
 - event_sourcing/lib/src/sync/drain.dart:45
 
 Tests:
@@ -8564,12 +8597,12 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:22
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2222
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2417
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2472
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2545
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2570
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2631
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2228
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2423
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2478
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2551
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2576
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2637
 - event_sourcing/lib/src/sync/sync_cycle.dart:26
 
 Tests:
@@ -8602,12 +8635,12 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:22
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2222
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2417
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2472
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2545
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2570
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2631
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2228
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2423
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2478
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2551
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2576
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2637
 - event_sourcing/lib/src/sync/drain.dart:802
 
 Tests:
@@ -8623,12 +8656,12 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:22
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2222
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2417
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2472
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2545
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2570
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2631
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2228
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2423
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2478
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2551
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2576
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2637
 
 Tests:
 
@@ -8639,12 +8672,12 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:22
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2222
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2417
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2472
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2545
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2570
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2631
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2228
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2423
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2478
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2551
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2576
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2637
 
 Tests:
 
@@ -8673,9 +8706,9 @@ Code:
 - event_sourcing/lib/src/security/system_entry_types.dart:1
 - event_sourcing/lib/src/storage/append_result.dart:4
 - event_sourcing/lib/src/storage/initiator.dart:6
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1248
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1614
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:846
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1254
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1620
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:852
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:9
 - event_sourcing/lib/src/storage/sembast_backend.dart:475
 - event_sourcing/lib/src/storage/sembast_backend.dart:66
@@ -8688,6 +8721,7 @@ Tests:
 - event_sourcing/example_action_permissions/test/scenarios/permission_projection_stories_test.dart:242 B11: required-idempotency provisioning is replay-safe, projection-idempotent, and refuses a missing key -- passed
 - event_sourcing/example_action_permissions/test/scenarios/permission_projection_stories_test.dart:293 B12: every dispatch outcome — allowed and denied — is recorded in the log and attributed to its initiator -- passed
 - event_sourcing/example_action_permissions/test/scenarios/permission_projection_stories_test.dart:57 B9: provisioning a new coordinator brings authorization alive from events, and the scope perimeter holds -- passed
+- event_sourcing/test/storage/postgres/postgres_runtime_role_test.dart:715 runtime role the runtime role cannot change or remove a stored event -- passed
 - event_sourcing/test/storage/storage_backend_conformance.dart:224 StorageBackend conformance (postgres) transaction successful body commits all writes -- passed, skipped
 - event_sourcing/test/storage/storage_backend_conformance.dart:224 StorageBackend conformance (postgres, runtime role) transaction successful body commits all writes -- passed
 - event_sourcing/test/storage/storage_backend_conformance.dart:224 StorageBackend conformance (sembast (memory)) transaction successful body commits all writes -- passed
@@ -8707,9 +8741,9 @@ Code:
 
 - event_sourcing/lib/src/event_store.dart:4
 - event_sourcing/lib/src/storage/append_result.dart:7
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1251
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1643
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1665
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1257
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1649
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1671
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:27
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:9
 - event_sourcing/lib/src/storage/sembast_backend.dart:477
@@ -8735,8 +8769,8 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/event_store.dart:479
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1441
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1460
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1447
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1466
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:9
 - event_sourcing/lib/src/storage/sembast_backend.dart:568
 - event_sourcing/lib/src/storage/source.dart:19
@@ -8757,11 +8791,11 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/event_store.dart:7
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1479
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1517
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1682
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1698
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:3510
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1485
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1523
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1688
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1704
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:3516
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:9
 - event_sourcing/lib/src/storage/sembast_backend.dart:607
 - event_sourcing/lib/src/storage/sembast_backend.dart:767
@@ -8792,8 +8826,8 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:150
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:851
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:895
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:857
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:901
 - event_sourcing/lib/src/storage/sembast_backend.dart:367
 
 Tests:
@@ -9856,12 +9890,12 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/projections/integrity_marks.dart:6
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1916
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1947
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2000
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:3915
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:3927
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:3952
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1922
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1953
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2006
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:3921
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:3933
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:3958
 - event_sourcing/lib/src/storage/sembast_backend.dart:1200
 - event_sourcing/lib/src/storage/sembast_backend.dart:1219
 - event_sourcing/lib/src/storage/sembast_backend.dart:1367
@@ -10093,7 +10127,7 @@ Code:
 - event_sourcing/lib/src/permissions/table_backed_authorization_policy.dart:6
 - event_sourcing/lib/src/permissions/user_role_scopes_spec.dart:3
 - event_sourcing/lib/src/permissions/yaml_seed_loader.dart:2
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1865
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1871
 - event_sourcing/lib/src/storage/sembast_backend.dart:2607
 - event_sourcing/lib/src/storage/storage_backend.dart:427
 
@@ -10135,7 +10169,7 @@ Code:
 - event_sourcing/lib/src/permissions/scope_class_registry.dart:1
 - event_sourcing/lib/src/permissions/table_backed_authorization_policy.dart:2
 - event_sourcing/lib/src/permissions/user_role_scopes_spec.dart:7
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1865
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1871
 - event_sourcing/lib/src/storage/sembast_backend.dart:2607
 - event_sourcing/lib/src/storage/storage_backend.dart:427
 - reaction/lib/src/server/permission_route.dart:5
@@ -10172,7 +10206,7 @@ Code:
 - event_sourcing/lib/src/permissions/scope_assignment.dart:1
 - event_sourcing/lib/src/permissions/scope_class_registry.dart:1
 - event_sourcing/lib/src/permissions/user_role_scopes_spec.dart:11
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1865
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1871
 - event_sourcing/lib/src/storage/sembast_backend.dart:2607
 - event_sourcing/lib/src/storage/storage_backend.dart:427
 
@@ -10194,7 +10228,7 @@ Code:
 - event_sourcing/lib/src/permissions/scope_assignment.dart:1
 - event_sourcing/lib/src/permissions/scope_class_registry.dart:1
 - event_sourcing/lib/src/permissions/table_backed_authorization_policy.dart:9
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1865
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1871
 - event_sourcing/lib/src/storage/sembast_backend.dart:2607
 - event_sourcing/lib/src/storage/storage_backend.dart:427
 
@@ -11320,7 +11354,7 @@ Code:
 - event_sourcing/lib/src/security/sembast_security_context_store.dart:11
 - event_sourcing/lib/src/security/system_entry_types.dart:8
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:31
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:4034
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:4040
 
 Tests:
 
@@ -11336,7 +11370,7 @@ Code:
 - event_sourcing/lib/src/security/security_retention_policy.dart:4
 - event_sourcing/lib/src/security/sembast_security_context_store.dart:11
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:31
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:4034
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:4040
 
 Tests:
 
@@ -11352,7 +11386,7 @@ Code:
 - event_sourcing/lib/src/security/security_retention_policy.dart:4
 - event_sourcing/lib/src/security/sembast_security_context_store.dart:11
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:31
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:4034
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:4040
 
 Tests:
 
@@ -11368,7 +11402,7 @@ Code:
 - event_sourcing/lib/src/security/security_retention_policy.dart:4
 - event_sourcing/lib/src/security/sembast_security_context_store.dart:11
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:31
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:4034
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:4040
 
 Tests:
 
@@ -11442,7 +11476,7 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:344
-- event_sourcing/lib/src/storage/postgres/postgres_library_roles.dart:276
+- event_sourcing/lib/src/storage/postgres/postgres_library_roles.dart:334
 
 Tests:
 
