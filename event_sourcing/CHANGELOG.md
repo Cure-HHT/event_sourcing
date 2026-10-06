@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.6.0
+
+Data: data format 3.0, unchanged. A database written by 0.5.1 opens.
+
+This release moves the Postgres backend to a public library of its own, so
+consumers that use it change an import.
+
+### Postgres
+
+- The Postgres backend has a public library of its own,
+  `package:event_sourcing/postgres.dart`, which exports `PostgresStorage`,
+  `PostgresBackend`, `SslMode`, `PostgresSecurityContextStore`,
+  `PostgresIdempotencyStore`, the Postgres exceptions,
+  `postgresRuntimeRoleGrants` and the schema versions.
+  `package:event_sourcing/event_sourcing.dart` exports none of them and
+  never reaches the Postgres driver, so a web build that imports only the
+  main library never compiles it. Code that uses the backend imports
+  `package:event_sourcing/postgres.dart` beside the main library.
+- The Postgres driver's floor is 3.5.19 (`postgres: ">=3.5.19 <3.6.0"`),
+  for its fixes to a statement after a failed one returning no rows, to a
+  timeout's cancel interrupting the next statement, and to the decoding of
+  an empty array.
+
 ## 0.5.1
 
 Data: data format 3.0, unchanged. A database written by 0.5.0 opens.

@@ -3,6 +3,7 @@
 // citation.
 
 import 'package:event_sourcing/event_sourcing.dart';
+import 'package:event_sourcing/postgres.dart';
 import 'package:event_sourcing/src/security/security_context_store.dart';
 
 import '../../test_support/queue_registry_conformance.dart';

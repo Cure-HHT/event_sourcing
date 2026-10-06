@@ -12,6 +12,7 @@ import 'dart:convert';
 import 'dart:math' show Random;
 
 import 'package:event_sourcing/event_sourcing.dart';
+import 'package:event_sourcing/postgres.dart';
 import 'package:event_sourcing/src/permissions/wait_for_current_views.dart'
     show waitForViewsCurrent;
 import 'package:event_sourcing/src/projections/view_fingerprint.dart'

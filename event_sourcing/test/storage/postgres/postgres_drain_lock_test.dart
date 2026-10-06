@@ -17,6 +17,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:event_sourcing/event_sourcing.dart';
+import 'package:event_sourcing/postgres.dart';
 import 'package:event_sourcing/src/logging.dart';
 import 'package:event_sourcing/src/storage/postgres/postgres_backend.dart'
     show postgresDrainKey;

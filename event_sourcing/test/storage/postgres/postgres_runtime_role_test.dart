@@ -25,6 +25,7 @@ library;
 import 'dart:async';
 
 import 'package:event_sourcing/event_sourcing.dart';
+import 'package:event_sourcing/postgres.dart';
 import 'package:event_sourcing/src/logging.dart';
 import 'package:event_sourcing/src/security/security_context_store.dart';
 import 'package:event_sourcing/src/storage/postgres/postgres_schema.dart'

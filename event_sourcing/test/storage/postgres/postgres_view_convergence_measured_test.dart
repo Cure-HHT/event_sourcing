@@ -13,6 +13,7 @@ library;
 import 'dart:async';
 
 import 'package:event_sourcing/event_sourcing.dart';
+import 'package:event_sourcing/postgres.dart';
 import 'package:event_sourcing/src/event_store.dart' show PublishCollector;
 import 'package:test/test.dart';
 

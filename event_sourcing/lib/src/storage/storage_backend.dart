@@ -1,3 +1,4 @@
+import 'package:event_sourcing/src/actions/idempotency_store.dart';
 import 'package:event_sourcing/src/destinations/batch_envelope_metadata.dart';
 import 'package:event_sourcing/src/destinations/destination_schedule.dart';
 import 'package:event_sourcing/src/destinations/wire_payload.dart';
@@ -1745,6 +1746,17 @@ abstract class StorageBackend {
     int limit = 50,
     String? cursor,
   });
+
+  /// The idempotency store over this backend, whose outcomes persist in the
+  /// backend's storage: the event store over the backend hands it to an
+  /// action dispatcher as its `idempotencyStore`. Null for a backend that
+  /// keeps no idempotency outcomes; the application then supplies an
+  /// idempotency store of its own.
+  // Implements: EVS-DEV-storage-capability/I
+  // the idempotency store over a backend is built by the library, through
+  //   the backend, never by a public constructor.
+  @internal
+  IdempotencyStore? idempotencyStoreOverThis() => null;
 
   // -------- Lifecycle --------
 

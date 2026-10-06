@@ -51,8 +51,12 @@ J. In a build with assertions disabled, no test seam and no test-only entry poin
 
 **Why name an application-supplied backend (assertion G).** The storage trust boundary admits backends the application implements. Such a backend is the trusted persistence layer of its deployment and the application holds it by construction, so the barrier cannot cover it. An entry point that names it makes that visible where the application composes the library.
 
+**The companion Postgres library (assertion G).** The library ships its Postgres backend in a companion public library, outside the main library. That library opens the backend through one internal extension point: the only storage description that a library outside the main library can extend. The analyzer reports every other use of that extension point (`invalid_use_of_internal_member`). Code that imports the library's private source files to reach it is outside the public API this barrier governs.
+
 ## Changelog
 
+- 2026-10-05 | 35fe949c | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: sync changelog hash
+- 2026-10-05 | - | - | Michael Lewis (<michael@anspar.org>) | Rationale of G: the companion Postgres library opens its backend through one internal extension point, the only storage description a library outside the main library can extend, and the analyzer reports every other use of it; code that imports the library's private source files is outside the public API the barrier governs
 - 2026-09-25 | 35fe949c | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-25 | 60a7fbbf | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-26 | - | - | Michael Lewis (<michael@anspar.org>) | B: no reconciliation operation; the chain verification operation, which appends the security findings its walk records, joins the closed list of public operations that may write the library's state. Rationale of B and C to match. Code and tests cite B (listed in the integration report)

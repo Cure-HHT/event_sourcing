@@ -8,6 +8,7 @@ library;
 import 'dart:isolate';
 
 import 'package:event_sourcing/event_sourcing.dart';
+import 'package:event_sourcing/postgres.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:action_permissions_demo/server/bootstrap.dart';

@@ -29,7 +29,7 @@
 
 import 'package:event_sourcing/src/security/system_entry_types.dart'
     show kSecurityFindingEntryType;
-import 'package:event_sourcing/src/storage/postgres/postgres_migration.dart';
+import 'package:event_sourcing/src/storage/postgres_migration_step.dart';
 import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:meta/meta.dart' show internal;
 

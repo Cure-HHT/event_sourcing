@@ -17,10 +17,10 @@ library;
 
 import 'dart:io' show pid;
 
-import 'package:event_sourcing/event_sourcing.dart';
-import 'package:event_sourcing/src/storage/postgres/postgres_migration.dart';
+import 'package:event_sourcing/postgres.dart';
 import 'package:event_sourcing/src/storage/postgres/postgres_schema.dart'
     show postgresMigrations;
+import 'package:event_sourcing/src/storage/postgres_migration_step.dart';
 import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:postgres/postgres.dart';
 import 'package:test/test.dart';

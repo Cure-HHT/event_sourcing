@@ -15,6 +15,7 @@
 library;
 
 import 'package:event_sourcing/event_sourcing.dart';
+import 'package:event_sourcing/postgres.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../test_support/queue_test_support.dart' show cycleOnce;

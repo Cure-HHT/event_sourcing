@@ -6,6 +6,7 @@ library;
 import 'dart:async';
 
 import 'package:event_sourcing/event_sourcing.dart';
+import 'package:event_sourcing/postgres.dart';
 import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:postgres/postgres.dart';
 import 'package:test/test.dart';

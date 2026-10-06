@@ -11,8 +11,10 @@
 /// ## Key types
 ///
 /// - `EventStore` — open, append, subscribe, close.
-/// - `StorageDescription` — sealed: `SembastStorage`, `PostgresStorage`
-///   (storage the library opens and closes) or `ApplicationSuppliedStorage`.
+/// - `StorageDescription` — sealed: `SembastStorage` or `PostgresStorage`
+///   (storage the library opens and closes), or `ApplicationSuppliedStorage`.
+///   `PostgresStorage` and the rest of the Postgres backend are exported by
+///   `package:event_sourcing/postgres.dart`.
 /// - `EventDraft` — input value returned by `Action.execute`.
 /// - `StoredEvent` — immutable event record with hash-chain fields.
 /// - `ProjectionRegistry` — declarative view specs registered before open.
@@ -419,10 +421,11 @@ export 'src/security/system_entry_types.dart'
         kReservedSystemEntryTypeIds,
         kSystemEntryTypes;
 
-// Storage layer — StorageBackend contract, the SembastBackend +
-// PostgresBackend concrete implementations, and the value types that
-// flow through the contract. The Postgres migration list is
-// library-private: only `PostgresBackend.provision` applies it.
+// Storage layer — StorageBackend contract, the SembastBackend concrete
+// implementation, and the value types that flow through the contract. The
+// PostgresBackend implementation is exported by
+// `package:event_sourcing/postgres.dart`, so that a build importing only this
+// library never compiles the Postgres driver.
 export 'src/storage/append_result.dart' show AppendResult;
 export 'src/storage/attempt_result.dart' show AttemptResult;
 export 'src/storage/boot_check.dart' show BootCheck;
@@ -457,7 +460,6 @@ export 'src/storage/generation.dart'
         IncompatibleGenerationException;
 export 'src/storage/initiator.dart'
     show Initiator, UserInitiator, AutomationInitiator, AnonymousInitiator;
-export 'src/storage/postgres/postgres.dart';
 export 'src/storage/queue_records.dart'
     show
         HaltRequest,
@@ -484,7 +486,6 @@ export 'src/storage/storage_backend.dart' show StorageBackend;
 export 'src/storage/storage_description.dart'
     show
         ApplicationSuppliedStorage,
-        PostgresStorage,
         SembastStorage,
         StorageDescription,
         deleteSembastDatabase;

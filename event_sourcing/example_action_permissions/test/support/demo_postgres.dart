@@ -6,7 +6,7 @@
 import 'dart:io' show Platform;
 
 import 'package:action_permissions_demo/server/postgres_setup.dart';
-import 'package:event_sourcing/event_sourcing.dart';
+import 'package:event_sourcing/postgres.dart';
 import 'package:postgres/postgres.dart';
 
 /// The demo database over PG_TEST_URL, whose role must be able to create

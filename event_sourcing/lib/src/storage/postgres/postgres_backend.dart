@@ -70,11 +70,13 @@ import 'package:event_sourcing/src/storage/postgres/postgres_grants.dart'
     show postgresRuntimeRoleGrants;
 import 'package:event_sourcing/src/storage/postgres/postgres_library_roles.dart';
 import 'package:event_sourcing/src/storage/postgres/postgres_lock_session.dart';
-import 'package:event_sourcing/src/storage/postgres/postgres_migration.dart';
 import 'package:event_sourcing/src/storage/postgres/postgres_schema.dart';
 import 'package:event_sourcing/src/storage/postgres/postgres_search_path.dart';
+import 'package:event_sourcing/src/storage/postgres_migration_step.dart';
 import 'package:event_sourcing/src/storage/queue_records.dart';
 import 'package:event_sourcing/src/storage/storage_backend.dart';
+import 'package:event_sourcing/src/storage/storage_exception.dart'
+    show ContentionRetryExhausted;
 import 'package:event_sourcing/src/storage/stored_event.dart';
 import 'package:event_sourcing/src/storage/transaction.dart';
 import 'package:event_sourcing/src/storage/view_copy.dart';
@@ -152,7 +154,7 @@ class PostgresBackendClosedException implements Exception {
 //   transient conflict is surfaced as a distinguishable, typed (and
 //   transient-classified) failure rather than a bare driver exception, so
 //   callers can re-drive it without coupling to the storage driver's taxonomy.
-class TransactionRetryExhaustedException implements Exception {
+class TransactionRetryExhaustedException implements ContentionRetryExhausted {
   const TransactionRetryExhaustedException({
     required this.attempts,
     required this.lastError,
@@ -708,6 +710,7 @@ class PostgresBackend extends StorageBackend {
   // the idempotency store over a backend is built by the library, through
   //   the backend, never by a public constructor.
   @internal
+  @override
   IdempotencyStore idempotencyStoreOverThis() =>
       PostgresIdempotencyStore._forBackend(this);
 

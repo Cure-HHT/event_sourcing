@@ -9,6 +9,7 @@
 // passes; the reported rate is the median of the three.
 
 import 'package:event_sourcing/event_sourcing.dart';
+import 'package:event_sourcing/postgres.dart';
 import 'package:event_sourcing/src/event_store.dart' show PublishCollector;
 
 import '../../test_support/deliveries.dart' show ingestEventForTest;

@@ -12,6 +12,7 @@ import 'package:action_permissions_demo/server/bootstrap.dart';
 import 'package:action_permissions_demo/server/log_destination.dart';
 import 'package:action_permissions_demo/server/postgres_setup.dart';
 import 'package:event_sourcing/event_sourcing.dart';
+import 'package:event_sourcing/postgres.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'support/demo_bootstrap.dart';
