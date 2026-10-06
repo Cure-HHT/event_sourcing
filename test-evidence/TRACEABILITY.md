@@ -5844,6 +5844,8 @@ Tests:
 
 - event_sourcing/test/storage/postgres/postgres_pool_statement_bound_test.dart:121 a pool connection silent after a statement result -- passed
 - event_sourcing/test/storage/postgres/postgres_pool_statement_bound_test.dart:167 a statement slower than the statement timeout -- passed
+- event_sourcing/test/storage/postgres/postgres_pool_statement_bound_test.dart:40 the statement timeout -0:00:01.000000 is refused -- passed, passed
+- event_sourcing/test/storage/postgres/postgres_pool_statement_bound_test.dart:40 the statement timeout 0:00:00.000000 is refused -- passed, passed
 
 **V**
 

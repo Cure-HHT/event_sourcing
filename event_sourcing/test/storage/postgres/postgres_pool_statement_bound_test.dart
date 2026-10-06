@@ -30,13 +30,13 @@ const _schedulingSlack = Duration(milliseconds: 500);
 
 void main() {
   group('the statement timeout', () {
-    // Verifies: EVS-DEV-postgres-backend/U
-    // a statement timeout that is not positive is refused before any
-    //   connection is opened.
     for (final timeout in <Duration>[
       Duration.zero,
       const Duration(seconds: -1),
     ]) {
+      // Verifies: EVS-DEV-postgres-backend/U
+      // a statement timeout that is not positive is refused before any
+      //   connection is opened.
       test('$timeout is refused', () async {
         await expectLater(
           PostgresBackend.open(
