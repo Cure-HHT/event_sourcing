@@ -3,10 +3,17 @@
 #
 # Every time a pull-request workflow finishes (and when a workflow that
 # re-runs on `edited` starts), one short job reads every check run on the
-# PR head commit once and publishes the result as a check run named
-# "Validation Summary" on that commit, through the Checks API. The logic
-# and its semantics live in the shared action
+# PR head commit once and publishes the result as a COMMIT STATUS with
+# context "Validation Summary" on that commit. The logic and its semantics
+# live in the shared action
 # Cure-HHT/hht_workflows/.github/actions/validation-summary-gate.
+#
+# Why a commit status: GitHub counts checks created by workflow jobs toward
+# a ruleset only for runs triggered by push, pull_request,
+# pull_request_review, pull_request_target, deployment or
+# deployment_status; workflow_run is not one of them. A required context
+# is satisfied by a commit status too -- and when a check run and a commit
+# status share the name, BOTH must pass.
 #
 # Why each part is shaped the way it is:
 # - workflow_run always runs THIS FILE AS IT IS ON THE DEFAULT BRANCH, with
@@ -16,9 +23,13 @@
 #   but this one, so a newly added PR workflow is covered without editing
 #   anything here (a list of names would silently miss it). Runs that are
 #   not for a pull request are skipped by the job's `if:` at no cost.
+#   Commit statuses fire no workflow_run or check_run event, so the gate's
+#   own status cannot re-trigger it.
 # - check_run fires for check runs posted by GitHub Apps other than GitHub
-#   Actions (GitHub does not fire it for Actions-created suites, so the
-#   gate's own check run cannot re-trigger it).
+#   Actions. GitHub does not fire it when the suite's head SHA is
+#   associated with GitHub Actions, which may include every PR commit; if
+#   the gate stays pending after another app's check finished, re-run the
+#   latest Validation Summary Gate run.
 # - `requested` is acted on only for the workflows listed in the job's `if:`:
 #   those that re-run on `edited` without a new commit. Their start turns
 #   the gate back to in-progress at once, as the polling gate did by
@@ -32,6 +43,14 @@
 #   enter the group and can never displace a real evaluation.
 #
 # Edited-rerun workflows here: Validate PR Title.
+#
+# Transition: while validation-summary.yml (the polling job) also exists, its "Validation
+# Summary" check run AND this commit status must both pass, so every PR in
+# that phase is a live test of this gate. To back out if the gate
+# misbehaves, disable this workflow (Actions > Validation Summary Gate >
+# Disable workflow) and push: new commits then carry only the polling
+# check. Branch rulesets have no bypass actors (HHT-OPS-cicd-app-operations/D),
+# so an override merge would need a ruleset change in hht_admin terraform.
 
 name: Validation Summary Gate
 
@@ -43,7 +62,8 @@ on:
     types: [completed]
 
 permissions:
-  checks: write          # create/update the "Validation Summary" check run
+  statuses: write        # the "Validation Summary" commit status
+  checks: read           # check runs on the head commit
   pull-requests: write   # the failure comment on the pull request
   actions: read          # workflow runs and job steps on the head commit
   contents: read
@@ -66,4 +86,4 @@ jobs:
       cancel-in-progress: false
     steps:
       # Implements: HHT-OPS-composite-action-library/A+B
-      - uses: Cure-HHT/hht_workflows/.github/actions/validation-summary-gate@8ba788989c81c820526b7d4160603f4bbb837cf6  # unreleased; advance to the hht_workflows merge commit
+      - uses: Cure-HHT/hht_workflows/.github/actions/validation-summary-gate@65dc7501601d045dc04d9e0f1b1199e639fd4a3f  # unreleased; advance to the hht_workflows merge commit
