@@ -84,6 +84,7 @@ jobs:
     outputs:
       flutter_version: ${{ steps.read.outputs.flutter_version }}
       postgres_image: ${{ steps.read.outputs.postgres_image }}
+      pub_cache_week: ${{ steps.read.outputs.pub_cache_week }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -98,6 +99,11 @@ jobs:
           {
             echo "flutter_version=$FLUTTER_VERSION"
             echo "postgres_image=$POSTGRES_IMAGE"
+            # The repo commits no pubspec.lock, so the pubspecs alone never
+            # change the pub cache key and an exact hit is never re-saved.
+            # An ISO-week bucket lets the cache pick up newly resolved
+            # versions once a week; resolution itself is online either way.
+            echo "pub_cache_week=$(date -u +%G-W%V)"
           } >>"$GITHUB_OUTPUT"
 
   unit:
@@ -144,7 +150,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.pub-cache
-          key: pub-${{ runner.os }}-flutter-${{ needs.pins.outputs.flutter_version }}-unit-${{ matrix.target }}-${{ hashFiles('**/pubspec.yaml') }}
+          key: pub-${{ runner.os }}-flutter-${{ needs.pins.outputs.flutter_version }}-unit-${{ matrix.target }}-${{ needs.pins.outputs.pub_cache_week }}-${{ hashFiles('**/pubspec.yaml') }}
           restore-keys: |
             pub-${{ runner.os }}-flutter-${{ needs.pins.outputs.flutter_version }}-unit-${{ matrix.target }}-
       - uses: actions/setup-python@v5
@@ -207,7 +213,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.pub-cache
-          key: pub-${{ runner.os }}-flutter-${{ needs.pins.outputs.flutter_version }}-browser-${{ hashFiles('**/pubspec.yaml') }}
+          key: pub-${{ runner.os }}-flutter-${{ needs.pins.outputs.flutter_version }}-browser-${{ needs.pins.outputs.pub_cache_week }}-${{ hashFiles('**/pubspec.yaml') }}
           restore-keys: |
             pub-${{ runner.os }}-flutter-${{ needs.pins.outputs.flutter_version }}-browser-
       - uses: actions/setup-python@v5
@@ -253,7 +259,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.pub-cache
-          key: pub-${{ runner.os }}-flutter-${{ needs.pins.outputs.flutter_version }}-desktop-${{ hashFiles('**/pubspec.yaml') }}
+          key: pub-${{ runner.os }}-flutter-${{ needs.pins.outputs.flutter_version }}-desktop-${{ needs.pins.outputs.pub_cache_week }}-${{ hashFiles('**/pubspec.yaml') }}
           restore-keys: |
             pub-${{ runner.os }}-flutter-${{ needs.pins.outputs.flutter_version }}-desktop-
       - uses: actions/setup-python@v5
@@ -338,7 +344,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.pub-cache
-          key: pub-${{ runner.os }}-flutter-${{ needs.pins.outputs.flutter_version }}-postgres-${{ hashFiles('**/pubspec.yaml') }}
+          key: pub-${{ runner.os }}-flutter-${{ needs.pins.outputs.flutter_version }}-postgres-${{ needs.pins.outputs.pub_cache_week }}-${{ hashFiles('**/pubspec.yaml') }}
           restore-keys: |
             pub-${{ runner.os }}-flutter-${{ needs.pins.outputs.flutter_version }}-postgres-
       - uses: actions/setup-python@v5
@@ -429,7 +435,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.pub-cache
-          key: pub-${{ runner.os }}-flutter-${{ needs.pins.outputs.flutter_version }}-throughput-${{ hashFiles('**/pubspec.yaml') }}
+          key: pub-${{ runner.os }}-flutter-${{ needs.pins.outputs.flutter_version }}-throughput-${{ needs.pins.outputs.pub_cache_week }}-${{ hashFiles('**/pubspec.yaml') }}
           restore-keys: |
             pub-${{ runner.os }}-flutter-${{ needs.pins.outputs.flutter_version }}-throughput-
       - uses: actions/setup-python@v5
