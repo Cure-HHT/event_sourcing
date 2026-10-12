@@ -70,6 +70,15 @@ THROUGHPUT_FILE="test/storage/postgres/postgres_throughput_guard_test.dart"
 MIN_SPLIT_SECS=60
 # The file that compares a lock session against a second server.
 OTHER_SERVER_FILE="test/storage/postgres/postgres_generation_guard_test.dart"
+# The Evidence Snapshot's per-test durations, committed with every change: the
+# estimate of a Postgres file wherever no duration of this machine's is
+# recorded, CI included (file_weight). `make evidence` records them on a
+# developer machine; a CI runner takes about TIMINGS_SCALE times as long, plus
+# TIMINGS_OVERHEAD seconds per file to compile it and start the test VM
+# (fitted to the per-file times of the Postgres jobs of CI run 37481482315).
+TIMINGS_FILE="$ROOT/test-evidence/timings.jsonl"
+TIMINGS_SCALE=2
+TIMINGS_OVERHEAD=8
 
 PG_USER=evs
 PG_PASSWORD=evs
@@ -266,7 +275,8 @@ Variables (current value in brackets):
             Reuse this existing server instead of starting containers: the
             Postgres targets then run one after another on it, unsharded. Its
             role must be able to create roles. PG_TEST_URL_OTHER_SERVER, if
-            set, is the second server one file compares against.
+            set, is the second server one file compares against; unset, a
+            throwaway container is started for that file where Docker runs.
             \`evidence\` refuses it.
   PG_TEST_URLS
             Several existing servers (space-separated, e.g. from pg-up), one
@@ -277,7 +287,8 @@ Variables (current value in brackets):
 
 Logs: .check-logs/<run id>/ (one file per target, analyzer and Postgres file).
 Per-file Postgres durations and per-target durations: .check-durations
-(balances the shards and orders the queue).
+(balances the shards and orders the queue). A Postgres file it does not hold
+is estimated from the Evidence Snapshot's timings (test-evidence/), as on CI.
 EOF
 }
 
@@ -459,6 +470,11 @@ require_docker() {
       exit 2
     fi
   fi
+}
+
+# Whether a Docker daemon answers (require_docker exits where none does).
+docker_running() {
+  command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1
 }
 
 # Starts a container with a free host port Docker chooses; prints nothing.
@@ -770,14 +786,101 @@ file_is_timing() {
   grep -q "^@Tags(\['timing'\])" "$1"
 }
 
-# Estimated seconds for a Postgres file: the last recorded duration, else a
-# heuristic (the known long files first, then source size). The heuristic is
-# what CI uses (it keeps no durations), so every job of a PG_PART matrix
-# computes the same plan.
+# Writes "<seconds>\t<path>" into $3 for each path listed in $2 (relative to
+# the package) whose tests the Evidence Snapshot timed under this package's
+# `-<kind>` target ($1): TIMINGS_SCALE times the sum of their durations, plus
+# TIMINGS_OVERHEAD. The snapshot records a test against the file that declares
+# it, which for a shared conformance harness is not the _test.dart file that
+# runs it; a harness's tests count toward the listed files that import it
+# (directly, else through other test files), split evenly among them. Writes
+# nothing for a file the snapshot does not time, and nothing at all when the
+# snapshot is absent or unreadable.
+timed_weights() {
+  local kind="$1" listfile="$2" out="$3"
+  : >"$out"
+  [ -f "$TIMINGS_FILE" ] || return 0
+  # An unreadable snapshot leaves the table empty: every file falls back.
+  if ! python3 - "$TIMINGS_FILE" "$PKG" "$kind" "$listfile" \
+    "$TIMINGS_SCALE" "$TIMINGS_OVERHEAD" >"$out" 2>/dev/null <<'PY'
+import json, os, re, sys
+
+timings, pkg, kind, listfile, scale, overhead = sys.argv[1:7]
+listed = [line.strip() for line in open(listfile) if line.strip()]
+prefix = pkg + "/test/"
+import_re = re.compile(r"""^\s*(?:import|export)\s+['"]([^'":]+)['"]""", re.M)
+
+
+def imports(rel):
+    """The package-relative paths a test file imports by relative URI."""
+    try:
+        with open(rel, encoding="utf-8") as fh:
+            text = fh.read()
+    except OSError:
+        return set()
+    base = os.path.dirname(rel)
+    return {os.path.normpath(os.path.join(base, uri)) for uri in import_re.findall(text)}
+
+
+direct = {f: imports(f) for f in listed}
+reached = {}
+
+
+def reach(f):
+    if f not in reached:
+        seen, todo = set(), list(direct[f])
+        while todo:
+            g = todo.pop()
+            if g not in seen:
+                seen.add(g)
+                todo.extend(imports(g))
+        reached[f] = seen
+    return reached[f]
+
+
+totals = dict.fromkeys(listed, 0.0)
+timed, harness = set(), {}
+with open(timings, encoding="utf-8") as fh:
+    for line in fh:
+        rec = json.loads(line)
+        f, d = rec.get("file", ""), rec.get("duration")
+        if not rec.get("target", "").endswith("-" + kind) or not f.startswith(prefix):
+            continue
+        if not isinstance(d, (int, float)):
+            continue
+        rel = f[len(pkg) + 1:]
+        if rel in totals:
+            totals[rel] += d
+            timed.add(rel)
+        else:
+            harness[rel] = harness.get(rel, 0.0) + d
+for h, d in sorted(harness.items()):
+    owners = [f for f in listed if h in direct[f]] or [f for f in listed if h in reach(f)]
+    for f in owners:
+        totals[f] += d / len(owners)
+        timed.add(f)
+for f in listed:
+    if f in timed:
+        print("%d\t%s" % (int(round(float(scale) * totals[f])) + int(overhead), f))
+PY
+  then
+    : >"$out"
+  fi
+}
+
+# Estimated seconds for a Postgres file ($1, from the repository root). Off CI,
+# the duration .check-durations last recorded for it on this machine. Else its
+# estimate from the Evidence Snapshot's timings, the table $2 that
+# timed_weights wrote. Else a heuristic: the known long files first, then
+# source size, for a file the snapshot does not time yet. CI keeps no
+# durations and every job of a PG_PART matrix reads the same committed
+# snapshot, so every job computes the same plan.
 file_weight() {
-  local key="$1" w=""
+  local key="$1" timed="${2:-}" w=""
   if [ -f "$DURATIONS_FILE" ] && [ -z "${CI:-}" ]; then
     w="$(awk -F'\t' -v k="$key" '$2 == k { v = $1 } END { if (v != "") print v }' "$DURATIONS_FILE")"
+  fi
+  if [ -z "$w" ] && [ -n "$timed" ] && [ -s "$timed" ]; then
+    w="$(awk -F'\t' -v k="${key#"$PKG"/}" '$2 == k { print $1; exit }' "$timed")"
   fi
   if [ -n "$w" ]; then
     echo "$w"
@@ -796,19 +899,22 @@ file_weight() {
 }
 
 # Splits the files listed in $1 across $2 buckets; writes $3/<n>.list
-# ("<path>\t<pieces>\t<piece index>" lines). A file estimated at more than
-# half a bucket's share, and at MIN_SPLIT_SECS or more (each piece compiles
-# the file again), is cut into pieces of whole tests (the test runner's
-# --total-shards and --shard-index), at most one per test and one per bucket.
-# The pieces then go, longest first, onto the least loaded bucket.
+# ("<path>\t<pieces>\t<piece index>" lines); $4 is the target's kind, whose
+# timings in the Evidence Snapshot weigh the files (file_weight). A file
+# estimated at more than half a bucket's share, and at MIN_SPLIT_SECS or more
+# (each piece compiles the file again), is cut into pieces of whole tests (the
+# test runner's --total-shards and --shard-index), at most one per test and
+# one per bucket. The pieces then go, longest first, onto the least loaded
+# bucket.
 plan_buckets() {
-  local listfile="$1" want="$2" dir="$3" i best path w k tests total=0 target
+  local listfile="$1" want="$2" dir="$3" kind="$4" i best path w k tests total=0 target
   local loads=()
   local tab
   tab="$(printf '\t')"
+  timed_weights "$kind" "$listfile" "$dir/timed"
   : >"$dir/weights"
   while IFS= read -r path; do
-    w="$(file_weight "$PKG/$path")"
+    w="$(file_weight "$PKG/$path" "$dir/timed")"
     total=$((total + w))
     printf '%s\t%s\n' "$w" "$path" >>"$dir/weights"
   done <"$listfile"
@@ -919,6 +1025,62 @@ record_durations() {
   mv "$DURATIONS_FILE.tmp.$$" "$DURATIONS_FILE"
 }
 
+# The servers a Postgres target is given, one URL per word: PG_TEST_URLS,
+# else PG_TEST_URL, else nothing (it starts its own containers).
+given_server_urls() {
+  if [ -n "${PG_TEST_URLS:-}" ]; then
+    echo "$PG_TEST_URLS"
+  elif [ -n "${PG_TEST_URL:-}" ]; then
+    echo "$PG_TEST_URL"
+  fi
+}
+
+# The servers a Postgres target of kind $1 shards its slice across: one per
+# given URL, else SHARDS containers (one for the throughput guard).
+plan_server_count() {
+  local urls
+  urls="$(given_server_urls)"
+  if [ -n "$urls" ]; then
+    # shellcheck disable=SC2086 # one URL per word
+    set -- $urls
+    echo "$#"
+  elif [ "$1" = throughput ]; then
+    echo 1
+  else
+    echo "$SHARDS"
+  fi
+}
+
+# Plans the files listed in $1 into PART_N slices of $2 buckets each, into
+# directory $3 (plan_buckets; $4 is the kind), and sets PART_BUCKETS to the
+# non-empty buckets of slice PART_I, the ones this run takes.
+plan_part() {
+  local nservers="$2" dir="$3" b last
+  plan_buckets "$1" $((PART_N * nservers)) "$dir" "$4"
+  PART_BUCKETS=""
+  b=$(((PART_I - 1) * nservers + 1))
+  last=$((PART_I * nservers))
+  while [ "$b" -le "$last" ]; do
+    if [ -s "$dir/$b.list" ]; then PART_BUCKETS="$PART_BUCKETS $b"; fi
+    b=$((b + 1))
+  done
+}
+
+# `target-plan <kind>`, from a package directory: prints what the target of
+# that kind would run in slice PART_I of PG_PART with the servers it is given
+# or would start, one "<path>\t<pieces>\t<piece index>" line per file or piece,
+# and the estimated load of every bucket on stderr. It runs nothing.
+print_target_plan() {
+  local kind="$1" dir b
+  PKG="${PWD#"$ROOT"/}"
+  dir="$(mktemp -d "${TMPDIR:-/tmp}/evs-plan.XXXXXX")" || return 1
+  postgres_target_files "$kind" >"$dir/files"
+  plan_part "$dir/files" "$(plan_server_count "$kind")" "$dir" "$kind"
+  echo "$PKG $kind: part $PART_I/$PART_N, estimated load:$PLAN_LOADS" >&2
+  for b in $PART_BUCKETS; do cat "$dir/$b.list"; done
+  rm -rf "$dir"
+}
+
 target_postgres() {
   local kind="$1"
   target_setup "$kind"
@@ -932,36 +1094,19 @@ target_postgres() {
   : >"$TLOG/durations"
 
   # The servers: given (PG_TEST_URLS, else PG_TEST_URL), else containers.
-  local urls="" nservers own=0
-  if [ -n "${PG_TEST_URLS:-}" ]; then
-    urls="$PG_TEST_URLS"
-  elif [ -n "${PG_TEST_URL:-}" ]; then
-    urls="$PG_TEST_URL"
-  fi
-  if [ -n "$urls" ]; then
-    # shellcheck disable=SC2086 # one URL per word
-    set -- $urls
-    nservers=$#
-  else
-    own=1
-    nservers="$SHARDS"
-    if [ "$kind" = throughput ]; then nservers=1; fi
-  fi
+  local urls nservers own=0
+  urls="$(given_server_urls)"
+  nservers="$(plan_server_count "$kind")"
+  if [ -z "$urls" ]; then own=1; fi
 
   # The plan: PART_N slices of nservers buckets each; this run takes slice
   # PART_I.
-  local nbuckets=$((PART_N * nservers)) first last b j
-  plan_buckets "$TLOG/files" "$nbuckets" "$TLOG/plan"
-  first=$(((PART_I - 1) * nservers + 1))
-  last=$((PART_I * nservers))
+  local b j
+  plan_part "$TLOG/files" "$nservers" "$TLOG/plan" "$kind"
   local mine=() need_other=0
-  b=$first
-  while [ "$b" -le "$last" ]; do
-    if [ -s "$TLOG/plan/$b.list" ]; then
-      mine+=("$b")
-      if grep -q "^$OTHER_SERVER_FILE	" "$TLOG/plan/$b.list"; then need_other=1; fi
-    fi
-    b=$((b + 1))
+  for b in $PART_BUCKETS; do
+    mine+=("$b")
+    if grep -q "^$OTHER_SERVER_FILE	" "$TLOG/plan/$b.list"; then need_other=1; fi
   done
   echo "$PKG $kind: $(wc -l <"$TLOG/files" | tr -d ' ') files, part $PART_I/$PART_N, ${#mine[@]} shard(s), estimated load:$PLAN_LOADS" >&2
   if [ "${#mine[@]}" -eq 0 ]; then
@@ -1013,9 +1158,27 @@ target_postgres() {
       shift
       j=$((j + 1))
     done
+    # The second server, where this slice runs the file that needs it and
+    # none is given: a throwaway container, as when the containers are this
+    # run's own, wherever Docker runs. CI's Postgres jobs give their one
+    # server and leave this to the job whose slice holds the file. A server
+    # that does not start fails the target rather than letting the check
+    # skip.
+    if [ "$need_other" -eq 1 ] && [ -z "$other" ] && docker_running; then
+      require_docker
+      CONTAINER_LABEL="evs-checks.run=$(new_runid)"
+      local other_name="evs-checks-${CONTAINER_LABEL#evs-checks.run=}-other"
+      if ! pg_start "$other_name" "$CONTAINER_LABEL" ||
+        ! other="$(pg_ready_url "$other_name")"; then
+        echo "could not start the second server ($other_name) for $OTHER_SERVER_FILE" >&2
+        remove_containers
+        return 1
+      fi
+      echo "$PKG $kind: second server ready for $OTHER_SERVER_FILE ($PG_IMAGE)" >&2
+    fi
   fi
   if [ "$need_other" -eq 1 ] && [ -z "$other" ]; then
-    echo "note: PG_TEST_URL_OTHER_SERVER unset; the second-server check skips" >&2
+    echo "note: PG_TEST_URL_OTHER_SERVER unset and Docker not running; the second-server check skips" >&2
   fi
 
   local pids="" pid rc failed=0 tag files_out=()
@@ -1619,6 +1782,19 @@ main() {
         postgres | throughput) postgres_target_files "$2" ;;
         *)
           echo "usage: run-checks.sh target-files <postgres|throughput>" >&2
+          return 2
+          ;;
+      esac
+      return
+      ;;
+    target-plan)
+      # The slice of the shard plan a Postgres target runs here, from its
+      # package directory (event_sourcing/test/ci/postgres_ci_listing_test.dart
+      # reads this to check that CI's slices run every file once).
+      case "${2:-}" in
+        postgres | throughput) print_target_plan "$2" ;;
+        *)
+          echo "usage: run-checks.sh target-plan <postgres|throughput>" >&2
           return 2
           ;;
       esac
