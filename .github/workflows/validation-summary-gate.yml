@@ -19,9 +19,13 @@
 # - workflow_run always runs THIS FILE AS IT IS ON THE DEFAULT BRANCH, with
 #   base-repository permissions, fork PRs included. It never checks out or
 #   runs pull-request code; it reads the GitHub API only.
-# - `workflows: ["**", "!Validation Summary Gate"]` selects every workflow
-#   but this one, so a newly added workflow is covered without editing
-#   anything here (a list of names would silently miss it).
+# - `workflows: ["**"]` selects every workflow, so a newly added workflow is
+#   covered without editing anything here (a list of names would silently
+#   miss it). The job's `if:` skips this file's own runs by path and a
+#   non-pull-request event, never by name: a name exclusion would let a pull
+#   request add a workflow wearing this name that never fires the gate and
+#   posts the status itself. Each skipped run is itself a workflow_run, which
+#   the same `if:` skips; GitHub ends such a chain after three levels.
 # - Every run's start (`requested`) and end (`completed`) is evaluated,
 #   whatever raised it: a push, a review, a label, a re-run or a manual
 #   dispatch on a pull request's head commit is counted by the verdict, so
@@ -30,12 +34,12 @@
 #   request's head alone after one API call. Nothing is filtered by name:
 #   a pull request controls every workflow and check name. The action skips
 #   this workflow's own runs by file path plus event, and fails any other
-#   workflow that takes this workflow's name, since the filter above would
-#   never let its completion fire an evaluation.
+#   workflow that takes this workflow's name.
 #   Commit statuses fire no workflow_run or check_run event, so the gate's
 #   own status cannot re-trigger it.
 # - check_run fires for check runs posted by GitHub Apps other than GitHub
-#   Actions. GitHub does not fire it when the suite's head SHA is
+#   Actions, on `created` as well as `completed`, so a check that starts
+#   after a pass turns the status back to pending at once. GitHub does not fire it when the suite's head SHA is
 #   associated with GitHub Actions, which may include every PR commit; if
 #   the gate stays pending after another app's check finished, re-run the
 #   latest Validation Summary Gate run.
@@ -59,10 +63,10 @@ name: Validation Summary Gate
 
 on:
   workflow_run:
-    workflows: ["**", "!Validation Summary Gate"]
+    workflows: ["**"]
     types: [completed, requested]
   check_run:
-    types: [completed]
+    types: [created, completed]
 
 permissions: {}
 
@@ -70,8 +74,11 @@ jobs:
   evaluate:
     name: Evaluate Validation Summary
     if: >-
-      github.event_name == 'workflow_run'
-      || github.event.check_run.app.slug != 'github-actions'
+      (github.event_name == 'workflow_run'
+        && !(github.event.workflow_run.path == '.github/workflows/validation-summary-gate.yml'
+          && !contains(fromJSON('["pull_request", "pull_request_target"]'), github.event.workflow_run.event)))
+      || (github.event_name == 'check_run'
+        && github.event.check_run.app.slug != 'github-actions')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -85,9 +92,9 @@ jobs:
       cancel-in-progress: false
     steps:
       # Implements: HHT-OPS-composite-action-library/A+B
-      - uses: Cure-HHT/hht_workflows/.github/actions/validation-summary-gate@f0f736e4fc88e670b58c5b1fffc0cc36e07b6018  # unreleased; advance to the hht_workflows merge commit
+      - uses: Cure-HHT/hht_workflows/.github/actions/validation-summary-gate@01c05cdcaeafd38b6b94465658a6c2f5da55ccba  # unreleased; advance to the hht_workflows merge commit
       # Implements: HHT-OPS-composite-action-library/A+B
       - if: failure() || cancelled()
-        uses: Cure-HHT/hht_workflows/.github/actions/validation-summary-gate@f0f736e4fc88e670b58c5b1fffc0cc36e07b6018  # unreleased; advance to the hht_workflows merge commit
+        uses: Cure-HHT/hht_workflows/.github/actions/validation-summary-gate@01c05cdcaeafd38b6b94465658a6c2f5da55ccba  # unreleased; advance to the hht_workflows merge commit
         with:
           mode: job-failed
