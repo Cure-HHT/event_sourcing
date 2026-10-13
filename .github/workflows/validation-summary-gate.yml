@@ -1,9 +1,9 @@
 # Validation Summary gate -- publishes the org ruleset's required
 # "Validation Summary" check without holding a runner.
 #
-# Every time a pull-request workflow finishes (and when a workflow that
-# re-runs on `edited` starts), one short job reads every check run on the
-# PR head commit once and publishes the result as a COMMIT STATUS with
+# Every time a workflow starts or finishes, one short job checks whether the
+# run's commit is an open pull request's head and, if it is, reads every
+# check run on it once and publishes the result as a COMMIT STATUS with
 # context "Validation Summary" on that commit. The logic and its semantics
 # live in the shared action
 # Cure-HHT/hht_workflows/.github/actions/validation-summary-gate.
@@ -20,9 +20,18 @@
 #   base-repository permissions, fork PRs included. It never checks out or
 #   runs pull-request code; it reads the GitHub API only.
 # - `workflows: ["**", "!Validation Summary Gate"]` selects every workflow
-#   but this one, so a newly added PR workflow is covered without editing
-#   anything here (a list of names would silently miss it). Runs that are
-#   not for a pull request are skipped by the job's `if:` at no cost.
+#   but this one, so a newly added workflow is covered without editing
+#   anything here (a list of names would silently miss it).
+# - Every run's start (`requested`) and end (`completed`) is evaluated,
+#   whatever raised it: a push, a review, a label, a re-run or a manual
+#   dispatch on a pull request's head commit is counted by the verdict, so
+#   it must also move it -- a pass posted before such a run finished would
+#   otherwise stand. The action leaves a commit that is not an open pull
+#   request's head alone after one API call. Nothing is filtered by name:
+#   a pull request controls every workflow and check name. The action skips
+#   this workflow's own runs by file path plus event, and fails any other
+#   workflow that takes this workflow's name, since the filter above would
+#   never let its completion fire an evaluation.
 #   Commit statuses fire no workflow_run or check_run event, so the gate's
 #   own status cannot re-trigger it.
 # - check_run fires for check runs posted by GitHub Apps other than GitHub
@@ -30,19 +39,16 @@
 #   associated with GitHub Actions, which may include every PR commit; if
 #   the gate stays pending after another app's check finished, re-run the
 #   latest Validation Summary Gate run.
-# - `requested` is acted on only for the workflows listed in the job's `if:`:
-#   those that re-run on `edited` without a new commit. Their start turns
-#   the gate back to in-progress at once, as the polling gate did by
-#   restarting (CUR-1261). Missing a name there costs only that early flip;
-#   the run's completion is still evaluated.
+# - The action posts `pending` before it evaluates, and the last step posts
+#   `error` when the evaluation crashed, timed out or was cancelled, so no
+#   earlier pass outlives an evaluation that did not finish.
 # - The concurrency group is per head commit and never cancels a running
 #   evaluation. A newer queued evaluation replaces an older queued one, and
 #   it starts later, so it reads at least as much; the evaluation fired by
 #   the last workflow to finish therefore always runs and sees every check
 #   complete. It sits on the job, not the workflow, so skipped runs never
 #   enter the group and can never displace a real evaluation.
-#
-# Edited-rerun workflows here: Validate PR Title.
+# - Permissions are granted on the job, not the workflow.
 #
 # The polling job this gate replaced is retired: this commit status is the
 # only source of the required context. To back out, disable this workflow
@@ -58,29 +64,30 @@ on:
   check_run:
     types: [completed]
 
-permissions:
-  statuses: write        # the "Validation Summary" commit status
-  checks: read           # check runs on the head commit
-  pull-requests: write   # the failure comment on the pull request
-  actions: read          # workflow runs and job steps on the head commit
-  contents: read
+permissions: {}
 
 jobs:
   evaluate:
     name: Evaluate Validation Summary
     if: >-
-      (github.event_name == 'check_run'
-        && github.event.check_run.app.slug != 'github-actions')
-      || (github.event_name == 'workflow_run'
-        && contains(fromJSON('["pull_request", "pull_request_target"]'), github.event.workflow_run.event)
-        && github.event.workflow_run.name != 'Validation Summary'
-        && (github.event.action == 'completed'
-          || contains(fromJSON('["Validate PR Title"]'), github.event.workflow_run.name)))
+      github.event_name == 'workflow_run'
+      || github.event.check_run.app.slug != 'github-actions'
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      statuses: write        # the "Validation Summary" commit status
+      checks: read           # check runs on the head commit
+      pull-requests: write   # the failure comment on the pull request
+      actions: read          # workflow runs and job steps on the head commit
+      contents: read
     concurrency:
       group: validation-summary-gate-${{ github.event.workflow_run.head_sha || github.event.check_run.head_sha }}
       cancel-in-progress: false
     steps:
       # Implements: HHT-OPS-composite-action-library/A+B
-      - uses: Cure-HHT/hht_workflows/.github/actions/validation-summary-gate@65dc7501601d045dc04d9e0f1b1199e639fd4a3f  # unreleased; advance to the hht_workflows merge commit
+      - uses: Cure-HHT/hht_workflows/.github/actions/validation-summary-gate@f0f736e4fc88e670b58c5b1fffc0cc36e07b6018  # unreleased; advance to the hht_workflows merge commit
+      # Implements: HHT-OPS-composite-action-library/A+B
+      - if: failure() || cancelled()
+        uses: Cure-HHT/hht_workflows/.github/actions/validation-summary-gate@f0f736e4fc88e670b58c5b1fffc0cc36e07b6018  # unreleased; advance to the hht_workflows merge commit
+        with:
+          mode: job-failed
