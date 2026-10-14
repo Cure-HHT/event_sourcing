@@ -92,9 +92,9 @@ jobs:
       cancel-in-progress: false
     steps:
       # Implements: HHT-OPS-composite-action-library/A+B
-      - uses: Cure-HHT/hht_workflows/.github/actions/validation-summary-gate@01c05cdcaeafd38b6b94465658a6c2f5da55ccba  # unreleased; advance to the hht_workflows merge commit
+      - uses: Cure-HHT/hht_workflows/.github/actions/validation-summary-gate@a1565848683038de03a21c1f45f4d82af9ef967d  # unreleased; advance to the hht_workflows merge commit
       # Implements: HHT-OPS-composite-action-library/A+B
       - if: failure() || cancelled()
-        uses: Cure-HHT/hht_workflows/.github/actions/validation-summary-gate@01c05cdcaeafd38b6b94465658a6c2f5da55ccba  # unreleased; advance to the hht_workflows merge commit
+        uses: Cure-HHT/hht_workflows/.github/actions/validation-summary-gate@a1565848683038de03a21c1f45f4d82af9ef967d  # unreleased; advance to the hht_workflows merge commit
         with:
           mode: job-failed
