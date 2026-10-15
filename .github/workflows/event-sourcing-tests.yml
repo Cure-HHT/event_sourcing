@@ -25,8 +25,10 @@
 #                 display.
 #   postgres    -- the `postgres` group, cut into PG_PART slices (matrix), each
 #                 against its own Postgres service. tools/run-checks.sh
-#                 weighs the files by the Evidence Snapshot's timings, so
-#                 every slice computes the same plan, and starts the second
+#                 weighs the files by their median CI times
+#                 (tools/postgres-ci-durations.tsv; the Evidence Snapshot's
+#                 timings for a file it does not list), so every slice
+#                 computes the same plan, and starts the second
 #                 server one file compares against as a container in the one
 #                 slice that runs that file.
 #                 event_sourcing/test/ci/postgres_ci_listing_test.dart fails
@@ -52,11 +54,15 @@
 # change a run's outcome; bump them there.
 #
 # Caches: every job restores the pinned Flutter SDK (subosito/flutter-action
-# `cache`, keyed on the version) and the pub cache (keyed on the job and every
-# pubspec.yaml; the packages commit no pubspec.lock, so `pub get` still
-# resolves against pub.dev every run and the cache only saves downloads).
-# Neither holds a test result or a build output, so a cache hit runs the same
-# code as a miss.
+# `cache`, keyed on the version) and the pub cache (keyed on the job, the ISO
+# week and every pubspec.yaml; the packages commit no pubspec.lock, so `pub
+# get` still resolves against pub.dev every run and the cache only saves
+# downloads). The pub cache's restore prefix carries the week too, so each
+# week starts from an empty cache instead of growing last week's. Neither
+# holds a test result or a build output, so a cache hit runs the same code as
+# a miss, and GitHub scopes a pull request's caches to it, so none reaches
+# main. The two caching actions are pinned by commit; the workflow's other
+# actions keep the tag pins main already had.
 #
 # The workflow runs on every change, documentation included: the Evidence
 # Snapshot binds to the digest of every tracked file, so a commit the gate
@@ -139,7 +145,7 @@ jobs:
             target: canonical_json_jcs
     steps:
       - uses: actions/checkout@v4
-      - uses: subosito/flutter-action@v2
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2  # v2.23.0
         with:
           channel: stable
           flutter-version: ${{ needs.pins.outputs.flutter_version }}
@@ -152,7 +158,7 @@ jobs:
           path: ~/.pub-cache
           key: pub-${{ runner.os }}-flutter-${{ needs.pins.outputs.flutter_version }}-unit-${{ matrix.target }}-${{ needs.pins.outputs.pub_cache_week }}-${{ hashFiles('**/pubspec.yaml') }}
           restore-keys: |
-            pub-${{ runner.os }}-flutter-${{ needs.pins.outputs.flutter_version }}-unit-${{ matrix.target }}-
+            pub-${{ runner.os }}-flutter-${{ needs.pins.outputs.flutter_version }}-unit-${{ matrix.target }}-${{ needs.pins.outputs.pub_cache_week }}-
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -202,7 +208,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - uses: subosito/flutter-action@v2
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2  # v2.23.0
         with:
           channel: stable
           flutter-version: ${{ needs.pins.outputs.flutter_version }}
@@ -215,7 +221,7 @@ jobs:
           path: ~/.pub-cache
           key: pub-${{ runner.os }}-flutter-${{ needs.pins.outputs.flutter_version }}-browser-${{ needs.pins.outputs.pub_cache_week }}-${{ hashFiles('**/pubspec.yaml') }}
           restore-keys: |
-            pub-${{ runner.os }}-flutter-${{ needs.pins.outputs.flutter_version }}-browser-
+            pub-${{ runner.os }}-flutter-${{ needs.pins.outputs.flutter_version }}-browser-${{ needs.pins.outputs.pub_cache_week }}-
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -248,7 +254,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-      - uses: subosito/flutter-action@v2
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2  # v2.23.0
         with:
           channel: stable
           flutter-version: ${{ needs.pins.outputs.flutter_version }}
@@ -261,7 +267,7 @@ jobs:
           path: ~/.pub-cache
           key: pub-${{ runner.os }}-flutter-${{ needs.pins.outputs.flutter_version }}-desktop-${{ needs.pins.outputs.pub_cache_week }}-${{ hashFiles('**/pubspec.yaml') }}
           restore-keys: |
-            pub-${{ runner.os }}-flutter-${{ needs.pins.outputs.flutter_version }}-desktop-
+            pub-${{ runner.os }}-flutter-${{ needs.pins.outputs.flutter_version }}-desktop-${{ needs.pins.outputs.pub_cache_week }}-
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -333,7 +339,7 @@ jobs:
       PG_PART: ${{ matrix.part }}/6
     steps:
       - uses: actions/checkout@v4
-      - uses: subosito/flutter-action@v2
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2  # v2.23.0
         with:
           channel: stable
           flutter-version: ${{ needs.pins.outputs.flutter_version }}
@@ -346,7 +352,7 @@ jobs:
           path: ~/.pub-cache
           key: pub-${{ runner.os }}-flutter-${{ needs.pins.outputs.flutter_version }}-postgres-${{ needs.pins.outputs.pub_cache_week }}-${{ hashFiles('**/pubspec.yaml') }}
           restore-keys: |
-            pub-${{ runner.os }}-flutter-${{ needs.pins.outputs.flutter_version }}-postgres-
+            pub-${{ runner.os }}-flutter-${{ needs.pins.outputs.flutter_version }}-postgres-${{ needs.pins.outputs.pub_cache_week }}-
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -424,7 +430,7 @@ jobs:
           # The baseline worktree checks out a commit from the tree's own
           # history, so the full history must be present.
           fetch-depth: 0
-      - uses: subosito/flutter-action@v2
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2  # v2.23.0
         with:
           channel: stable
           flutter-version: ${{ needs.pins.outputs.flutter_version }}
@@ -437,7 +443,7 @@ jobs:
           path: ~/.pub-cache
           key: pub-${{ runner.os }}-flutter-${{ needs.pins.outputs.flutter_version }}-throughput-${{ needs.pins.outputs.pub_cache_week }}-${{ hashFiles('**/pubspec.yaml') }}
           restore-keys: |
-            pub-${{ runner.os }}-flutter-${{ needs.pins.outputs.flutter_version }}-throughput-
+            pub-${{ runner.os }}-flutter-${{ needs.pins.outputs.flutter_version }}-throughput-${{ needs.pins.outputs.pub_cache_week }}-
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
