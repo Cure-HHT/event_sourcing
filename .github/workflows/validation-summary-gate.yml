@@ -27,7 +27,8 @@
 #   posts the status itself. Each skipped run is itself a workflow_run, which
 #   the same `if:` skips; GitHub ends such a chain after three levels.
 # - Every run's start (`requested`) and end (`completed`) is evaluated,
-#   whatever raised it: a push, a review, a label, a re-run or a manual
+#   whatever raised it (apart from the runs skipped
+#   below): a push, a review, a label, a re-run or a manual
 #   dispatch on a pull request's head commit is counted by the verdict, so
 #   it must also move it -- a pass posted before such a run finished would
 #   otherwise stand. The action leaves a commit that is not an open pull
@@ -46,6 +47,10 @@
 # - The action posts `pending` before it evaluates, and the last step posts
 #   `error` when the evaluation crashed, timed out or was cancelled, so no
 #   earlier pass outlives an evaluation that did not finish.
+# - Runs that can never be a pull request's head are skipped before a
+#   runner starts: scheduled runs, Copilot review-agent runs (`dynamic`)
+#   and pushes to the default branch. A push to any other branch is still
+#   evaluated, since a same-repo pull request's head is pushed there.
 # - The concurrency group is per head commit and never cancels a running
 #   evaluation. A newer queued evaluation replaces an older queued one, and
 #   it starts later, so it reads at least as much; the evaluation fired by
@@ -80,7 +85,10 @@ jobs:
     if: >-
       (github.event_name == 'workflow_run'
         && !(github.event.workflow_run.path == '.github/workflows/validation-summary-gate.yml'
-          && !contains(fromJSON('["pull_request", "pull_request_target"]'), github.event.workflow_run.event)))
+          && !contains(fromJSON('["pull_request", "pull_request_target"]'), github.event.workflow_run.event))
+        && !contains(fromJSON('["schedule", "dynamic"]'), github.event.workflow_run.event)
+        && !(github.event.workflow_run.event == 'push'
+          && github.event.workflow_run.head_branch == github.event.repository.default_branch))
       || (github.event_name == 'check_run'
         && github.event.check_run.app.slug != 'github-actions')
     runs-on: ubuntu-latest
@@ -90,15 +98,14 @@ jobs:
       checks: read           # check runs on the head commit
       pull-requests: write   # the failure comment on the pull request
       actions: read          # workflow runs and job steps on the head commit
-      contents: read
     concurrency:
       group: validation-summary-gate-${{ github.event.workflow_run.head_sha || github.event.check_run.head_sha }}
       cancel-in-progress: false
     steps:
       # Implements: HHT-OPS-composite-action-library/A+B
-      - uses: Cure-HHT/hht_workflows/.github/actions/validation-summary-gate@a1565848683038de03a21c1f45f4d82af9ef967d  # unreleased; advance to the hht_workflows merge commit
+      - uses: Cure-HHT/hht_workflows/.github/actions/validation-summary-gate@d9231881850ca5ff0afc2e102ed5352a6d3501b8  # unreleased; advance to the hht_workflows merge commit
       # Implements: HHT-OPS-composite-action-library/A+B
       - if: failure() || cancelled()
-        uses: Cure-HHT/hht_workflows/.github/actions/validation-summary-gate@a1565848683038de03a21c1f45f4d82af9ef967d  # unreleased; advance to the hht_workflows merge commit
+        uses: Cure-HHT/hht_workflows/.github/actions/validation-summary-gate@d9231881850ca5ff0afc2e102ed5352a6d3501b8  # unreleased; advance to the hht_workflows merge commit
         with:
           mode: job-failed
