@@ -70,12 +70,17 @@ THROUGHPUT_FILE="test/storage/postgres/postgres_throughput_guard_test.dart"
 MIN_SPLIT_SECS=60
 # The file that compares a lock session against a second server.
 OTHER_SERVER_FILE="test/storage/postgres/postgres_generation_guard_test.dart"
+# Each Postgres file's seconds on CI, the median over several CI runs
+# (tools/postgres_ci_durations.py writes it): the estimate of a file wherever no
+# duration of this machine's is recorded, CI included (file_weight). One run's
+# times swing by minutes for the measured files, so a single run is not enough.
+CI_DURATIONS_FILE="$ROOT/tools/postgres-ci-durations.tsv"
 # The Evidence Snapshot's per-test durations, committed with every change: the
-# estimate of a Postgres file wherever no duration of this machine's is
-# recorded, CI included (file_weight). `make evidence` records them on a
-# developer machine; a CI runner takes about TIMINGS_SCALE times as long, plus
-# TIMINGS_OVERHEAD seconds per file to compile it and start the test VM
-# (fitted to the per-file times of the Postgres jobs of CI run 37481482315).
+# estimate of a file the CI table does not list yet, a new one. `make evidence`
+# records them on a developer machine; a CI runner takes about TIMINGS_SCALE
+# times as long, plus TIMINGS_OVERHEAD seconds per file to compile it and start
+# the test VM. The scale is rough (the snapshot's machine varies), which is why
+# the CI table comes first.
 TIMINGS_FILE="$ROOT/test-evidence/timings.jsonl"
 TIMINGS_SCALE=2
 TIMINGS_OVERHEAD=8
@@ -869,15 +874,18 @@ PY
 
 # Estimated seconds for a Postgres file ($1, from the repository root). Off CI,
 # the duration .check-durations last recorded for it on this machine. Else its
-# estimate from the Evidence Snapshot's timings, the table $2 that
-# timed_weights wrote. Else a heuristic: the known long files first, then
-# source size, for a file the snapshot does not time yet. CI keeps no
-# durations and every job of a PG_PART matrix reads the same committed
-# snapshot, so every job computes the same plan.
+# median CI time from CI_DURATIONS_FILE. Else its estimate from the Evidence
+# Snapshot's timings, the table $2 that timed_weights wrote. Else a heuristic:
+# the known long files first, then source size, for a file neither table
+# times yet. CI keeps no durations and every job of a PG_PART matrix reads the
+# same committed tables, so every job computes the same plan.
 file_weight() {
   local key="$1" timed="${2:-}" w=""
   if [ -f "$DURATIONS_FILE" ] && [ -z "${CI:-}" ]; then
     w="$(awk -F'\t' -v k="$key" '$2 == k { v = $1 } END { if (v != "") print v }' "$DURATIONS_FILE")"
+  fi
+  if [ -z "$w" ] && [ -f "$CI_DURATIONS_FILE" ]; then
+    w="$(awk -F'\t' -v k="$key" '$2 == k { print $1; exit }' "$CI_DURATIONS_FILE")"
   fi
   if [ -z "$w" ] && [ -n "$timed" ] && [ -s "$timed" ]; then
     w="$(awk -F'\t' -v k="${key#"$PKG"/}" '$2 == k { print $1; exit }' "$timed")"
