@@ -2238,6 +2238,31 @@ class PostgresBackend extends StorageBackend {
     );
   }
 
+  /// One statement for every copy: an append on a deployed portal sets the
+  /// watermark of each of its registered views' copies (some thirty), and
+  /// over a network each statement is a round trip. One statement per
+  /// event keeps an append's cost from growing with the number of views.
+  // Implements: EVS-DEV-view-convergence/E+F
+  // one UPDATE sets every named copy's watermark to the event's position and
+  //   touches no other copy.
+  @override
+  @internal
+  Future<void> setViewCopyWatermarksInTxn(
+    Transaction txn,
+    Iterable<String> copyIds,
+    int watermark,
+  ) async {
+    final ids = copyIds.toList();
+    if (ids.isEmpty) return;
+    final session = _asPgTxn(txn)._session;
+    await session.execute(
+      Sql.named(
+        'UPDATE view_copies SET watermark = @w WHERE copy_id = ANY(@ids)',
+      ),
+      parameters: {'w': watermark, 'ids': ids},
+    );
+  }
+
   @override
   @internal
   Future<void> markViewCopyForDeletionInTxn(

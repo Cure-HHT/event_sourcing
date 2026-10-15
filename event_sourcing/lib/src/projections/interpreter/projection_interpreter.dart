@@ -215,6 +215,7 @@ class ProjectionInterpreter {
     final changes = <AggregateFoldChange>[];
     final failures = <FoldFailureRecord>[];
     final currentCopies = <_CurrentCopy>[];
+    final foldedLocally = <String>[];
     for (final spec in projections.all()) {
       final maybeCopyId = copyIds[spec.viewName];
       final copy = maybeCopyId == null ? null : copiesById[maybeCopyId];
@@ -259,17 +260,23 @@ class ProjectionInterpreter {
           // from other throws (EVS-PRD-ingest/G, contrast).
           e.rethrowCause();
         }
-        await backend.setViewCopyWatermarkInTxn(
-          txn,
-          copyId,
-          event.sequenceNumber,
-        );
+        foldedLocally.add(copyId);
         continue;
       }
 
       // Always-stored mode: the copy's fold is deferred to the savepoint
       // below, which covers every current copy's fold of this event.
       currentCopies.add((spec: spec, copyId: copyId, copy: copy));
+    }
+    // Every copy folded locally moves to the event's position in one
+    // write: on a backend reached over a network, one round trip for all
+    // of them rather than one per view.
+    if (foldedLocally.isNotEmpty) {
+      await backend.setViewCopyWatermarksInTxn(
+        txn,
+        foldedLocally,
+        event.sequenceNumber,
+      );
     }
     if (currentCopies.isNotEmpty) {
       await _foldAlwaysStored(
@@ -404,14 +411,12 @@ class ProjectionInterpreter {
     }
 
     // Every current copy's watermark moves to the event's position, so a
-    // copy that passed over the event stays current.
-    for (final c in copies) {
-      await backend.setViewCopyWatermarkInTxn(
-        txn,
-        c.copyId,
-        event.sequenceNumber,
-      );
-    }
+    // copy that passed over the event stays current. One write for all of
+    // them: on a backend reached over a network, one round trip rather than
+    // one per view.
+    await backend.setViewCopyWatermarksInTxn(txn, <String>[
+      for (final c in copies) c.copyId,
+    ], event.sequenceNumber);
   }
 
   /// The one fold step every writer of a copy's rows shares -- an append

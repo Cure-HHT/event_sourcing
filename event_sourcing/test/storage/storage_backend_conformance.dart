@@ -1758,6 +1758,41 @@ void _registerViewCopyTests(
       },
     );
 
+    // Verifies: EVS-DEV-view-convergence/E
+    // Verifies: EVS-DEV-view-convergence/F
+    test(
+      'setting the watermark of several copies at once moves exactly those',
+      () async {
+        if (!initializedOf()) return;
+        final backend = backendOf();
+        final a = await backend.transaction(
+          (txn) => backend.createViewCopyInTxn(txn, 'notes', 'fp-a', 0),
+        );
+        final b = await backend.transaction(
+          (txn) => backend.createViewCopyInTxn(txn, 'notes', 'fp-b', 0),
+        );
+        final c = await backend.transaction(
+          (txn) => backend.createViewCopyInTxn(txn, 'notes', 'fp-c', 0),
+        );
+        await backend.transaction(
+          (txn) => backend.setViewCopyWatermarksInTxn(txn, <String>[
+            a,
+            c,
+            'no-such-copy',
+          ], 42),
+        );
+        await backend.transaction(
+          (txn) => backend.setViewCopyWatermarksInTxn(txn, const <String>[], 7),
+        );
+        final copies = await backend.transaction(backend.readViewCopiesInTxn);
+        final byId = {for (final copy in copies) copy.copyId: copy};
+        expect(byId[a]!.watermark, 42);
+        expect(byId[b]!.watermark, 0);
+        expect(byId[c]!.watermark, 42);
+        expect(copies, hasLength(3));
+      },
+    );
+
     // Verifies: EVS-DEV-view-convergence/A
     test('marking for deletion is idempotent and lets a fresh copy of the '
         'same fingerprint be created', () async {
