@@ -256,12 +256,16 @@ final class BoundedPool implements Pool<void> {
     this._pool, {
     required this.queryTimeout,
     required this.connectTimeout,
+    required this.maxConnectionAge,
   });
 
   final Pool<void> _pool;
 
   /// The timeout of a statement that gives none.
   final Duration queryTimeout;
+
+  /// The age past which [_pool] serves no further statement on a connection.
+  final Duration maxConnectionAge;
 
   /// Added to a statement's timeout to give its bound.
   final Duration connectTimeout;

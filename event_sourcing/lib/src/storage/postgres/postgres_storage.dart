@@ -1,7 +1,7 @@
 // Implements: EVS-DEV-storage-capability/A
 // the Postgres description carries the library's schema and the
-//   connection, statement-timeout, lock-session and wait settings the Postgres backend opens
-//   with.
+//   connection, statement-timeout, connection-age, lock-session and wait
+//   settings the Postgres backend opens with.
 // Implements: EVS-PRD-storage-barrier/A
 // the library opens a Postgres database it runs on from the description the
 //   application supplies.
@@ -26,6 +26,7 @@ final class PostgresStorage extends CompanionBackendStorage {
     this.lockQueryTimeout = const Duration(seconds: 5),
     this.lockHeartbeat = const Duration(seconds: 5),
     this.bootLockWait = const Duration(seconds: 60),
+    this.maxConnectionAge = defaultPostgresMaxConnectionAge,
   });
 
   /// The pool's connection URL, as a runtime role the deployment declared.
@@ -58,6 +59,11 @@ final class PostgresStorage extends CompanionBackendStorage {
   /// Bounds each wait of `EventStore.open` for a boot lock.
   final Duration bootLockWait;
 
+  /// The age past which a pool connection serves no further statement,
+  /// [defaultPostgresMaxConnectionAge] unless given. Positive
+  /// (`PostgresBackend.open`).
+  final Duration maxConnectionAge;
+
   @internal
   @override
   Future<(StorageBackend, MutableSecurityContextStore)> openBackend() async {
@@ -70,6 +76,7 @@ final class PostgresStorage extends CompanionBackendStorage {
       lockQueryTimeout: lockQueryTimeout,
       lockHeartbeat: lockHeartbeat,
       bootLockWait: bootLockWait,
+      maxConnectionAge: maxConnectionAge,
     );
     return (backend, PostgresSecurityContextStore(backend: backend));
   }

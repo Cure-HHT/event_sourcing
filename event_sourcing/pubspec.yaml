@@ -1,6 +1,6 @@
 name: event_sourcing
 description: "Event-sourcing core library: offline-first storage, sync, ingest, materialization, and security"
-version: 0.6.1
+version: 0.6.2
 publish_to: none
 homepage:
 
@@ -27,7 +27,11 @@ dependencies:
   # Once the driver compiles with dart2js, the backend can return to the
   # main library and CompanionBackendStorage can be removed.
   postgres: ">=3.5.19 <3.6.0"
-  sembast: ^3.7.3
+  # Held below 3.9.0: under 3.9.0 a tab whose handle another tab compacted
+  # past no longer fails its write with TransactionRerunLimitException, so
+  # the drain-lock and compaction browser tests fail. Lift the cap once the
+  # backend is adapted to 3.9.0's behaviour.
+  sembast: ">=3.7.3 <3.9.0"
   # Held to one minor line: test/web/ builds a second tab's factory through
   # this package's src/ interop, which carries no stability promise.
   sembast_web: ">=2.4.6 <2.5.0"
