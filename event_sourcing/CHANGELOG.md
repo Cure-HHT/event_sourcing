@@ -20,6 +20,16 @@ Data: data format 3.0, unchanged. A database written by 0.6.1 opens.
 - A deployment behind a network path with an idle limit shorter than 5
   minutes lowers `maxConnectionAge` below that limit.
 
+### Dependencies
+
+- `sembast` is held below 3.9.0. Its 3.9.0 release changes what a web tab
+  sees when another tab has compacted the database: the write reloads and
+  succeeds rather than failing with `TransactionRerunLimitException`. The
+  library's drain lock and its handling of a handle behind a compaction
+  were built and tested against the earlier behaviour, so an application
+  resolving 3.9.0 ran untested code on the web backend. The ceiling is
+  raised once the library adopts the new behaviour.
+
 ## 0.6.1
 
 Data: data format 3.0, unchanged. A database written by 0.6.0 opens.
