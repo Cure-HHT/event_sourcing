@@ -1185,7 +1185,9 @@
 {"file":"event_sourcing/test/storage/postgres/postgres_library_roles_test.dart","line":33,"name":"skipped: PG_TEST_URL is not set","outcome":"skipped","target":"event_sourcing"}
 {"file":"event_sourcing/test/storage/postgres/postgres_pool_statement_bound_test.dart","line":40,"name":"the statement timeout -0:00:01.000000 is refused","outcome":"passed","target":"event_sourcing"}
 {"file":"event_sourcing/test/storage/postgres/postgres_pool_statement_bound_test.dart","line":40,"name":"the statement timeout 0:00:00.000000 is refused","outcome":"passed","target":"event_sourcing"}
-{"file":"event_sourcing/test/storage/postgres/postgres_pool_statement_bound_test.dart","line":57,"name":"skipped — PG_TEST_URL unset","outcome":"skipped","target":"event_sourcing"}
+{"file":"event_sourcing/test/storage/postgres/postgres_pool_statement_bound_test.dart","line":60,"name":"the maximum connection age -0:00:01.000000 is refused","outcome":"passed","target":"event_sourcing"}
+{"file":"event_sourcing/test/storage/postgres/postgres_pool_statement_bound_test.dart","line":60,"name":"the maximum connection age 0:00:00.000000 is refused","outcome":"passed","target":"event_sourcing"}
+{"file":"event_sourcing/test/storage/postgres/postgres_pool_statement_bound_test.dart","line":81,"name":"skipped — PG_TEST_URL unset","outcome":"skipped","target":"event_sourcing"}
 {"file":"event_sourcing/test/storage/postgres/postgres_provisioning_test.dart","line":170,"name":"the exported schema versions are the last migration step's","outcome":"skipped","target":"event_sourcing"}
 {"file":"event_sourcing/test/storage/postgres/postgres_provisioning_test.dart","line":181,"name":"a connection URL percent-decodes its user name and password","outcome":"skipped","target":"event_sourcing"}
 {"file":"event_sourcing/test/storage/postgres/postgres_provisioning_test.dart","line":228,"name":"open verifies the stored schema pair an unprovisioned schema is refused, naming provision, and nothing is created","outcome":"skipped","target":"event_sourcing"}
@@ -3702,9 +3704,13 @@
 {"file":"event_sourcing/test/storage/postgres/postgres_library_roles_test.dart","line":581,"name":"admitted an admin-option-only membership is admitted","outcome":"passed","target":"event_sourcing-postgres"}
 {"file":"event_sourcing/test/storage/postgres/postgres_pool_statement_bound_test.dart","line":40,"name":"the statement timeout -0:00:01.000000 is refused","outcome":"passed","target":"event_sourcing-postgres"}
 {"file":"event_sourcing/test/storage/postgres/postgres_pool_statement_bound_test.dart","line":40,"name":"the statement timeout 0:00:00.000000 is refused","outcome":"passed","target":"event_sourcing-postgres"}
-{"file":"event_sourcing/test/storage/postgres/postgres_pool_statement_bound_test.dart","line":88,"name":"the statement timeout defaults to the driver default","outcome":"passed","target":"event_sourcing-postgres"}
-{"file":"event_sourcing/test/storage/postgres/postgres_pool_statement_bound_test.dart","line":121,"name":"a pool connection silent after a statement result","outcome":"passed","target":"event_sourcing-postgres"}
-{"file":"event_sourcing/test/storage/postgres/postgres_pool_statement_bound_test.dart","line":167,"name":"a statement slower than the statement timeout","outcome":"passed","target":"event_sourcing-postgres"}
+{"file":"event_sourcing/test/storage/postgres/postgres_pool_statement_bound_test.dart","line":60,"name":"the maximum connection age -0:00:01.000000 is refused","outcome":"passed","target":"event_sourcing-postgres"}
+{"file":"event_sourcing/test/storage/postgres/postgres_pool_statement_bound_test.dart","line":60,"name":"the maximum connection age 0:00:00.000000 is refused","outcome":"passed","target":"event_sourcing-postgres"}
+{"file":"event_sourcing/test/storage/postgres/postgres_pool_statement_bound_test.dart","line":112,"name":"the statement timeout defaults to the driver default","outcome":"passed","target":"event_sourcing-postgres"}
+{"file":"event_sourcing/test/storage/postgres/postgres_pool_statement_bound_test.dart","line":131,"name":"the maximum connection age defaults to 5 minutes","outcome":"passed","target":"event_sourcing-postgres"}
+{"file":"event_sourcing/test/storage/postgres/postgres_pool_statement_bound_test.dart","line":151,"name":"a pool connection older than the maximum age is not reused","outcome":"passed","target":"event_sourcing-postgres"}
+{"file":"event_sourcing/test/storage/postgres/postgres_pool_statement_bound_test.dart","line":197,"name":"a pool connection silent after a statement result","outcome":"passed","target":"event_sourcing-postgres"}
+{"file":"event_sourcing/test/storage/postgres/postgres_pool_statement_bound_test.dart","line":243,"name":"a statement slower than the statement timeout","outcome":"passed","target":"event_sourcing-postgres"}
 {"file":"event_sourcing/test/storage/postgres/postgres_provisioning_test.dart","line":170,"name":"the exported schema versions are the last migration step's","outcome":"passed","target":"event_sourcing-postgres"}
 {"file":"event_sourcing/test/storage/postgres/postgres_provisioning_test.dart","line":181,"name":"a connection URL percent-decodes its user name and password","outcome":"passed","target":"event_sourcing-postgres"}
 {"file":"event_sourcing/test/storage/postgres/postgres_provisioning_test.dart","line":228,"name":"open verifies the stored schema pair an unprovisioned schema is refused, naming provision, and nothing is created","outcome":"passed","target":"event_sourcing-postgres"}
