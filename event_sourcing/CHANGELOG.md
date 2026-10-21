@@ -4,6 +4,22 @@
 
 Data: data format 3.0, unchanged. A database written by 0.6.1 opens.
 
+### Postgres
+
+- The Postgres backend's pool reuses a connection only while it is younger
+  than `maxConnectionAge` on `PostgresStorage` and `PostgresBackend.open`
+  (positive, or `open` throws `ArgumentError`). Its default,
+  `defaultPostgresMaxConnectionAge`, is 5 minutes. A connection that sat
+  idle could be closed by the network path between the process and the
+  database without either end being told, and the next statement handed
+  it failed with `Connection reset by peer`. A connection past the age is
+  no longer handed out, and the pool opens a new one for the next
+  statement. A statement already running when its connection reaches the
+  age finishes. Under steady load each pool slot reconnects once per age;
+  while idle the pool reconnects nothing.
+- A deployment behind a network path with an idle limit shorter than 5
+  minutes lowers `maxConnectionAge` below that limit.
+
 ### Dependencies
 
 - `sembast` is held below 3.9.0. Its 3.9.0 release changes what a web tab

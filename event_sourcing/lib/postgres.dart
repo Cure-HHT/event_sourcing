@@ -25,6 +25,7 @@ export 'src/storage/postgres/postgres_backend.dart'
         PostgresIdempotencyStore,
         PostgresSecurityContextStore,
         TransactionRetryExhaustedException,
+        defaultPostgresMaxConnectionAge,
         defaultPostgresQueryTimeout;
 export 'src/storage/postgres/postgres_exceptions.dart';
 export 'src/storage/postgres/postgres_grants.dart'
