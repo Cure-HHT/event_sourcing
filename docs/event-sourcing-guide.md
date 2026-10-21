@@ -478,6 +478,13 @@ connection sooner. The timeout bounds a wait for a lock too, so keep it
 above the longest such wait the deployment expects: an append waits for a
 boot that holds the lock on appends for the boot's whole duration.
 
+The pool reuses a connection only while it is younger than
+`maxConnectionAge`, `defaultPostgresMaxConnectionAge` (5 minutes) unless
+given. A network path that drops an idle connection without telling either
+end would otherwise fail the next statement handed that connection with
+`Connection reset by peer`. Lower `maxConnectionAge` below the idle limit
+of a network path that drops connections sooner.
+
 `open` runs no DDL: it verifies the provisioned schema version and
 refuses, naming `provision`, a database that was never provisioned or
 whose schema this build does not support. A schema a newer build
