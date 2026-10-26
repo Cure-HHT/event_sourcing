@@ -593,6 +593,29 @@ abstract class StorageBackend {
     int watermark,
   );
 
+  /// Persist [watermark] as the log position each of [copyIds] has folded
+  /// through, as [setViewCopyWatermarkInTxn] does for one copy. A copy id
+  /// that names no stored copy is passed over.
+  ///
+  /// A transaction that stores an event sets the watermark of every copy
+  /// current in it (EVS-DEV-view-convergence/E), one per registered view.
+  /// A backend reached over a network overrides this with one statement
+  /// for all of them, so an append's cost does not grow by a round trip
+  /// per view; this default sets them one at a time.
+  // Implements: EVS-DEV-view-convergence/E+F
+  // each named copy's watermark is set to the event's position; no other
+  //   copy is written.
+  @internal
+  Future<void> setViewCopyWatermarksInTxn(
+    Transaction txn,
+    Iterable<String> copyIds,
+    int watermark,
+  ) async {
+    for (final copyId in copyIds) {
+      await setViewCopyWatermarkInTxn(txn, copyId, watermark);
+    }
+  }
+
   /// Mark [copyId] for deletion. Idempotent: a repeat mark, or a mark of a
   /// copy id that names no stored copy, is a no-op.
   @internal

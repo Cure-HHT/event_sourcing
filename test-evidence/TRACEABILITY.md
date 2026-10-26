@@ -37,7 +37,7 @@
 | EVS-PRD-materializer | Materializer | PRD | Active | A-J (100%) | A-J (98%) [9.8P 0F 0A] | A-J (98%) | 0/10 (0%) | 0/10 (0%) | n/a | n/a |
 | EVS-PRD-multi-source-canonicalization | Multi-Source Canonicalization | PRD | Active | 0/6 (0%) | 0/6 (0%) | 0/6 (0%) | 0/6 (0%) | 0/6 (0%) | n/a | n/a |
 | EVS-PRD-permissions-as-events | Permissions as Events | PRD | Active | A-D (100%) | A-D (100%) [4P 0F 0A] | A-D (100%) | 0/4 (0%) | 0/4 (0%) | n/a | n/a |
-| EVS-DEV-bootstrap-action-permissions | YAML-seeded role/permission bootstrap | DEV | Active | A-D (100%) | A-D (100%) [4P 0F 0A] | A-D (100%) | 0/4 (0%) | 0/4 (0%) | n/a | n/a |
+| EVS-DEV-bootstrap-action-permissions | YAML-seeded role/permission bootstrap | DEV | Active | A-E (100%) | A-E (100%) [5P 0F 0A] | A-E (100%) | 0/5 (0%) | 0/5 (0%) | n/a | n/a |
 | EVS-PRD-portability | Portability | PRD | Active | A-D (100%) | A-D (100%) [4P 0F 0A] | A-D (100%) | 0/4 (0%) | 0/4 (0%) | n/a | n/a |
 | EVS-PRD-provenance | Provenance Chain Tracking | PRD | Active | A-E (100%) | A-C,E (80%) [4P 0F 0A] | A-C,E (80%) | 0/5 (0%) | 0/5 (0%) | n/a | n/a |
 | EVS-PRD-auth-session | Auth Session | PRD | Active | A-G (100%) | A-G (100%) [7P 0F 0A] | A-G (100%) | 0/7 (0%) | 0/7 (0%) | n/a | n/a |
@@ -79,8 +79,8 @@ Code:
 - event_sourcing/lib/src/storage/chain_coordinates.dart:43
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1381
 - event_sourcing/lib/src/storage/postgres/postgres_schema.dart:18
-- event_sourcing/lib/src/storage/storage_backend.dart:1515
-- event_sourcing/lib/src/storage/storage_backend.dart:1537
+- event_sourcing/lib/src/storage/storage_backend.dart:1538
+- event_sourcing/lib/src/storage/storage_backend.dart:1560
 - event_sourcing/lib/src/storage/stored_event.dart:494
 - event_sourcing/lib/src/storage/stored_event.dart:510
 - event_sourcing/lib/src/storage/stored_event.dart:530
@@ -88,18 +88,18 @@ Code:
 
 Tests:
 
-- event_sourcing/test/storage/storage_backend_conformance.dart:4891 StorageBackend conformance (postgres) chain lookups each lookup returns the stored event after an append -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:4891 StorageBackend conformance (postgres, runtime role) chain lookups each lookup returns the stored event after an append -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:4891 StorageBackend conformance (sembast (memory)) chain lookups each lookup returns the stored event after an append -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:4940 StorageBackend conformance (postgres) chain lookups a null predecessor matches the events of that database that name none, and no other -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:4940 StorageBackend conformance (postgres, runtime role) chain lookups a null predecessor matches the events of that database that name none, and no other -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:4940 StorageBackend conformance (sembast (memory)) chain lookups a null predecessor matches the events of that database that name none, and no other -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:4993 StorageBackend conformance (postgres) chain lookups an ingested copy is found by its sealed hash and origin position, not its re-stamped ones -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:4993 StorageBackend conformance (postgres, runtime role) chain lookups an ingested copy is found by its sealed hash and origin position, not its re-stamped ones -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:4993 StorageBackend conformance (sembast (memory)) chain lookups an ingested copy is found by its sealed hash and origin position, not its re-stamped ones -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:5289 StorageBackend conformance (postgres) chain lookups a fork and a reused origin position are both returned, in local sequence order -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:5289 StorageBackend conformance (postgres, runtime role) chain lookups a fork and a reused origin position are both returned, in local sequence order -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:5289 StorageBackend conformance (sembast (memory)) chain lookups a fork and a reused origin position are both returned, in local sequence order -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:4926 StorageBackend conformance (postgres) chain lookups each lookup returns the stored event after an append -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:4926 StorageBackend conformance (postgres, runtime role) chain lookups each lookup returns the stored event after an append -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:4926 StorageBackend conformance (sembast (memory)) chain lookups each lookup returns the stored event after an append -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:4975 StorageBackend conformance (postgres) chain lookups a null predecessor matches the events of that database that name none, and no other -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:4975 StorageBackend conformance (postgres, runtime role) chain lookups a null predecessor matches the events of that database that name none, and no other -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:4975 StorageBackend conformance (sembast (memory)) chain lookups a null predecessor matches the events of that database that name none, and no other -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:5028 StorageBackend conformance (postgres) chain lookups an ingested copy is found by its sealed hash and origin position, not its re-stamped ones -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:5028 StorageBackend conformance (postgres, runtime role) chain lookups an ingested copy is found by its sealed hash and origin position, not its re-stamped ones -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:5028 StorageBackend conformance (sembast (memory)) chain lookups an ingested copy is found by its sealed hash and origin position, not its re-stamped ones -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:5324 StorageBackend conformance (postgres) chain lookups a fork and a reused origin position are both returned, in local sequence order -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:5324 StorageBackend conformance (postgres, runtime role) chain lookups a fork and a reused origin position are both returned, in local sequence order -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:5324 StorageBackend conformance (sembast (memory)) chain lookups a fork and a reused origin position are both returned, in local sequence order -- passed
 - event_sourcing/test/storage/stored_event_origin_test.dart:67 origin of a copy a copy held as authored reads its own hash and position -- passed
 - event_sourcing/test/storage/stored_event_origin_test.dart:67 origin of a copy a copy recovered by its author is not held as authored -- passed
 - event_sourcing/test/storage/stored_event_origin_test.dart:67 origin of a copy a received copy reads the hash and position its second entry records, whatever later hops re-stamped -- passed
@@ -111,9 +111,9 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/event_store.dart:3612
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:3675
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:3700
 - event_sourcing/lib/src/storage/sembast_backend.dart:861
-- event_sourcing/lib/src/storage/storage_backend.dart:1454
+- event_sourcing/lib/src/storage/storage_backend.dart:1477
 
 Tests:
 
@@ -126,21 +126,21 @@ Tests:
 - event_sourcing/test/storage/sembast_chain_lookups_test.dart:125 an append refuses when the event stored under the recorded latest authored sequence carries another sequence -- passed
 - event_sourcing/test/storage/sembast_chain_lookups_test.dart:54 after appends and ingests the database holds no chain index store and exactly one record of the latest sequence it authored -- passed
 - event_sourcing/test/storage/sembast_chain_lookups_test.dart:84 every event is stored under its local sequence number, and each append links the latest event the database authored, read by that key -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:4891 StorageBackend conformance (postgres) chain lookups each lookup returns the stored event after an append -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:4891 StorageBackend conformance (postgres, runtime role) chain lookups each lookup returns the stored event after an append -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:4891 StorageBackend conformance (sembast (memory)) chain lookups each lookup returns the stored event after an append -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:5062 StorageBackend conformance (postgres) chain lookups the latest event held as authored ignores ingested copies, copies of its own events stored with a receiver entry, and one-entry copies naming another database -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:5062 StorageBackend conformance (postgres, runtime role) chain lookups the latest event held as authored ignores ingested copies, copies of its own events stored with a receiver entry, and one-entry copies naming another database -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:5062 StorageBackend conformance (sembast (memory)) chain lookups the latest event held as authored ignores ingested copies, copies of its own events stored with a receiver entry, and one-entry copies naming another database -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:5111 StorageBackend conformance (postgres) chain lookups the latest event held as authored is null while the database holds none -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:5111 StorageBackend conformance (postgres, runtime role) chain lookups the latest event held as authored is null while the database holds none -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:5111 StorageBackend conformance (sembast (memory)) chain lookups the latest event held as authored is null while the database holds none -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:5144 StorageBackend conformance (postgres) chain lookups a lookup inside the storing transaction sees an event stored earlier in it -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:5144 StorageBackend conformance (postgres, runtime role) chain lookups a lookup inside the storing transaction sees an event stored earlier in it -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:5144 StorageBackend conformance (sembast (memory)) chain lookups a lookup inside the storing transaction sees an event stored earlier in it -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:5214 StorageBackend conformance (postgres) chain lookups a rolled-back transaction leaves every lookup as it was -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:5214 StorageBackend conformance (postgres, runtime role) chain lookups a rolled-back transaction leaves every lookup as it was -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:5214 StorageBackend conformance (sembast (memory)) chain lookups a rolled-back transaction leaves every lookup as it was -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:4926 StorageBackend conformance (postgres) chain lookups each lookup returns the stored event after an append -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:4926 StorageBackend conformance (postgres, runtime role) chain lookups each lookup returns the stored event after an append -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:4926 StorageBackend conformance (sembast (memory)) chain lookups each lookup returns the stored event after an append -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:5097 StorageBackend conformance (postgres) chain lookups the latest event held as authored ignores ingested copies, copies of its own events stored with a receiver entry, and one-entry copies naming another database -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:5097 StorageBackend conformance (postgres, runtime role) chain lookups the latest event held as authored ignores ingested copies, copies of its own events stored with a receiver entry, and one-entry copies naming another database -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:5097 StorageBackend conformance (sembast (memory)) chain lookups the latest event held as authored ignores ingested copies, copies of its own events stored with a receiver entry, and one-entry copies naming another database -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:5146 StorageBackend conformance (postgres) chain lookups the latest event held as authored is null while the database holds none -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:5146 StorageBackend conformance (postgres, runtime role) chain lookups the latest event held as authored is null while the database holds none -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:5146 StorageBackend conformance (sembast (memory)) chain lookups the latest event held as authored is null while the database holds none -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:5179 StorageBackend conformance (postgres) chain lookups a lookup inside the storing transaction sees an event stored earlier in it -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:5179 StorageBackend conformance (postgres, runtime role) chain lookups a lookup inside the storing transaction sees an event stored earlier in it -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:5179 StorageBackend conformance (sembast (memory)) chain lookups a lookup inside the storing transaction sees an event stored earlier in it -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:5249 StorageBackend conformance (postgres) chain lookups a rolled-back transaction leaves every lookup as it was -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:5249 StorageBackend conformance (postgres, runtime role) chain lookups a rolled-back transaction leaves every lookup as it was -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:5249 StorageBackend conformance (sembast (memory)) chain lookups a rolled-back transaction leaves every lookup as it was -- passed
 
 **C**
 
@@ -545,9 +545,9 @@ Code:
 Tests:
 
 - event_sourcing/test/storage/sembast_backend_event_test.dart:76 SembastBackend events (impl-internal) a read refuses a stored record whose provenance entry lacks library_version, or that carries no causal object, naming the field -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6192 StorageBackend conformance (postgres) hashed fields as spelled appendEvent refuses an event with no causal object, or with a provenance entry lacking library_version or carrying an empty database_id, naming the field and writing nothing -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:6192 StorageBackend conformance (postgres, runtime role) hashed fields as spelled appendEvent refuses an event with no causal object, or with a provenance entry lacking library_version or carrying an empty database_id, naming the field and writing nothing -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6192 StorageBackend conformance (sembast (memory)) hashed fields as spelled appendEvent refuses an event with no causal object, or with a provenance entry lacking library_version or carrying an empty database_id, naming the field and writing nothing -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6227 StorageBackend conformance (postgres) hashed fields as spelled appendEvent refuses an event with no causal object, or with a provenance entry lacking library_version or carrying an empty database_id, naming the field and writing nothing -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:6227 StorageBackend conformance (postgres, runtime role) hashed fields as spelled appendEvent refuses an event with no causal object, or with a provenance entry lacking library_version or carrying an empty database_id, naming the field and writing nothing -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6227 StorageBackend conformance (sembast (memory)) hashed fields as spelled appendEvent refuses an event with no causal object, or with a provenance entry lacking library_version or carrying an empty database_id, naming the field and writing nothing -- passed
 - event_sourcing/test/storage/stored_event_test.dart:623 the causal object fromMap refuses a record with no causal object of the exact shape, naming the field -- passed
 - event_sourcing/test/storage/stored_event_test.dart:647 the causal object an event built with no causal object fails requireWellFormedRecord naming the field -- passed
 - event_sourcing/test/test_support/ingest_hash_conformance.dart:703 ingest event-hash scenarios (postgres) delivery of records as a sender spelled them keeps an event with no causal object, or one with a key outside its shape, in an event_malformed finding, storing no event -- passed, skipped
@@ -648,11 +648,11 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/event_store.dart:3654
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:3775
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:3800
 - event_sourcing/lib/src/storage/sembast_backend.dart:1173
 - event_sourcing/lib/src/storage/sembast_backend.dart:885
 - event_sourcing/lib/src/storage/sembast_backend.dart:896
-- event_sourcing/lib/src/storage/storage_backend.dart:1658
+- event_sourcing/lib/src/storage/storage_backend.dart:1681
 
 Tests:
 
@@ -681,27 +681,27 @@ Tests:
 - event_sourcing/test/storage/storage_backend_conformance.dart:1652 StorageBackend conformance (postgres) table row source-aggregate index clearViewInTxn on one copy leaves another copy's index intact -- passed, skipped
 - event_sourcing/test/storage/storage_backend_conformance.dart:1652 StorageBackend conformance (postgres, runtime role) table row source-aggregate index clearViewInTxn on one copy leaves another copy's index intact -- passed
 - event_sourcing/test/storage/storage_backend_conformance.dart:1652 StorageBackend conformance (sembast (memory)) table row source-aggregate index clearViewInTxn on one copy leaves another copy's index intact -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:5144 StorageBackend conformance (postgres) chain lookups a lookup inside the storing transaction sees an event stored earlier in it -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:5144 StorageBackend conformance (postgres, runtime role) chain lookups a lookup inside the storing transaction sees an event stored earlier in it -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:5144 StorageBackend conformance (sembast (memory)) chain lookups a lookup inside the storing transaction sees an event stored earlier in it -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:5214 StorageBackend conformance (postgres) chain lookups a rolled-back transaction leaves every lookup as it was -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:5214 StorageBackend conformance (postgres, runtime role) chain lookups a rolled-back transaction leaves every lookup as it was -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:5214 StorageBackend conformance (sembast (memory)) chain lookups a rolled-back transaction leaves every lookup as it was -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:5350 StorageBackend conformance (postgres) chain lookups the latest eligible version skips annotations, ineligible events and other aggregates, and counts ingested copies -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:5350 StorageBackend conformance (postgres, runtime role) chain lookups the latest eligible version skips annotations, ineligible events and other aggregates, and counts ingested copies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:5350 StorageBackend conformance (sembast (memory)) chain lookups the latest eligible version skips annotations, ineligible events and other aggregates, and counts ingested copies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:5442 StorageBackend conformance (postgres) chain lookups the latest eligible version of each of several interleaved aggregates tracks only that aggregate's own events -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:5442 StorageBackend conformance (postgres, runtime role) chain lookups the latest eligible version of each of several interleaved aggregates tracks only that aggregate's own events -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:5442 StorageBackend conformance (sembast (memory)) chain lookups the latest eligible version of each of several interleaved aggregates tracks only that aggregate's own events -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:5511 StorageBackend conformance (postgres) chain lookups an aggregate whose only events are annotations has no eligible version -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:5511 StorageBackend conformance (postgres, runtime role) chain lookups an aggregate whose only events are annotations has no eligible version -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:5511 StorageBackend conformance (sembast (memory)) chain lookups an aggregate whose only events are annotations has no eligible version -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:5706 StorageBackend conformance (postgres) chain lookups findEventsForAggregateInTxn returns each of several interleaved aggregates' events, in ascending sequence order, authored and received alike -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:5706 StorageBackend conformance (postgres, runtime role) chain lookups findEventsForAggregateInTxn returns each of several interleaved aggregates' events, in ascending sequence order, authored and received alike -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:5706 StorageBackend conformance (sembast (memory)) chain lookups findEventsForAggregateInTxn returns each of several interleaved aggregates' events, in ascending sequence order, authored and received alike -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:5768 StorageBackend conformance (postgres) chain lookups findEventsForAggregateInTxn sees an event staged earlier in the same transaction -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:5768 StorageBackend conformance (postgres, runtime role) chain lookups findEventsForAggregateInTxn sees an event staged earlier in the same transaction -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:5768 StorageBackend conformance (sembast (memory)) chain lookups findEventsForAggregateInTxn sees an event staged earlier in the same transaction -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:5179 StorageBackend conformance (postgres) chain lookups a lookup inside the storing transaction sees an event stored earlier in it -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:5179 StorageBackend conformance (postgres, runtime role) chain lookups a lookup inside the storing transaction sees an event stored earlier in it -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:5179 StorageBackend conformance (sembast (memory)) chain lookups a lookup inside the storing transaction sees an event stored earlier in it -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:5249 StorageBackend conformance (postgres) chain lookups a rolled-back transaction leaves every lookup as it was -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:5249 StorageBackend conformance (postgres, runtime role) chain lookups a rolled-back transaction leaves every lookup as it was -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:5249 StorageBackend conformance (sembast (memory)) chain lookups a rolled-back transaction leaves every lookup as it was -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:5385 StorageBackend conformance (postgres) chain lookups the latest eligible version skips annotations, ineligible events and other aggregates, and counts ingested copies -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:5385 StorageBackend conformance (postgres, runtime role) chain lookups the latest eligible version skips annotations, ineligible events and other aggregates, and counts ingested copies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:5385 StorageBackend conformance (sembast (memory)) chain lookups the latest eligible version skips annotations, ineligible events and other aggregates, and counts ingested copies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:5477 StorageBackend conformance (postgres) chain lookups the latest eligible version of each of several interleaved aggregates tracks only that aggregate's own events -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:5477 StorageBackend conformance (postgres, runtime role) chain lookups the latest eligible version of each of several interleaved aggregates tracks only that aggregate's own events -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:5477 StorageBackend conformance (sembast (memory)) chain lookups the latest eligible version of each of several interleaved aggregates tracks only that aggregate's own events -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:5546 StorageBackend conformance (postgres) chain lookups an aggregate whose only events are annotations has no eligible version -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:5546 StorageBackend conformance (postgres, runtime role) chain lookups an aggregate whose only events are annotations has no eligible version -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:5546 StorageBackend conformance (sembast (memory)) chain lookups an aggregate whose only events are annotations has no eligible version -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:5741 StorageBackend conformance (postgres) chain lookups findEventsForAggregateInTxn returns each of several interleaved aggregates' events, in ascending sequence order, authored and received alike -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:5741 StorageBackend conformance (postgres, runtime role) chain lookups findEventsForAggregateInTxn returns each of several interleaved aggregates' events, in ascending sequence order, authored and received alike -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:5741 StorageBackend conformance (sembast (memory)) chain lookups findEventsForAggregateInTxn returns each of several interleaved aggregates' events, in ascending sequence order, authored and received alike -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:5803 StorageBackend conformance (postgres) chain lookups findEventsForAggregateInTxn sees an event staged earlier in the same transaction -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:5803 StorageBackend conformance (postgres, runtime role) chain lookups findEventsForAggregateInTxn sees an event staged earlier in the same transaction -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:5803 StorageBackend conformance (sembast (memory)) chain lookups findEventsForAggregateInTxn sees an event staged earlier in the same transaction -- passed
 
 **I**
 
@@ -1194,9 +1194,9 @@ Code:
 Tests:
 
 - event_sourcing/test/storage/halt_records_test.dart:184 SenderChannelRecord starts at generation 1, number 0, no hash and no receiver -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:3976 StorageBackend conformance (postgres) records beside a queue sender channel record write, overwrite, rollback and clear -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:3976 StorageBackend conformance (postgres, runtime role) records beside a queue sender channel record write, overwrite, rollback and clear -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:3976 StorageBackend conformance (sembast (memory)) records beside a queue sender channel record write, overwrite, rollback and clear -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:4011 StorageBackend conformance (postgres) records beside a queue sender channel record write, overwrite, rollback and clear -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:4011 StorageBackend conformance (postgres, runtime role) records beside a queue sender channel record write, overwrite, rollback and clear -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:4011 StorageBackend conformance (sembast (memory)) records beside a queue sender channel record write, overwrite, rollback and clear -- passed
 - event_sourcing/test/test_support/queue_registry_conformance.dart:1082 queue registry scenarios (postgres) persisted state a native registration writes the sender channel record; a deletion removes it -- passed, skipped
 - event_sourcing/test/test_support/queue_registry_conformance.dart:1082 queue registry scenarios (postgres, runtime role) persisted state a native registration writes the sender channel record; a deletion removes it -- passed
 - event_sourcing/test/test_support/queue_registry_conformance.dart:1082 queue registry scenarios (sembast) persisted state a native registration writes the sender channel record; a deletion removes it -- passed
@@ -1205,7 +1205,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/storage/storage_backend.dart:1071
+- event_sourcing/lib/src/storage/storage_backend.dart:1094
 
 Tests:
 
@@ -1258,12 +1258,12 @@ Tests:
 
 - event_sourcing/test/storage/fifo_entry_test.dart:468 FifoEntry delivery triple an attempt carries the delivery number and hash -- passed
 - event_sourcing/test/storage/halt_records_test.dart:136 SendFence names the delivery number and hash of a delivery -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:2582 StorageBackend conformance (postgres) FIFO an attempt keeps its delivery number and hash -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:2582 StorageBackend conformance (postgres, runtime role) FIFO an attempt keeps its delivery number and hash -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:2582 StorageBackend conformance (sembast (memory)) FIFO an attempt keeps its delivery number and hash -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:4032 StorageBackend conformance (postgres) records beside a queue a send fence keeps its delivery number and hash -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:4032 StorageBackend conformance (postgres, runtime role) records beside a queue a send fence keeps its delivery number and hash -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:4032 StorageBackend conformance (sembast (memory)) records beside a queue a send fence keeps its delivery number and hash -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:2617 StorageBackend conformance (postgres) FIFO an attempt keeps its delivery number and hash -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:2617 StorageBackend conformance (postgres, runtime role) FIFO an attempt keeps its delivery number and hash -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:2617 StorageBackend conformance (sembast (memory)) FIFO an attempt keeps its delivery number and hash -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:4067 StorageBackend conformance (postgres) records beside a queue a send fence keeps its delivery number and hash -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:4067 StorageBackend conformance (postgres, runtime role) records beside a queue a send fence keeps its delivery number and hash -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:4067 StorageBackend conformance (sembast (memory)) records beside a queue a send fence keeps its delivery number and hash -- passed
 - event_sourcing/test/test_support/delivery_channel_drain_conformance.dart:232 delivery channel drain (postgres) deliveries are numbered 1, 2, 3, each linked to the one before -- passed, skipped
 - event_sourcing/test/test_support/delivery_channel_drain_conformance.dart:232 delivery channel drain (sembast) deliveries are numbered 1, 2, 3, each linked to the one before -- passed
 
@@ -1272,16 +1272,16 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/storage/fifo_entry.dart:335
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2812
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2837
 - event_sourcing/lib/src/storage/sembast_backend.dart:3360
-- event_sourcing/lib/src/storage/storage_backend.dart:1347
+- event_sourcing/lib/src/storage/storage_backend.dart:1370
 
 Tests:
 
 - event_sourcing/test/storage/fifo_entry_test.dart:409 FifoEntry delivery triple the generation, number and hash round-trip -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:2506 StorageBackend conformance (postgres) FIFO mark sent records the delivery triple -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:2506 StorageBackend conformance (postgres, runtime role) FIFO mark sent records the delivery triple -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:2506 StorageBackend conformance (sembast (memory)) FIFO mark sent records the delivery triple -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:2541 StorageBackend conformance (postgres) FIFO mark sent records the delivery triple -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:2541 StorageBackend conformance (postgres, runtime role) FIFO mark sent records the delivery triple -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:2541 StorageBackend conformance (sembast (memory)) FIFO mark sent records the delivery triple -- passed
 
 **K**
 
@@ -1489,9 +1489,9 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/ingest/receiver_endpoint.dart:414
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:3696
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:3721
 - event_sourcing/lib/src/storage/sembast_backend.dart:1057
-- event_sourcing/lib/src/storage/storage_backend.dart:1468
+- event_sourcing/lib/src/storage/storage_backend.dart:1491
 
 Tests:
 
@@ -1572,7 +1572,7 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/ingest/receiver_endpoint.dart:262
-- event_sourcing/lib/src/storage/storage_backend.dart:1485
+- event_sourcing/lib/src/storage/storage_backend.dart:1508
 
 Tests:
 
@@ -1610,7 +1610,7 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/ingest/receiver_endpoint.dart:221
-- event_sourcing/lib/src/storage/storage_backend.dart:1502
+- event_sourcing/lib/src/storage/storage_backend.dart:1525
 
 Tests:
 
@@ -1854,9 +1854,9 @@ Code:
 Tests:
 
 - event_sourcing/test/storage/fifo_entry_test.dart:516 FifoEntry resendsDeliveryNumber resendsDeliveryNumber round-trips; absent reads as null -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:1914 StorageBackend conformance (postgres) FIFO enqueueFifoTxn with resendsDeliveryNumber persists and round-trips it; an ordinary item reads it as null -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:1914 StorageBackend conformance (postgres, runtime role) FIFO enqueueFifoTxn with resendsDeliveryNumber persists and round-trips it; an ordinary item reads it as null -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:1914 StorageBackend conformance (sembast (memory)) FIFO enqueueFifoTxn with resendsDeliveryNumber persists and round-trips it; an ordinary item reads it as null -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:1949 StorageBackend conformance (postgres) FIFO enqueueFifoTxn with resendsDeliveryNumber persists and round-trips it; an ordinary item reads it as null -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:1949 StorageBackend conformance (postgres, runtime role) FIFO enqueueFifoTxn with resendsDeliveryNumber persists and round-trips it; an ordinary item reads it as null -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:1949 StorageBackend conformance (sembast (memory)) FIFO enqueueFifoTxn with resendsDeliveryNumber persists and round-trips it; an ordinary item reads it as null -- passed
 - event_sourcing/test/test_support/delivery_channel_drain_conformance.dart:1072 delivery channel drain (postgres) adopting a receiver record above the sender's the receiver regresses then comes forward before any resend lands: adopted at the true generation, no finding -- passed, skipped
 - event_sourcing/test/test_support/delivery_channel_drain_conformance.dart:1072 delivery channel drain (sembast) adopting a receiver record above the sender's the receiver regresses then comes forward before any resend lands: adopted at the true generation, no finding -- passed
 - event_sourcing/test/test_support/delivery_channel_drain_conformance.dart:1173 delivery channel drain (postgres) adopting a receiver record above the sender's variant (a): a resend sent and acknowledged, then a later record arrives: adopted, the rest retired -- passed, skipped
@@ -1962,15 +1962,15 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2902
-- event_sourcing/lib/src/storage/storage_backend.dart:1382
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2927
+- event_sourcing/lib/src/storage/storage_backend.dart:1405
 - event_sourcing/lib/src/sync/drain.dart:1395
 
 Tests:
 
-- event_sourcing/test/storage/storage_backend_conformance.dart:2680 StorageBackend conformance (postgres) FIFO the retained delivery is the last sent at the number under the generation -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:2680 StorageBackend conformance (postgres, runtime role) FIFO the retained delivery is the last sent at the number under the generation -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:2680 StorageBackend conformance (sembast (memory)) FIFO the retained delivery is the last sent at the number under the generation -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:2715 StorageBackend conformance (postgres) FIFO the retained delivery is the last sent at the number under the generation -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:2715 StorageBackend conformance (postgres, runtime role) FIFO the retained delivery is the last sent at the number under the generation -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:2715 StorageBackend conformance (sembast (memory)) FIFO the retained delivery is the last sent at the number under the generation -- passed
 - event_sourcing/test/test_support/delivery_channel_drain_conformance.dart:625 delivery channel drain (postgres) a receiver behind gets the retained deliveries again exactly as sent, recorded in one resume event -- passed, skipped
 - event_sourcing/test/test_support/delivery_channel_drain_conformance.dart:625 delivery channel drain (sembast) a receiver behind gets the retained deliveries again exactly as sent, recorded in one resume event -- passed
 - event_sourcing/test/test_support/delivery_channel_drain_conformance.dart:742 delivery channel drain (postgres) a record behind at an adopted, unretained number is unexplained and starts generation 2 -- passed, skipped
@@ -2575,7 +2575,7 @@ Code:
 
 - event_sourcing/lib/src/storage/drain_lock.dart:1
 - event_sourcing/lib/src/storage/isolate_drain_lock.dart:1
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:3111
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:3136
 - event_sourcing/lib/src/storage/postgres/postgres_drain_lock.dart:1
 - event_sourcing/lib/src/storage/sembast_backend.dart:2100
 - event_sourcing/lib/src/storage/web_locks.dart:12
@@ -2588,12 +2588,12 @@ Tests:
 - event_sourcing/test/storage/postgres/postgres_drain_lock_test.dart:1169 scope two schemas, one copied identity, two drainers -- passed
 - event_sourcing/test/storage/postgres/postgres_drain_lock_test.dart:265 standby and takeover across processes a second process stands by and takes over -- passed
 - event_sourcing/test/storage/postgres/postgres_drain_lock_test.dart:981 acquisition on the lock session another database identity is refused -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:4444 StorageBackend conformance (postgres) drain lock and drain records one holder at a time; every acquisition raises the epoch -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:4444 StorageBackend conformance (postgres, runtime role) drain lock and drain records one holder at a time; every acquisition raises the epoch -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:4444 StorageBackend conformance (sembast (memory)) drain lock and drain records one holder at a time; every acquisition raises the epoch -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:4466 StorageBackend conformance (postgres) drain lock and drain records no hand-over is requested outside the browser -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:4466 StorageBackend conformance (postgres, runtime role) drain lock and drain records no hand-over is requested outside the browser -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:4466 StorageBackend conformance (sembast (memory)) drain lock and drain records no hand-over is requested outside the browser -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:4479 StorageBackend conformance (postgres) drain lock and drain records one holder at a time; every acquisition raises the epoch -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:4479 StorageBackend conformance (postgres, runtime role) drain lock and drain records one holder at a time; every acquisition raises the epoch -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:4479 StorageBackend conformance (sembast (memory)) drain lock and drain records one holder at a time; every acquisition raises the epoch -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:4501 StorageBackend conformance (postgres) drain lock and drain records no hand-over is requested outside the browser -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:4501 StorageBackend conformance (postgres, runtime role) drain lock and drain records no hand-over is requested outside the browser -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:4501 StorageBackend conformance (sembast (memory)) drain lock and drain records no hand-over is requested outside the browser -- passed
 - event_sourcing/test/sync/one_drainer_test.dart:66 two databases in one isolate each run a cycle -- passed
 - event_sourcing/test/sync/one_drainer_test.dart:97 a cycle in another isolate over another database -- passed
 - event_sourcing/test/web/drain_lock_web_test.dart:154 exclusion one tab holds the drain lock, the other is refused -- passed
@@ -2626,9 +2626,9 @@ Tests:
 - event_sourcing/test/storage/postgres/postgres_drain_lock_test.dart:360 fencing a replaced holder a check during an uncommitted epoch raise -- passed
 - event_sourcing/test/storage/postgres/postgres_drain_lock_test.dart:447 fencing a replaced holder a check before the epoch raise -- passed
 - event_sourcing/test/storage/postgres/postgres_drain_lock_test.dart:560 fencing a replaced holder a replaced holder sends nothing more -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:4487 StorageBackend conformance (postgres) drain lock and drain records assertHeldInTxn refuses after a release; a release is no loss -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:4487 StorageBackend conformance (postgres, runtime role) drain lock and drain records assertHeldInTxn refuses after a release; a release is no loss -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:4487 StorageBackend conformance (sembast (memory)) drain lock and drain records assertHeldInTxn refuses after a release; a release is no loss -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:4522 StorageBackend conformance (postgres) drain lock and drain records assertHeldInTxn refuses after a release; a release is no loss -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:4522 StorageBackend conformance (postgres, runtime role) drain lock and drain records assertHeldInTxn refuses after a release; a release is no loss -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:4522 StorageBackend conformance (sembast (memory)) drain lock and drain records assertHeldInTxn refuses after a release; a release is no loss -- passed
 - event_sourcing/test/test_support/delivery_cycle_conformance.dart:1213 delivery cycle scenarios (postgres) lock loss and stopping a loss detected during the pre-send fence starts no send -- passed, skipped
 - event_sourcing/test/test_support/delivery_cycle_conformance.dart:1213 delivery cycle scenarios (postgres, runtime role) lock loss and stopping a loss detected during the pre-send fence starts no send -- passed
 - event_sourcing/test/test_support/delivery_cycle_conformance.dart:1213 delivery cycle scenarios (sembast) lock loss and stopping a loss detected during the pre-send fence starts no send -- passed
@@ -2642,7 +2642,7 @@ Code:
 
 - event_sourcing/lib/src/storage/drain_lock.dart:1
 - event_sourcing/lib/src/storage/isolate_drain_lock.dart:1
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:3111
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:3136
 - event_sourcing/lib/src/storage/postgres/postgres_drain_lock.dart:1
 - event_sourcing/lib/src/storage/web_locks.dart:17
 - event_sourcing/lib/src/sync/sync_cycle.dart:31
@@ -2659,18 +2659,18 @@ Tests:
 - event_sourcing/test/storage/postgres/postgres_drain_lock_test.dart:819 a lock session behind a black hole a frozen lock connection: loss, then re-acquisition -- passed
 - event_sourcing/test/storage/postgres/postgres_drain_lock_test.dart:910 a lock session behind a black hole close while the lock connection is frozen -- passed
 - event_sourcing/test/storage/postgres/postgres_drain_lock_test.dart:945 a lock session behind a black hole close while the lock session reconnects into a black hole -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:4518 StorageBackend conformance (postgres) drain lock and drain records a request is granted once the holder releases -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:4518 StorageBackend conformance (postgres, runtime role) drain lock and drain records a request is granted once the holder releases -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:4518 StorageBackend conformance (sembast (memory)) drain lock and drain records a request is granted once the holder releases -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:4541 StorageBackend conformance (postgres) drain lock and drain records a request cancelled before its grant leaves the lock free -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:4541 StorageBackend conformance (postgres, runtime role) drain lock and drain records a request cancelled before its grant leaves the lock free -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:4541 StorageBackend conformance (sembast (memory)) drain lock and drain records a request cancelled before its grant leaves the lock free -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:4570 StorageBackend conformance (postgres) drain lock and drain records a grant that races a cancellation is released -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:4570 StorageBackend conformance (postgres, runtime role) drain lock and drain records a grant that races a cancellation is released -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:4570 StorageBackend conformance (sembast (memory)) drain lock and drain records a grant that races a cancellation is released -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:4600 StorageBackend conformance (postgres) drain lock and drain records close releases the drain lock -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:4600 StorageBackend conformance (postgres, runtime role) drain lock and drain records close releases the drain lock -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:4600 StorageBackend conformance (sembast (memory)) drain lock and drain records close releases the drain lock -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:4553 StorageBackend conformance (postgres) drain lock and drain records a request is granted once the holder releases -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:4553 StorageBackend conformance (postgres, runtime role) drain lock and drain records a request is granted once the holder releases -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:4553 StorageBackend conformance (sembast (memory)) drain lock and drain records a request is granted once the holder releases -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:4576 StorageBackend conformance (postgres) drain lock and drain records a request cancelled before its grant leaves the lock free -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:4576 StorageBackend conformance (postgres, runtime role) drain lock and drain records a request cancelled before its grant leaves the lock free -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:4576 StorageBackend conformance (sembast (memory)) drain lock and drain records a request cancelled before its grant leaves the lock free -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:4605 StorageBackend conformance (postgres) drain lock and drain records a grant that races a cancellation is released -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:4605 StorageBackend conformance (postgres, runtime role) drain lock and drain records a grant that races a cancellation is released -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:4605 StorageBackend conformance (sembast (memory)) drain lock and drain records a grant that races a cancellation is released -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:4635 StorageBackend conformance (postgres) drain lock and drain records close releases the drain lock -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:4635 StorageBackend conformance (postgres, runtime role) drain lock and drain records close releases the drain lock -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:4635 StorageBackend conformance (sembast (memory)) drain lock and drain records close releases the drain lock -- passed
 - event_sourcing/test/test_support/delivery_cycle_conformance.dart:1274 delivery cycle scenarios (postgres) lock loss and stopping closing the backend under a running cycle stops it -- passed, skipped
 - event_sourcing/test/test_support/delivery_cycle_conformance.dart:1274 delivery cycle scenarios (postgres, runtime role) lock loss and stopping closing the backend under a running cycle stops it -- passed
 - event_sourcing/test/test_support/delivery_cycle_conformance.dart:1274 delivery cycle scenarios (sembast) lock loss and stopping closing the backend under a running cycle stops it -- passed
@@ -2812,7 +2812,7 @@ Code:
 
 - event_sourcing/lib/src/destinations/destination_registry.dart:11
 - event_sourcing/lib/src/destinations/destination_registry.dart:691
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2967
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2992
 - event_sourcing/lib/src/storage/queue_records.dart:4
 - event_sourcing/lib/src/storage/sembast_backend.dart:1707
 
@@ -2822,21 +2822,21 @@ Tests:
 - event_sourcing/test/destinations/queue_rerun_test.dart:84 addDestination records the committed run's registration -- passed
 - event_sourcing/test/storage/postgres/postgres_fifo_guard_test.dart:773 deletion under the guard retains the terminal items -- passed
 - event_sourcing/test/storage/sembast_backend_watch_fifo_test.dart:359 SembastBackend.watchFifo on queue-changing writes retireQueueTxn -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:3072 StorageBackend conformance (postgres) FIFO retireQueueTxn refuses a pending head; nothing changes -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:3072 StorageBackend conformance (postgres, runtime role) FIFO retireQueueTxn refuses a pending head; nothing changes -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:3072 StorageBackend conformance (sembast (memory)) FIFO retireQueueTxn refuses a pending head; nothing changes -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:3101 StorageBackend conformance (postgres) FIFO retireQueueTxn tombstones a wedged head, deletes pending items and the cursor, keeps terminal items and the counter -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:3101 StorageBackend conformance (postgres, runtime role) FIFO retireQueueTxn tombstones a wedged head, deletes pending items and the cursor, keeps terminal items and the counter -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:3101 StorageBackend conformance (sembast (memory)) FIFO retireQueueTxn tombstones a wedged head, deletes pending items and the cursor, keeps terminal items and the counter -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:3157 StorageBackend conformance (postgres) FIFO retireQueueTxn on an empty or all-terminal queue -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:3157 StorageBackend conformance (postgres, runtime role) FIFO retireQueueTxn on an empty or all-terminal queue -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:3157 StorageBackend conformance (sembast (memory)) FIFO retireQueueTxn on an empty or all-terminal queue -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:3188 StorageBackend conformance (postgres) FIFO retireQueueTxn rolls back with its transaction -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:3188 StorageBackend conformance (postgres, runtime role) FIFO retireQueueTxn rolls back with its transaction -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:3188 StorageBackend conformance (sembast (memory)) FIFO retireQueueTxn rolls back with its transaction -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:3597 StorageBackend conformance (postgres) records beside a queue schedule round-trips registrationId and allowHardDelete -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:3597 StorageBackend conformance (postgres, runtime role) records beside a queue schedule round-trips registrationId and allowHardDelete -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:3597 StorageBackend conformance (sembast (memory)) records beside a queue schedule round-trips registrationId and allowHardDelete -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:3107 StorageBackend conformance (postgres) FIFO retireQueueTxn refuses a pending head; nothing changes -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:3107 StorageBackend conformance (postgres, runtime role) FIFO retireQueueTxn refuses a pending head; nothing changes -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:3107 StorageBackend conformance (sembast (memory)) FIFO retireQueueTxn refuses a pending head; nothing changes -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:3136 StorageBackend conformance (postgres) FIFO retireQueueTxn tombstones a wedged head, deletes pending items and the cursor, keeps terminal items and the counter -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:3136 StorageBackend conformance (postgres, runtime role) FIFO retireQueueTxn tombstones a wedged head, deletes pending items and the cursor, keeps terminal items and the counter -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:3136 StorageBackend conformance (sembast (memory)) FIFO retireQueueTxn tombstones a wedged head, deletes pending items and the cursor, keeps terminal items and the counter -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:3192 StorageBackend conformance (postgres) FIFO retireQueueTxn on an empty or all-terminal queue -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:3192 StorageBackend conformance (postgres, runtime role) FIFO retireQueueTxn on an empty or all-terminal queue -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:3192 StorageBackend conformance (sembast (memory)) FIFO retireQueueTxn on an empty or all-terminal queue -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:3223 StorageBackend conformance (postgres) FIFO retireQueueTxn rolls back with its transaction -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:3223 StorageBackend conformance (postgres, runtime role) FIFO retireQueueTxn rolls back with its transaction -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:3223 StorageBackend conformance (sembast (memory)) FIFO retireQueueTxn rolls back with its transaction -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:3632 StorageBackend conformance (postgres) records beside a queue schedule round-trips registrationId and allowHardDelete -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:3632 StorageBackend conformance (postgres, runtime role) records beside a queue schedule round-trips registrationId and allowHardDelete -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:3632 StorageBackend conformance (sembast (memory)) records beside a queue schedule round-trips registrationId and allowHardDelete -- passed
 - event_sourcing/test/test_support/drain_wedge_conformance.dart:1871 drain wedge scenarios (postgres) recovery and deletion remove the wedge record -- passed, skipped
 - event_sourcing/test/test_support/drain_wedge_conformance.dart:1871 drain wedge scenarios (postgres, runtime role) recovery and deletion remove the wedge record -- passed
 - event_sourcing/test/test_support/drain_wedge_conformance.dart:1871 drain wedge scenarios (sembast) recovery and deletion remove the wedge record -- passed
@@ -2888,26 +2888,26 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/storage/final_status.dart:48
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2741
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2766
 - event_sourcing/lib/src/storage/sembast_backend.dart:3298
 
 Tests:
 
-- event_sourcing/test/storage/storage_backend_conformance.dart:2406 StorageBackend conformance (postgres) FIFO wedged -> tombstoned keeps attempts -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:2406 StorageBackend conformance (postgres, runtime role) FIFO wedged -> tombstoned keeps attempts -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:2406 StorageBackend conformance (sembast (memory)) FIFO wedged -> tombstoned keeps attempts -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:2443 StorageBackend conformance (postgres) FIFO pending -> tombstoned only for an item carrying attempts -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:2443 StorageBackend conformance (postgres, runtime role) FIFO pending -> tombstoned only for an item carrying attempts -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:2443 StorageBackend conformance (sembast (memory)) FIFO pending -> tombstoned only for an item carrying attempts -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:2506 StorageBackend conformance (postgres) FIFO mark sent records the delivery triple -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:2506 StorageBackend conformance (postgres, runtime role) FIFO mark sent records the delivery triple -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:2506 StorageBackend conformance (sembast (memory)) FIFO mark sent records the delivery triple -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:2774 StorageBackend conformance (postgres) FIFO every illegal transition throws and leaves the item unchanged -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:2774 StorageBackend conformance (postgres, runtime role) FIFO every illegal transition throws and leaves the item unchanged -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:2774 StorageBackend conformance (sembast (memory)) FIFO every illegal transition throws and leaves the item unchanged -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:2843 StorageBackend conformance (postgres) FIFO setFinalStatusTxn throws StateError on a missing item -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:2843 StorageBackend conformance (postgres, runtime role) FIFO setFinalStatusTxn throws StateError on a missing item -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:2843 StorageBackend conformance (sembast (memory)) FIFO setFinalStatusTxn throws StateError on a missing item -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:2441 StorageBackend conformance (postgres) FIFO wedged -> tombstoned keeps attempts -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:2441 StorageBackend conformance (postgres, runtime role) FIFO wedged -> tombstoned keeps attempts -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:2441 StorageBackend conformance (sembast (memory)) FIFO wedged -> tombstoned keeps attempts -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:2478 StorageBackend conformance (postgres) FIFO pending -> tombstoned only for an item carrying attempts -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:2478 StorageBackend conformance (postgres, runtime role) FIFO pending -> tombstoned only for an item carrying attempts -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:2478 StorageBackend conformance (sembast (memory)) FIFO pending -> tombstoned only for an item carrying attempts -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:2541 StorageBackend conformance (postgres) FIFO mark sent records the delivery triple -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:2541 StorageBackend conformance (postgres, runtime role) FIFO mark sent records the delivery triple -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:2541 StorageBackend conformance (sembast (memory)) FIFO mark sent records the delivery triple -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:2809 StorageBackend conformance (postgres) FIFO every illegal transition throws and leaves the item unchanged -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:2809 StorageBackend conformance (postgres, runtime role) FIFO every illegal transition throws and leaves the item unchanged -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:2809 StorageBackend conformance (sembast (memory)) FIFO every illegal transition throws and leaves the item unchanged -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:2878 StorageBackend conformance (postgres) FIFO setFinalStatusTxn throws StateError on a missing item -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:2878 StorageBackend conformance (postgres, runtime role) FIFO setFinalStatusTxn throws StateError on a missing item -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:2878 StorageBackend conformance (sembast (memory)) FIFO setFinalStatusTxn throws StateError on a missing item -- passed
 
 **C**
 
@@ -2919,9 +2919,9 @@ Tests:
 
 - event_sourcing/test/destinations/queue_rerun_test.dart:189 fill, drain outcome, recovery and deletion under re-runs -- passed
 - event_sourcing/test/storage/sembast_backend_watch_fifo_test.dart:314 SembastBackend.watchFifo on queue-changing writes appendAttemptTxn and setFinalStatusTxn -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:2296 StorageBackend conformance (postgres) FIFO appendAttemptTxn rolls back with its transaction -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:2296 StorageBackend conformance (postgres, runtime role) FIFO appendAttemptTxn rolls back with its transaction -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:2296 StorageBackend conformance (sembast (memory)) FIFO appendAttemptTxn rolls back with its transaction -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:2331 StorageBackend conformance (postgres) FIFO appendAttemptTxn rolls back with its transaction -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:2331 StorageBackend conformance (postgres, runtime role) FIFO appendAttemptTxn rolls back with its transaction -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:2331 StorageBackend conformance (sembast (memory)) FIFO appendAttemptTxn rolls back with its transaction -- passed
 - event_sourcing/test/test_support/drain_wedge_conformance.dart:753 drain wedge scenarios (postgres) atomicity a wedge that committed but reported failure records nothing more -- passed, skipped
 - event_sourcing/test/test_support/drain_wedge_conformance.dart:753 drain wedge scenarios (postgres, runtime role) atomicity a wedge that committed but reported failure records nothing more -- passed
 - event_sourcing/test/test_support/drain_wedge_conformance.dart:753 drain wedge scenarios (sembast) atomicity a wedge that committed but reported failure records nothing more -- passed
@@ -2951,21 +2951,21 @@ Code:
 Tests:
 
 - event_sourcing/test/ingest/ingest_does_not_mutate_local_state_test.dart:575 EventStore ingest path — receiver-stays-passive invariant (-E ingesting system.destination_wedged does NOT wedge the receiver or write its wedge record -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:2170 StorageBackend conformance (postgres) FIFO appendAttemptTxn appends without changing final_status -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:2170 StorageBackend conformance (postgres, runtime role) FIFO appendAttemptTxn appends without changing final_status -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:2170 StorageBackend conformance (sembast (memory)) FIFO appendAttemptTxn appends without changing final_status -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:2207 StorageBackend conformance (postgres) FIFO appendAttemptTxn throws StateError on a missing item -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:2207 StorageBackend conformance (postgres, runtime role) FIFO appendAttemptTxn throws StateError on a missing item -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:2207 StorageBackend conformance (sembast (memory)) FIFO appendAttemptTxn throws StateError on a missing item -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:2233 StorageBackend conformance (postgres) FIFO appendAttemptTxn throws StateError on a missing queue -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:2233 StorageBackend conformance (postgres, runtime role) FIFO appendAttemptTxn throws StateError on a missing queue -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:2233 StorageBackend conformance (sembast (memory)) FIFO appendAttemptTxn throws StateError on a missing queue -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:2252 StorageBackend conformance (postgres) FIFO appendAttemptTxn throws StateError on a terminal item -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:2252 StorageBackend conformance (postgres, runtime role) FIFO appendAttemptTxn throws StateError on a terminal item -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:2252 StorageBackend conformance (sembast (memory)) FIFO appendAttemptTxn throws StateError on a terminal item -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:2980 StorageBackend conformance (postgres) FIFO readFifoHeadTxn sees a status change staged in its transaction -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:2980 StorageBackend conformance (postgres, runtime role) FIFO readFifoHeadTxn sees a status change staged in its transaction -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:2980 StorageBackend conformance (sembast (memory)) FIFO readFifoHeadTxn sees a status change staged in its transaction -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:2205 StorageBackend conformance (postgres) FIFO appendAttemptTxn appends without changing final_status -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:2205 StorageBackend conformance (postgres, runtime role) FIFO appendAttemptTxn appends without changing final_status -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:2205 StorageBackend conformance (sembast (memory)) FIFO appendAttemptTxn appends without changing final_status -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:2242 StorageBackend conformance (postgres) FIFO appendAttemptTxn throws StateError on a missing item -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:2242 StorageBackend conformance (postgres, runtime role) FIFO appendAttemptTxn throws StateError on a missing item -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:2242 StorageBackend conformance (sembast (memory)) FIFO appendAttemptTxn throws StateError on a missing item -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:2268 StorageBackend conformance (postgres) FIFO appendAttemptTxn throws StateError on a missing queue -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:2268 StorageBackend conformance (postgres, runtime role) FIFO appendAttemptTxn throws StateError on a missing queue -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:2268 StorageBackend conformance (sembast (memory)) FIFO appendAttemptTxn throws StateError on a missing queue -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:2287 StorageBackend conformance (postgres) FIFO appendAttemptTxn throws StateError on a terminal item -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:2287 StorageBackend conformance (postgres, runtime role) FIFO appendAttemptTxn throws StateError on a terminal item -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:2287 StorageBackend conformance (sembast (memory)) FIFO appendAttemptTxn throws StateError on a terminal item -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:3015 StorageBackend conformance (postgres) FIFO readFifoHeadTxn sees a status change staged in its transaction -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:3015 StorageBackend conformance (postgres, runtime role) FIFO readFifoHeadTxn sees a status change staged in its transaction -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:3015 StorageBackend conformance (sembast (memory)) FIFO readFifoHeadTxn sees a status change staged in its transaction -- passed
 - event_sourcing/test/test_support/drain_wedge_conformance.dart:1518 drain wedge scenarios (postgres) guards SendOk and a transient below the budget append none -- passed, skipped
 - event_sourcing/test/test_support/drain_wedge_conformance.dart:1518 drain wedge scenarios (postgres, runtime role) guards SendOk and a transient below the budget append none -- passed
 - event_sourcing/test/test_support/drain_wedge_conformance.dart:1518 drain wedge scenarios (sembast) guards SendOk and a transient below the budget append none -- passed
@@ -2993,9 +2993,9 @@ Code:
 Tests:
 
 - event_sourcing/test/destinations/queue_rerun_test.dart:100 setStartDate and setEndDate report the committed run -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:3631 StorageBackend conformance (postgres) records beside a queue replay request write, overwrite, rollback and clear -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:3631 StorageBackend conformance (postgres, runtime role) records beside a queue replay request write, overwrite, rollback and clear -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:3631 StorageBackend conformance (sembast (memory)) records beside a queue replay request write, overwrite, rollback and clear -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:3666 StorageBackend conformance (postgres) records beside a queue replay request write, overwrite, rollback and clear -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:3666 StorageBackend conformance (postgres, runtime role) records beside a queue replay request write, overwrite, rollback and clear -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:3666 StorageBackend conformance (sembast (memory)) records beside a queue replay request write, overwrite, rollback and clear -- passed
 - event_sourcing/test/test_support/delivery_channel_drain_conformance.dart:625 delivery channel drain (postgres) a receiver behind gets the retained deliveries again exactly as sent, recorded in one resume event -- passed, skipped
 - event_sourcing/test/test_support/delivery_channel_drain_conformance.dart:625 delivery channel drain (sembast) a receiver behind gets the retained deliveries again exactly as sent, recorded in one resume event -- passed
 - event_sourcing/test/test_support/operator_halt_conformance.dart:1694 operator halt scenarios (postgres) unserved destinations a destination another registry registers -- passed, skipped
@@ -3048,7 +3048,7 @@ Code:
 - event_sourcing/lib/src/destinations/destination_registry.dart:850
 - event_sourcing/lib/src/destinations/destination_registry.dart:931
 - event_sourcing/lib/src/storage/drain_records.dart:4
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2930
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2955
 - event_sourcing/lib/src/storage/queue_records.dart:4
 - event_sourcing/lib/src/sync/declared_configuration.dart:1
 - event_sourcing/lib/src/sync/fill_batch.dart:25
@@ -3057,9 +3057,9 @@ Tests:
 
 - event_sourcing/example/test/hub_halt_recover_test.dart:486 a halt for reconfiguration is recovered only once the drainer runs a changed configuration, and the refill follows it -- passed
 - event_sourcing/test/destinations/queue_rerun_test.dart:451 a reconfigure recovery's guard names the committed event -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:3022 StorageBackend conformance (postgres) FIFO deleteNullRowsAfterSequenceInQueueTxn reports count and lowest first_seq -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:3022 StorageBackend conformance (postgres, runtime role) FIFO deleteNullRowsAfterSequenceInQueueTxn reports count and lowest first_seq -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:3022 StorageBackend conformance (sembast (memory)) FIFO deleteNullRowsAfterSequenceInQueueTxn reports count and lowest first_seq -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:3057 StorageBackend conformance (postgres) FIFO deleteNullRowsAfterSequenceInQueueTxn reports count and lowest first_seq -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:3057 StorageBackend conformance (postgres, runtime role) FIFO deleteNullRowsAfterSequenceInQueueTxn reports count and lowest first_seq -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:3057 StorageBackend conformance (sembast (memory)) FIFO deleteNullRowsAfterSequenceInQueueTxn reports count and lowest first_seq -- passed
 - event_sourcing/test/sync/sync_cycle_policy_resolver_test.dart:363 mutual exclusivity + throws a configuration version that is not an identifier is refused -- passed
 - event_sourcing/test/test_support/drain_wedge_conformance.dart:1871 drain wedge scenarios (postgres) recovery and deletion remove the wedge record -- passed, skipped
 - event_sourcing/test/test_support/drain_wedge_conformance.dart:1871 drain wedge scenarios (postgres, runtime role) recovery and deletion remove the wedge record -- passed
@@ -3128,12 +3128,12 @@ Code:
 
 Tests:
 
-- event_sourcing/test/storage/storage_backend_conformance.dart:3554 StorageBackend conformance (postgres) fill_cursor readFillCursorTxn sees an in-transaction write -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:3554 StorageBackend conformance (postgres, runtime role) fill_cursor readFillCursorTxn sees an in-transaction write -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:3554 StorageBackend conformance (sembast (memory)) fill_cursor readFillCursorTxn sees an in-transaction write -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:3597 StorageBackend conformance (postgres) records beside a queue schedule round-trips registrationId and allowHardDelete -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:3597 StorageBackend conformance (postgres, runtime role) records beside a queue schedule round-trips registrationId and allowHardDelete -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:3597 StorageBackend conformance (sembast (memory)) records beside a queue schedule round-trips registrationId and allowHardDelete -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:3589 StorageBackend conformance (postgres) fill_cursor readFillCursorTxn sees an in-transaction write -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:3589 StorageBackend conformance (postgres, runtime role) fill_cursor readFillCursorTxn sees an in-transaction write -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:3589 StorageBackend conformance (sembast (memory)) fill_cursor readFillCursorTxn sees an in-transaction write -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:3632 StorageBackend conformance (postgres) records beside a queue schedule round-trips registrationId and allowHardDelete -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:3632 StorageBackend conformance (postgres, runtime role) records beside a queue schedule round-trips registrationId and allowHardDelete -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:3632 StorageBackend conformance (sembast (memory)) records beside a queue schedule round-trips registrationId and allowHardDelete -- passed
 - event_sourcing/test/test_support/queue_registry_conformance.dart:1682 queue registry scenarios (postgres) fill compare-and-set re-registration while the transform runs -- passed, skipped
 - event_sourcing/test/test_support/queue_registry_conformance.dart:1682 queue registry scenarios (postgres, runtime role) fill compare-and-set re-registration while the transform runs -- passed
 - event_sourcing/test/test_support/queue_registry_conformance.dart:1682 queue registry scenarios (sembast) fill compare-and-set re-registration while the transform runs -- passed
@@ -3199,9 +3199,9 @@ Code:
 
 Tests:
 
-- event_sourcing/test/storage/storage_backend_conformance.dart:3720 StorageBackend conformance (postgres) records beside a queue wedge record write, overwrite, rollback and clear -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:3720 StorageBackend conformance (postgres, runtime role) records beside a queue wedge record write, overwrite, rollback and clear -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:3720 StorageBackend conformance (sembast (memory)) records beside a queue wedge record write, overwrite, rollback and clear -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:3755 StorageBackend conformance (postgres) records beside a queue wedge record write, overwrite, rollback and clear -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:3755 StorageBackend conformance (postgres, runtime role) records beside a queue wedge record write, overwrite, rollback and clear -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:3755 StorageBackend conformance (sembast (memory)) records beside a queue wedge record write, overwrite, rollback and clear -- passed
 - event_sourcing/test/storage/wedge_record_test.dart:53 WedgeRecord round-trips every field -- passed
 - event_sourcing/test/sync/sync_cycle_policy_resolver_test.dart:166 policyResolver invocation resolver result is the same across all destinations within one cycle -- passed
 - event_sourcing/test/sync/sync_cycle_policy_resolver_test.dart:212 policyResolver invocation resolver returning null falls back to SyncPolicy.defaults -- passed
@@ -3758,12 +3758,12 @@ Tests:
 
 - event_sourcing/test/destinations/queue_rerun_test.dart:321 requestHalt and cancelHalt under re-runs -- passed
 - event_sourcing/test/destinations/queue_rerun_test.dart:378 the pre-send fence under re-runs -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:3855 StorageBackend conformance (postgres) records beside a queue halt request write, overwrite, rollback and clear -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:3855 StorageBackend conformance (postgres, runtime role) records beside a queue halt request write, overwrite, rollback and clear -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:3855 StorageBackend conformance (sembast (memory)) records beside a queue halt request write, overwrite, rollback and clear -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:3922 StorageBackend conformance (postgres) records beside a queue send fence write, overwrite, rollback and clear -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:3922 StorageBackend conformance (postgres, runtime role) records beside a queue send fence write, overwrite, rollback and clear -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:3922 StorageBackend conformance (sembast (memory)) records beside a queue send fence write, overwrite, rollback and clear -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:3890 StorageBackend conformance (postgres) records beside a queue halt request write, overwrite, rollback and clear -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:3890 StorageBackend conformance (postgres, runtime role) records beside a queue halt request write, overwrite, rollback and clear -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:3890 StorageBackend conformance (sembast (memory)) records beside a queue halt request write, overwrite, rollback and clear -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:3957 StorageBackend conformance (postgres) records beside a queue send fence write, overwrite, rollback and clear -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:3957 StorageBackend conformance (postgres, runtime role) records beside a queue send fence write, overwrite, rollback and clear -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:3957 StorageBackend conformance (sembast (memory)) records beside a queue send fence write, overwrite, rollback and clear -- passed
 - event_sourcing/test/test_support/drain_wedge_conformance.dart:1567 drain wedge scenarios (postgres) guards wedgeHeadInTxn refuses anything but the pending head -- passed, skipped
 - event_sourcing/test/test_support/drain_wedge_conformance.dart:1567 drain wedge scenarios (postgres, runtime role) guards wedgeHeadInTxn refuses anything but the pending head -- passed
 - event_sourcing/test/test_support/drain_wedge_conformance.dart:1567 drain wedge scenarios (sembast) guards wedgeHeadInTxn refuses anything but the pending head -- passed
@@ -3967,12 +3967,12 @@ Code:
 
 Tests:
 
-- event_sourcing/test/storage/storage_backend_conformance.dart:4058 StorageBackend conformance (postgres) records beside a queue listSchedules after schedule writes and a deletion -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:4058 StorageBackend conformance (postgres, runtime role) records beside a queue listSchedules after schedule writes and a deletion -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:4058 StorageBackend conformance (sembast (memory)) records beside a queue listSchedules after schedule writes and a deletion -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:4626 StorageBackend conformance (postgres) drain lock and drain records drain records: write, overwrite, rollback, clear -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:4626 StorageBackend conformance (postgres, runtime role) drain lock and drain records drain records: write, overwrite, rollback, clear -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:4626 StorageBackend conformance (sembast (memory)) drain lock and drain records drain records: write, overwrite, rollback, clear -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:4093 StorageBackend conformance (postgres) records beside a queue listSchedules after schedule writes and a deletion -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:4093 StorageBackend conformance (postgres, runtime role) records beside a queue listSchedules after schedule writes and a deletion -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:4093 StorageBackend conformance (sembast (memory)) records beside a queue listSchedules after schedule writes and a deletion -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:4661 StorageBackend conformance (postgres) drain lock and drain records drain records: write, overwrite, rollback, clear -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:4661 StorageBackend conformance (postgres, runtime role) drain lock and drain records drain records: write, overwrite, rollback, clear -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:4661 StorageBackend conformance (sembast (memory)) drain lock and drain records drain records: write, overwrite, rollback, clear -- passed
 - event_sourcing/test/test_support/delivery_cycle_conformance.dart:414 delivery cycle scenarios (postgres) one drainer a cycle that does not hold the lock honours no halt -- passed, skipped
 - event_sourcing/test/test_support/delivery_cycle_conformance.dart:414 delivery cycle scenarios (postgres, runtime role) one drainer a cycle that does not hold the lock honours no halt -- passed
 - event_sourcing/test/test_support/delivery_cycle_conformance.dart:414 delivery cycle scenarios (sembast) one drainer a cycle that does not hold the lock honours no halt -- passed
@@ -4027,9 +4027,9 @@ Tests:
 - event_sourcing/test/destinations/registry_audit_atomicity_test.dart:51 DestinationRegistry mutation atomicity addDestination: an injected failure rolls back the schedule write -- passed
 - event_sourcing/test/destinations/registry_audit_atomicity_test.dart:51 DestinationRegistry mutation atomicity deleteDestination: an injected failure rolls back the queue retirement and the schedule drop -- passed
 - event_sourcing/test/destinations/registry_audit_atomicity_test.dart:51 DestinationRegistry mutation atomicity setStartDate: an injected failure rolls back the schedule write -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:3677 StorageBackend conformance (postgres) records beside a queue registry check write, overwrite and rollback -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:3677 StorageBackend conformance (postgres, runtime role) records beside a queue registry check write, overwrite and rollback -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:3677 StorageBackend conformance (sembast (memory)) records beside a queue registry check write, overwrite and rollback -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:3712 StorageBackend conformance (postgres) records beside a queue registry check write, overwrite and rollback -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:3712 StorageBackend conformance (postgres, runtime role) records beside a queue registry check write, overwrite and rollback -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:3712 StorageBackend conformance (sembast (memory)) records beside a queue registry check write, overwrite and rollback -- passed
 - event_sourcing/test/test_support/operator_halt_conformance.dart:1447 operator halt scenarios (postgres) request and cancel a second request while one is open -- passed, skipped
 - event_sourcing/test/test_support/operator_halt_conformance.dart:1447 operator halt scenarios (postgres, runtime role) request and cancel a second request while one is open -- passed
 - event_sourcing/test/test_support/operator_halt_conformance.dart:1447 operator halt scenarios (sembast) request and cancel a second request while one is open -- passed
@@ -4117,9 +4117,9 @@ Code:
 
 Tests:
 
-- event_sourcing/test/storage/storage_backend_conformance.dart:3786 StorageBackend conformance (postgres) records beside a queue transform failure record write, overwrite, rollback and clear -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:3786 StorageBackend conformance (postgres, runtime role) records beside a queue transform failure record write, overwrite, rollback and clear -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:3786 StorageBackend conformance (sembast (memory)) records beside a queue transform failure record write, overwrite, rollback and clear -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:3821 StorageBackend conformance (postgres) records beside a queue transform failure record write, overwrite, rollback and clear -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:3821 StorageBackend conformance (postgres, runtime role) records beside a queue transform failure record write, overwrite, rollback and clear -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:3821 StorageBackend conformance (sembast (memory)) records beside a queue transform failure record write, overwrite, rollback and clear -- passed
 - event_sourcing/test/test_support/transform_failure_conformance.dart:222 transform failure scenarios (postgres) the first failure records one time and enqueues nothing -- passed, skipped
 - event_sourcing/test/test_support/transform_failure_conformance.dart:222 transform failure scenarios (sembast) the first failure records one time and enqueues nothing -- passed
 - event_sourcing/test/test_support/transform_failure_conformance.dart:345 transform failure scenarios (postgres) the retry budget spent by attempts enqueues a transform-failed item, advances the position and clears the record -- passed, skipped
@@ -4291,45 +4291,45 @@ Code:
 
 Tests:
 
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres) hashed fields as spelled an event with a timestamp in year 0000 reads back as it was stored through every read path, and its hash verifies -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres) hashed fields as spelled an event with a timestamp in year 9999 reads back as it was stored through every read path, and its hash verifies -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres) hashed fields as spelled an event with a timestamp with a +00:00 offset reads back as it was stored through every read path, and its hash verifies -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres) hashed fields as spelled an event with a timestamp with a +02:00 offset reads back as it was stored through every read path, and its hash verifies -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres) hashed fields as spelled an event with a timestamp with a -05:30 offset reads back as it was stored through every read path, and its hash verifies -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres) hashed fields as spelled an event with a timestamp with microseconds reads back as it was stored through every read path, and its hash verifies -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres) hashed fields as spelled an event with a timestamp without a fraction reads back as it was stored through every read path, and its hash verifies -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres) hashed fields as spelled an event with an automation initiator without its optional key reads back as it was stored through every read path, and its hash verifies -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres) hashed fields as spelled an event with an initiator with a key this build does not read reads back as it was stored through every read path, and its hash verifies -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres) hashed fields as spelled an event with top-level keys this build does not read reads back as it was stored through every read path, and its hash verifies -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres) hashed fields as spelled an event with version maps with keys this build does not read reads back as it was stored through every read path, and its hash verifies -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with a timestamp in year 0000 reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with a timestamp in year 9999 reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with a timestamp with a +00:00 offset reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with a timestamp with a +02:00 offset reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with a timestamp with a -05:30 offset reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with a timestamp with microseconds reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with a timestamp without a fraction reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with an automation initiator without its optional key reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with an initiator with a key this build does not read reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with top-level keys this build does not read reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with version maps with keys this build does not read reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with a timestamp in year 0000 reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with a timestamp in year 9999 reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with a timestamp with a +00:00 offset reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with a timestamp with a +02:00 offset reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with a timestamp with a -05:30 offset reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with a timestamp with microseconds reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with a timestamp without a fraction reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with an automation initiator without its optional key reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with an initiator with a key this build does not read reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with top-level keys this build does not read reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with version maps with keys this build does not read reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6146 StorageBackend conformance (postgres) hashed fields as spelled a record whose client timestamp has no offset, lies outside the four-digit years or rolls a field over does not parse, naming the field -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:6146 StorageBackend conformance (postgres, runtime role) hashed fields as spelled a record whose client timestamp has no offset, lies outside the four-digit years or rolls a field over does not parse, naming the field -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6146 StorageBackend conformance (sembast (memory)) hashed fields as spelled a record whose client timestamp has no offset, lies outside the four-digit years or rolls a field over does not parse, naming the field -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6268 StorageBackend conformance (postgres) hashed fields as spelled appendEvent refuses an event whose client timestamp lies outside the four-digit years, writing nothing -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:6268 StorageBackend conformance (postgres, runtime role) hashed fields as spelled appendEvent refuses an event whose client timestamp lies outside the four-digit years, writing nothing -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6268 StorageBackend conformance (sembast (memory)) hashed fields as spelled appendEvent refuses an event whose client timestamp lies outside the four-digit years, writing nothing -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres) hashed fields as spelled an event with a timestamp in year 0000 reads back as it was stored through every read path, and its hash verifies -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres) hashed fields as spelled an event with a timestamp in year 9999 reads back as it was stored through every read path, and its hash verifies -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres) hashed fields as spelled an event with a timestamp with a +00:00 offset reads back as it was stored through every read path, and its hash verifies -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres) hashed fields as spelled an event with a timestamp with a +02:00 offset reads back as it was stored through every read path, and its hash verifies -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres) hashed fields as spelled an event with a timestamp with a -05:30 offset reads back as it was stored through every read path, and its hash verifies -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres) hashed fields as spelled an event with a timestamp with microseconds reads back as it was stored through every read path, and its hash verifies -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres) hashed fields as spelled an event with a timestamp without a fraction reads back as it was stored through every read path, and its hash verifies -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres) hashed fields as spelled an event with an automation initiator without its optional key reads back as it was stored through every read path, and its hash verifies -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres) hashed fields as spelled an event with an initiator with a key this build does not read reads back as it was stored through every read path, and its hash verifies -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres) hashed fields as spelled an event with top-level keys this build does not read reads back as it was stored through every read path, and its hash verifies -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres) hashed fields as spelled an event with version maps with keys this build does not read reads back as it was stored through every read path, and its hash verifies -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with a timestamp in year 0000 reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with a timestamp in year 9999 reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with a timestamp with a +00:00 offset reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with a timestamp with a +02:00 offset reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with a timestamp with a -05:30 offset reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with a timestamp with microseconds reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with a timestamp without a fraction reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with an automation initiator without its optional key reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with an initiator with a key this build does not read reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with top-level keys this build does not read reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with version maps with keys this build does not read reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with a timestamp in year 0000 reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with a timestamp in year 9999 reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with a timestamp with a +00:00 offset reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with a timestamp with a +02:00 offset reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with a timestamp with a -05:30 offset reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with a timestamp with microseconds reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with a timestamp without a fraction reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with an automation initiator without its optional key reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with an initiator with a key this build does not read reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with top-level keys this build does not read reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with version maps with keys this build does not read reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6181 StorageBackend conformance (postgres) hashed fields as spelled a record whose client timestamp has no offset, lies outside the four-digit years or rolls a field over does not parse, naming the field -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:6181 StorageBackend conformance (postgres, runtime role) hashed fields as spelled a record whose client timestamp has no offset, lies outside the four-digit years or rolls a field over does not parse, naming the field -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6181 StorageBackend conformance (sembast (memory)) hashed fields as spelled a record whose client timestamp has no offset, lies outside the four-digit years or rolls a field over does not parse, naming the field -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6303 StorageBackend conformance (postgres) hashed fields as spelled appendEvent refuses an event whose client timestamp lies outside the four-digit years, writing nothing -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:6303 StorageBackend conformance (postgres, runtime role) hashed fields as spelled appendEvent refuses an event whose client timestamp lies outside the four-digit years, writing nothing -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6303 StorageBackend conformance (sembast (memory)) hashed fields as spelled appendEvent refuses an event whose client timestamp lies outside the four-digit years, writing nothing -- passed
 - event_sourcing/test/storage/stored_event_test.dart:277 client_timestamp form fromMap admits a timestamp with a four-digit year, calendar fields in range and an explicit offset, and keeps its spelling -- passed
 - event_sourcing/test/storage/stored_event_test.dart:306 client_timestamp form fromMap refuses a timestamp without an offset, outside the four-digit years, or with a field out of its calendar range, naming client_timestamp -- passed
 - event_sourcing/test/storage/stored_event_test.dart:350 client_timestamp form an event built with a local clientTimestamp writes it in UTC, and one outside the four-digit years fails requireWellFormedRecord -- passed
@@ -4410,39 +4410,39 @@ Code:
 Tests:
 
 - event_sourcing/test/event_store/data_format_compatibility_test.dart:101 a later release of this data-format major on sembast version maps with a key this build does not read, in the library-version events and the boot check, open and read back unchanged -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres) hashed fields as spelled an event with a timestamp in year 0000 reads back as it was stored through every read path, and its hash verifies -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres) hashed fields as spelled an event with a timestamp in year 9999 reads back as it was stored through every read path, and its hash verifies -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres) hashed fields as spelled an event with a timestamp with a +00:00 offset reads back as it was stored through every read path, and its hash verifies -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres) hashed fields as spelled an event with a timestamp with a +02:00 offset reads back as it was stored through every read path, and its hash verifies -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres) hashed fields as spelled an event with a timestamp with a -05:30 offset reads back as it was stored through every read path, and its hash verifies -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres) hashed fields as spelled an event with a timestamp with microseconds reads back as it was stored through every read path, and its hash verifies -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres) hashed fields as spelled an event with a timestamp without a fraction reads back as it was stored through every read path, and its hash verifies -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres) hashed fields as spelled an event with an automation initiator without its optional key reads back as it was stored through every read path, and its hash verifies -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres) hashed fields as spelled an event with an initiator with a key this build does not read reads back as it was stored through every read path, and its hash verifies -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres) hashed fields as spelled an event with top-level keys this build does not read reads back as it was stored through every read path, and its hash verifies -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres) hashed fields as spelled an event with version maps with keys this build does not read reads back as it was stored through every read path, and its hash verifies -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with a timestamp in year 0000 reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with a timestamp in year 9999 reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with a timestamp with a +00:00 offset reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with a timestamp with a +02:00 offset reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with a timestamp with a -05:30 offset reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with a timestamp with microseconds reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with a timestamp without a fraction reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with an automation initiator without its optional key reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with an initiator with a key this build does not read reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with top-level keys this build does not read reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with version maps with keys this build does not read reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with a timestamp in year 0000 reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with a timestamp in year 9999 reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with a timestamp with a +00:00 offset reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with a timestamp with a +02:00 offset reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with a timestamp with a -05:30 offset reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with a timestamp with microseconds reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with a timestamp without a fraction reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with an automation initiator without its optional key reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with an initiator with a key this build does not read reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with top-level keys this build does not read reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with version maps with keys this build does not read reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres) hashed fields as spelled an event with a timestamp in year 0000 reads back as it was stored through every read path, and its hash verifies -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres) hashed fields as spelled an event with a timestamp in year 9999 reads back as it was stored through every read path, and its hash verifies -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres) hashed fields as spelled an event with a timestamp with a +00:00 offset reads back as it was stored through every read path, and its hash verifies -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres) hashed fields as spelled an event with a timestamp with a +02:00 offset reads back as it was stored through every read path, and its hash verifies -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres) hashed fields as spelled an event with a timestamp with a -05:30 offset reads back as it was stored through every read path, and its hash verifies -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres) hashed fields as spelled an event with a timestamp with microseconds reads back as it was stored through every read path, and its hash verifies -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres) hashed fields as spelled an event with a timestamp without a fraction reads back as it was stored through every read path, and its hash verifies -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres) hashed fields as spelled an event with an automation initiator without its optional key reads back as it was stored through every read path, and its hash verifies -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres) hashed fields as spelled an event with an initiator with a key this build does not read reads back as it was stored through every read path, and its hash verifies -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres) hashed fields as spelled an event with top-level keys this build does not read reads back as it was stored through every read path, and its hash verifies -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres) hashed fields as spelled an event with version maps with keys this build does not read reads back as it was stored through every read path, and its hash verifies -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with a timestamp in year 0000 reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with a timestamp in year 9999 reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with a timestamp with a +00:00 offset reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with a timestamp with a +02:00 offset reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with a timestamp with a -05:30 offset reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with a timestamp with microseconds reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with a timestamp without a fraction reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with an automation initiator without its optional key reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with an initiator with a key this build does not read reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with top-level keys this build does not read reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with version maps with keys this build does not read reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with a timestamp in year 0000 reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with a timestamp in year 9999 reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with a timestamp with a +00:00 offset reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with a timestamp with a +02:00 offset reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with a timestamp with a -05:30 offset reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with a timestamp with microseconds reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with a timestamp without a fraction reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with an automation initiator without its optional key reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with an initiator with a key this build does not read reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with top-level keys this build does not read reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with version maps with keys this build does not read reads back as it was stored through every read path, and its hash verifies -- passed
 - event_sourcing/test/storage/stored_event_test.dart:725 keys this build does not read fromMap keeps the version maps, the initiator and top-level keys this build does not read, and toMap writes them back -- passed
 - event_sourcing/test/test_support/ingest_hash_conformance.dart:583 ingest event-hash scenarios (postgres) delivery of records as a sender spelled them admits an event with a client timestamp with a +00:00 offset, stores the record as it arrived, and a downstream store admits the copy it forwards -- passed, skipped
 - event_sourcing/test/test_support/ingest_hash_conformance.dart:583 ingest event-hash scenarios (postgres) delivery of records as a sender spelled them admits an event with a client timestamp with a -05:30 offset, stores the record as it arrived, and a downstream store admits the copy it forwards -- passed, skipped
@@ -4622,9 +4622,9 @@ Code:
 Tests:
 
 - event_sourcing/test/storage/sembast_backend_event_test.dart:76 SembastBackend events (impl-internal) a read refuses a stored record whose provenance entry lacks library_version, or that carries no causal object, naming the field -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6192 StorageBackend conformance (postgres) hashed fields as spelled appendEvent refuses an event with no causal object, or with a provenance entry lacking library_version or carrying an empty database_id, naming the field and writing nothing -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:6192 StorageBackend conformance (postgres, runtime role) hashed fields as spelled appendEvent refuses an event with no causal object, or with a provenance entry lacking library_version or carrying an empty database_id, naming the field and writing nothing -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6192 StorageBackend conformance (sembast (memory)) hashed fields as spelled appendEvent refuses an event with no causal object, or with a provenance entry lacking library_version or carrying an empty database_id, naming the field and writing nothing -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6227 StorageBackend conformance (postgres) hashed fields as spelled appendEvent refuses an event with no causal object, or with a provenance entry lacking library_version or carrying an empty database_id, naming the field and writing nothing -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:6227 StorageBackend conformance (postgres, runtime role) hashed fields as spelled appendEvent refuses an event with no causal object, or with a provenance entry lacking library_version or carrying an empty database_id, naming the field and writing nothing -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6227 StorageBackend conformance (sembast (memory)) hashed fields as spelled appendEvent refuses an event with no causal object, or with a provenance entry lacking library_version or carrying an empty database_id, naming the field and writing nothing -- passed
 - event_sourcing/test/storage/stored_event_test.dart:527 provenance entry fields fromMap refuses a record any of whose provenance entries lacks database_id or library_version, or carries one that is not a non-empty string, naming the field -- passed
 - event_sourcing/test/storage/stored_event_test.dart:558 provenance entry fields an event built with a provenance entry lacking library_version or with an empty database_id fails requireWellFormedRecord naming the field -- passed
 - event_sourcing/test/storage/stored_event_test.dart:587 provenance entry fields fromMap admits entries carrying both fields as non-empty strings -- passed
@@ -5024,18 +5024,18 @@ Tests:
 - event_sourcing/test/storage/postgres/postgres_database_identity_test.dart:62 two concurrent first opens record one identity in exactly one initialization -- passed, skipped
 - event_sourcing/test/storage/postgres/postgres_database_identity_test.dart:83 two concurrent opens of a build that changes the recorded version append exactly one change -- passed, skipped
 - event_sourcing/test/storage/postgres/postgres_provisioning_test.dart:617 a boot that fails after its library-version event leaves the generation record as it was -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:4176 StorageBackend conformance (postgres) backend_state boot record write, overwrite and rollback -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:4176 StorageBackend conformance (postgres, runtime role) backend_state boot record write, overwrite and rollback -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:4176 StorageBackend conformance (sembast (memory)) backend_state boot record write, overwrite and rollback -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:4213 StorageBackend conformance (postgres) backend_state bootTransaction commits its body and rolls back on a throw -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:4213 StorageBackend conformance (postgres, runtime role) backend_state bootTransaction commits its body and rolls back on a throw -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:4213 StorageBackend conformance (sembast (memory)) backend_state bootTransaction commits its body and rolls back on a throw -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:4345 StorageBackend conformance (postgres) backend_state readEventsReverseInTxn sees an in-transaction append, newest first -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:4345 StorageBackend conformance (postgres, runtime role) backend_state readEventsReverseInTxn sees an in-transaction append, newest first -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:4345 StorageBackend conformance (sembast (memory)) backend_state readEventsReverseInTxn sees an in-transaction append, newest first -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:4381 StorageBackend conformance (postgres) backend_state readEventsReverseInTxn reads more than a page of mixed types completely, once each, newest first -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:4381 StorageBackend conformance (postgres, runtime role) backend_state readEventsReverseInTxn reads more than a page of mixed types completely, once each, newest first -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:4381 StorageBackend conformance (sembast (memory)) backend_state readEventsReverseInTxn reads more than a page of mixed types completely, once each, newest first -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:4211 StorageBackend conformance (postgres) backend_state boot record write, overwrite and rollback -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:4211 StorageBackend conformance (postgres, runtime role) backend_state boot record write, overwrite and rollback -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:4211 StorageBackend conformance (sembast (memory)) backend_state boot record write, overwrite and rollback -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:4248 StorageBackend conformance (postgres) backend_state bootTransaction commits its body and rolls back on a throw -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:4248 StorageBackend conformance (postgres, runtime role) backend_state bootTransaction commits its body and rolls back on a throw -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:4248 StorageBackend conformance (sembast (memory)) backend_state bootTransaction commits its body and rolls back on a throw -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:4380 StorageBackend conformance (postgres) backend_state readEventsReverseInTxn sees an in-transaction append, newest first -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:4380 StorageBackend conformance (postgres, runtime role) backend_state readEventsReverseInTxn sees an in-transaction append, newest first -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:4380 StorageBackend conformance (sembast (memory)) backend_state readEventsReverseInTxn sees an in-transaction append, newest first -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:4416 StorageBackend conformance (postgres) backend_state readEventsReverseInTxn reads more than a page of mixed types completely, once each, newest first -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:4416 StorageBackend conformance (postgres, runtime role) backend_state readEventsReverseInTxn reads more than a page of mixed types completely, once each, newest first -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:4416 StorageBackend conformance (sembast (memory)) backend_state readEventsReverseInTxn reads more than a page of mixed types completely, once each, newest first -- passed
 - event_sourcing/test/test_support/boot_conformance.dart:478 EventStore.open boot (postgres) boot record an accepted reopen with nothing due writes the boot record and appends no event -- passed, skipped
 - event_sourcing/test/test_support/boot_conformance.dart:478 EventStore.open boot (sembast (memory)) boot record an accepted reopen with nothing due writes the boot record and appends no event -- passed
 - event_sourcing/test/test_support/boot_conformance.dart:496 EventStore.open boot (postgres) boot record openForTest writes the boot record too -- passed, skipped
@@ -5060,7 +5060,7 @@ Code:
 - event_sourcing/lib/src/lifecycle/boot_errors.dart:4
 - event_sourcing/lib/src/lifecycle/local_event.dart:1
 - event_sourcing/lib/src/lifecycle/version_check.dart:1
-- event_sourcing/lib/src/storage/storage_backend.dart:1118
+- event_sourcing/lib/src/storage/storage_backend.dart:1141
 
 Tests:
 
@@ -5072,9 +5072,9 @@ Tests:
 - event_sourcing/test/lifecycle/version_check_test.dart:65 VersionCheck.readLocalInTxn reads the initialization with its version, data format and identity -- passed
 - event_sourcing/test/storage/postgres/postgres_backend_serialization_retry_test.dart:499 PostgresBackend boot transaction retry EventStore.open re-runs a boot a serialization failure aborted, and records one initialization -- passed
 - event_sourcing/test/storage/postgres/postgres_database_identity_test.dart:62 two concurrent first opens record one identity in exactly one initialization -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:4140 StorageBackend conformance (postgres) backend_state database identity: minted once, stable, and a rolled-back mint leaves none -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:4140 StorageBackend conformance (postgres, runtime role) backend_state database identity: minted once, stable, and a rolled-back mint leaves none -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:4140 StorageBackend conformance (sembast (memory)) backend_state database identity: minted once, stable, and a rolled-back mint leaves none -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:4175 StorageBackend conformance (postgres) backend_state database identity: minted once, stable, and a rolled-back mint leaves none -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:4175 StorageBackend conformance (postgres, runtime role) backend_state database identity: minted once, stable, and a rolled-back mint leaves none -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:4175 StorageBackend conformance (sembast (memory)) backend_state database identity: minted once, stable, and a rolled-back mint leaves none -- passed
 - event_sourcing/test/test_support/boot_conformance.dart:296 EventStore.open boot (postgres) database identity two stores of different sources share one identity, which the initialization records and a reopen keeps -- passed, skipped
 - event_sourcing/test/test_support/boot_conformance.dart:296 EventStore.open boot (sembast (memory)) database identity two stores of different sources share one identity, which the initialization records and a reopen keeps -- passed
 - event_sourcing/test/test_support/boot_conformance.dart:321 EventStore.open boot (postgres) database identity a stored identity deleted refuses the next open and writes nothing -- passed, skipped
@@ -5501,53 +5501,53 @@ Code:
 - event_sourcing/lib/src/security/postgres_security_context_store.dart:12
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:131
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:236
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:3417
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:3603
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:4128
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:3442
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:3628
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:4153
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:758
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:903
 
 Tests:
 
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres) hashed fields as spelled an event with a timestamp in year 0000 reads back as it was stored through every read path, and its hash verifies -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres) hashed fields as spelled an event with a timestamp in year 9999 reads back as it was stored through every read path, and its hash verifies -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres) hashed fields as spelled an event with a timestamp with a +00:00 offset reads back as it was stored through every read path, and its hash verifies -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres) hashed fields as spelled an event with a timestamp with a +02:00 offset reads back as it was stored through every read path, and its hash verifies -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres) hashed fields as spelled an event with a timestamp with a -05:30 offset reads back as it was stored through every read path, and its hash verifies -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres) hashed fields as spelled an event with a timestamp with microseconds reads back as it was stored through every read path, and its hash verifies -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres) hashed fields as spelled an event with a timestamp without a fraction reads back as it was stored through every read path, and its hash verifies -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres) hashed fields as spelled an event with an automation initiator without its optional key reads back as it was stored through every read path, and its hash verifies -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres) hashed fields as spelled an event with an initiator with a key this build does not read reads back as it was stored through every read path, and its hash verifies -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres) hashed fields as spelled an event with top-level keys this build does not read reads back as it was stored through every read path, and its hash verifies -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres) hashed fields as spelled an event with version maps with keys this build does not read reads back as it was stored through every read path, and its hash verifies -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with a timestamp in year 0000 reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with a timestamp in year 9999 reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with a timestamp with a +00:00 offset reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with a timestamp with a +02:00 offset reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with a timestamp with a -05:30 offset reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with a timestamp with microseconds reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with a timestamp without a fraction reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with an automation initiator without its optional key reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with an initiator with a key this build does not read reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with top-level keys this build does not read reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with version maps with keys this build does not read reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with a timestamp in year 0000 reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with a timestamp in year 9999 reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with a timestamp with a +00:00 offset reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with a timestamp with a +02:00 offset reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with a timestamp with a -05:30 offset reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with a timestamp with microseconds reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with a timestamp without a fraction reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with an automation initiator without its optional key reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with an initiator with a key this build does not read reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with top-level keys this build does not read reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with version maps with keys this build does not read reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6414 StorageBackend conformance (postgres) recorded_at comparisons findOlderThanInTxn and findUnredactedOlderThanInTxn include a record at the cutoff and exclude one a microsecond after it -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:6414 StorageBackend conformance (postgres, runtime role) recorded_at comparisons findOlderThanInTxn and findUnredactedOlderThanInTxn include a record at the cutoff and exclude one a microsecond after it -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6414 StorageBackend conformance (sembast (memory)) recorded_at comparisons findOlderThanInTxn and findUnredactedOlderThanInTxn include a record at the cutoff and exclude one a microsecond after it -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6445 StorageBackend conformance (postgres) recorded_at comparisons queryAudit from and to include a record at the bound and exclude one a microsecond outside it -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:6445 StorageBackend conformance (postgres, runtime role) recorded_at comparisons queryAudit from and to include a record at the bound and exclude one a microsecond outside it -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6445 StorageBackend conformance (sembast (memory)) recorded_at comparisons queryAudit from and to include a record at the bound and exclude one a microsecond outside it -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres) hashed fields as spelled an event with a timestamp in year 0000 reads back as it was stored through every read path, and its hash verifies -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres) hashed fields as spelled an event with a timestamp in year 9999 reads back as it was stored through every read path, and its hash verifies -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres) hashed fields as spelled an event with a timestamp with a +00:00 offset reads back as it was stored through every read path, and its hash verifies -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres) hashed fields as spelled an event with a timestamp with a +02:00 offset reads back as it was stored through every read path, and its hash verifies -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres) hashed fields as spelled an event with a timestamp with a -05:30 offset reads back as it was stored through every read path, and its hash verifies -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres) hashed fields as spelled an event with a timestamp with microseconds reads back as it was stored through every read path, and its hash verifies -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres) hashed fields as spelled an event with a timestamp without a fraction reads back as it was stored through every read path, and its hash verifies -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres) hashed fields as spelled an event with an automation initiator without its optional key reads back as it was stored through every read path, and its hash verifies -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres) hashed fields as spelled an event with an initiator with a key this build does not read reads back as it was stored through every read path, and its hash verifies -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres) hashed fields as spelled an event with top-level keys this build does not read reads back as it was stored through every read path, and its hash verifies -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres) hashed fields as spelled an event with version maps with keys this build does not read reads back as it was stored through every read path, and its hash verifies -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with a timestamp in year 0000 reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with a timestamp in year 9999 reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with a timestamp with a +00:00 offset reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with a timestamp with a +02:00 offset reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with a timestamp with a -05:30 offset reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with a timestamp with microseconds reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with a timestamp without a fraction reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with an automation initiator without its optional key reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with an initiator with a key this build does not read reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with top-level keys this build does not read reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with version maps with keys this build does not read reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with a timestamp in year 0000 reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with a timestamp in year 9999 reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with a timestamp with a +00:00 offset reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with a timestamp with a +02:00 offset reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with a timestamp with a -05:30 offset reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with a timestamp with microseconds reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with a timestamp without a fraction reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with an automation initiator without its optional key reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with an initiator with a key this build does not read reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with top-level keys this build does not read reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with version maps with keys this build does not read reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6449 StorageBackend conformance (postgres) recorded_at comparisons findOlderThanInTxn and findUnredactedOlderThanInTxn include a record at the cutoff and exclude one a microsecond after it -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:6449 StorageBackend conformance (postgres, runtime role) recorded_at comparisons findOlderThanInTxn and findUnredactedOlderThanInTxn include a record at the cutoff and exclude one a microsecond after it -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6449 StorageBackend conformance (sembast (memory)) recorded_at comparisons findOlderThanInTxn and findUnredactedOlderThanInTxn include a record at the cutoff and exclude one a microsecond after it -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6480 StorageBackend conformance (postgres) recorded_at comparisons queryAudit from and to include a record at the bound and exclude one a microsecond outside it -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:6480 StorageBackend conformance (postgres, runtime role) recorded_at comparisons queryAudit from and to include a record at the bound and exclude one a microsecond outside it -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6480 StorageBackend conformance (sembast (memory)) recorded_at comparisons queryAudit from and to include a record at the bound and exclude one a microsecond outside it -- passed
 
 **E**
 
@@ -5688,7 +5688,7 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/security/postgres_security_context_store.dart:172
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:4325
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:4350
 - event_sourcing/lib/src/storage/sembast_backend.dart:437
 
 Tests:
@@ -6035,9 +6035,9 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/event_store.dart:2089
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:3801
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:3826
 - event_sourcing/lib/src/storage/sembast_backend.dart:1238
-- event_sourcing/lib/src/storage/storage_backend.dart:1642
+- event_sourcing/lib/src/storage/storage_backend.dart:1665
 
 Tests:
 
@@ -6538,7 +6538,7 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/event_store.dart:2146
-- event_sourcing/lib/src/projections/interpreter/projection_interpreter.dart:371
+- event_sourcing/lib/src/projections/interpreter/projection_interpreter.dart:378
 - event_sourcing/lib/src/projections/view_catch_up.dart:570
 - event_sourcing/lib/src/projections/view_catch_up.dart:576
 
@@ -6728,7 +6728,7 @@ Code:
 - event_sourcing/lib/src/permissions/table_backed_authorization_policy.dart:45
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:785
 - event_sourcing/lib/src/storage/postgres/postgres_idempotency_store.dart:38
-- event_sourcing/lib/src/storage/storage_backend.dart:1755
+- event_sourcing/lib/src/storage/storage_backend.dart:1778
 
 Tests:
 
@@ -6790,9 +6790,9 @@ Code:
 Tests:
 
 - event_sourcing/test/storage/postgres/postgres_versions_test.dart:33 stored versions out of range on postgres the schema refuses a major below 1 or a minor below 0 in events -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:5830 StorageBackend conformance (postgres) event version columns an event stamped entry type 1.3 and a later minor of the data format reads back exactly through every read path, and its hash verifies -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:5830 StorageBackend conformance (postgres, runtime role) event version columns an event stamped entry type 1.3 and a later minor of the data format reads back exactly through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:5830 StorageBackend conformance (sembast (memory)) event version columns an event stamped entry type 1.3 and a later minor of the data format reads back exactly through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:5865 StorageBackend conformance (postgres) event version columns an event stamped entry type 1.3 and a later minor of the data format reads back exactly through every read path, and its hash verifies -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:5865 StorageBackend conformance (postgres, runtime role) event version columns an event stamped entry type 1.3 and a later minor of the data format reads back exactly through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:5865 StorageBackend conformance (sembast (memory)) event version columns an event stamped entry type 1.3 and a later minor of the data format reads back exactly through every read path, and its hash verifies -- passed
 - event_sourcing/test/storage/stored_event_test.dart:205 entry_type_version + lib_format_version fields fromMap rejects an entry_type_version with a malformed component, naming the key -- passed
 - event_sourcing/test/versions_test.dart:111 EntryTypeVersion fromJson refuses malformed values, naming the key -- passed
 - event_sourcing/test/versions_test.dart:18 EntryTypeVersion orders by major, then minor -- passed
@@ -6840,9 +6840,9 @@ Tests:
 - event_sourcing/test/event_store/append_stamps_registered_version_test.dart:191 the events the library appends itself the library-version and registry audits carry the data format and their registered versions -- passed
 - event_sourcing/test/event_store/append_stamps_registered_version_test.dart:83 EventStore.append stamps registeredVersion append stamps registry version 7.3 and the data format -- passed
 - event_sourcing/test/storage/postgres/postgres_versions_test.dart:33 stored versions out of range on postgres the schema refuses a major below 1 or a minor below 0 in events -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:5830 StorageBackend conformance (postgres) event version columns an event stamped entry type 1.3 and a later minor of the data format reads back exactly through every read path, and its hash verifies -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:5830 StorageBackend conformance (postgres, runtime role) event version columns an event stamped entry type 1.3 and a later minor of the data format reads back exactly through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:5830 StorageBackend conformance (sembast (memory)) event version columns an event stamped entry type 1.3 and a later minor of the data format reads back exactly through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:5865 StorageBackend conformance (postgres) event version columns an event stamped entry type 1.3 and a later minor of the data format reads back exactly through every read path, and its hash verifies -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:5865 StorageBackend conformance (postgres, runtime role) event version columns an event stamped entry type 1.3 and a later minor of the data format reads back exactly through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:5865 StorageBackend conformance (sembast (memory)) event version columns an event stamped entry type 1.3 and a later minor of the data format reads back exactly through every read path, and its hash verifies -- passed
 - event_sourcing/test/storage/stored_event_test.dart:240 entry_type_version + lib_format_version fields fromMap rejects a lib_format_version with a malformed component -- passed
 - event_sourcing/test/storage/stored_event_test.dart:270 entry_type_version + lib_format_version fields the data-format version of this build is 3.0 -- passed
 - event_sourcing/test/versions_test.dart:141 DataFormatVersion equality, ordering, compatibility and nextMinor -- passed
@@ -6946,7 +6946,7 @@ Code:
 - event_sourcing/lib/src/storage/generation.dart:1
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:871
 - event_sourcing/lib/src/storage/postgres/postgres_generation_guard.dart:1
-- event_sourcing/lib/src/storage/storage_backend.dart:1184
+- event_sourcing/lib/src/storage/storage_backend.dart:1207
 - event_sourcing/lib/src/storage/web_locks.dart:5
 
 Tests:
@@ -6969,9 +6969,9 @@ Tests:
 - event_sourcing/test/storage/postgres/postgres_generation_guard_test.dart:819 a registration is released when the store closes -- passed, skipped
 - event_sourcing/test/storage/postgres/postgres_generation_guard_test.dart:833 a registration is released when the registration itself fails part way -- passed, skipped
 - event_sourcing/test/storage/postgres/postgres_generation_guard_test.dart:850 a registration is released when the lock session dies while the open registers -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:4297 StorageBackend conformance (postgres) backend_state a generation registers, completes its boot, is released, and registers again -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:4297 StorageBackend conformance (postgres, runtime role) backend_state a generation registers, completes its boot, is released, and registers again -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:4297 StorageBackend conformance (sembast (memory)) backend_state a generation registers, completes its boot, is released, and registers again -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:4332 StorageBackend conformance (postgres) backend_state a generation registers, completes its boot, is released, and registers again -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:4332 StorageBackend conformance (postgres, runtime role) backend_state a generation registers, completes its boot, is released, and registers again -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:4332 StorageBackend conformance (sembast (memory)) backend_state a generation registers, completes its boot, is released, and registers again -- passed
 - event_sourcing/test/web/generation_guard_web_test.dart:120 a compatible tab opens beside another, an incompatible one is refused with the database unchanged, and it opens once the other tabs closed -- passed
 - event_sourcing/test/web/generation_guard_web_test.dart:276 a refused or failed open releases its locks, and the durable record refuses the older build after a major bump -- passed
 
@@ -6983,7 +6983,7 @@ Code:
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:572
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:871
 - event_sourcing/lib/src/storage/postgres/postgres_generation_guard.dart:6
-- event_sourcing/lib/src/storage/storage_backend.dart:1184
+- event_sourcing/lib/src/storage/storage_backend.dart:1207
 - event_sourcing/lib/src/storage/web_locks.dart:9
 
 Tests:
@@ -7006,7 +7006,7 @@ Code:
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:871
 - event_sourcing/lib/src/storage/postgres/postgres_generation_guard.dart:10
 - event_sourcing/lib/src/storage/sembast_backend.dart:2050
-- event_sourcing/lib/src/storage/storage_backend.dart:1184
+- event_sourcing/lib/src/storage/storage_backend.dart:1207
 - event_sourcing/lib/src/storage/web_locks.dart:22
 - event_sourcing/lib/src/storage/web_locks_stub.dart:1
 
@@ -7053,9 +7053,9 @@ Tests:
 - event_sourcing/test/storage/postgres/postgres_generation_guard_test.dart:694 stop-then-start and the generation record after a build of another data-format major opened, the compiled build is refused -- passed, skipped
 - event_sourcing/test/storage/postgres/postgres_provisioning_test.dart:557 provision an instance at the older schema version keeps committing while an upgrade that keeps its minimum is provisioned -- passed, skipped
 - event_sourcing/test/storage/postgres/postgres_provisioning_test.dart:617 a boot that fails after its library-version event leaves the generation record as it was -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:4244 StorageBackend conformance (postgres) backend_state the generation record: write, merge, rollback -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:4244 StorageBackend conformance (postgres, runtime role) backend_state the generation record: write, merge, rollback -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:4244 StorageBackend conformance (sembast (memory)) backend_state the generation record: write, merge, rollback -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:4279 StorageBackend conformance (postgres) backend_state the generation record: write, merge, rollback -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:4279 StorageBackend conformance (postgres, runtime role) backend_state the generation record: write, merge, rollback -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:4279 StorageBackend conformance (sembast (memory)) backend_state the generation record: write, merge, rollback -- passed
 - event_sourcing/test/web/generation_guard_web_test.dart:276 a refused or failed open releases its locks, and the durable record refuses the older build after a major bump -- passed
 - event_sourcing/test/web/generation_guard_web_test.dart:297 after a tab of another data-format major opened and closed, the compiled build is refused with the database unchanged -- passed
 - event_sourcing/test/web/stale_tab_web_test.dart:76 a stale tab refuses to boot below a major another tab recorded -- passed
@@ -7205,18 +7205,18 @@ Tests:
 - event_sourcing/test/storage/storage_backend_conformance.dart:1740 StorageBackend conformance (postgres) view copies setting the watermark persists and leaves other copies alone -- passed, skipped
 - event_sourcing/test/storage/storage_backend_conformance.dart:1740 StorageBackend conformance (postgres, runtime role) view copies setting the watermark persists and leaves other copies alone -- passed
 - event_sourcing/test/storage/storage_backend_conformance.dart:1740 StorageBackend conformance (sembast (memory)) view copies setting the watermark persists and leaves other copies alone -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:1762 StorageBackend conformance (postgres) view copies marking for deletion is idempotent and lets a fresh copy of the same fingerprint be created -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:1762 StorageBackend conformance (postgres, runtime role) view copies marking for deletion is idempotent and lets a fresh copy of the same fingerprint be created -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:1762 StorageBackend conformance (sembast (memory)) view copies marking for deletion is idempotent and lets a fresh copy of the same fingerprint be created -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:1797 StorageBackend conformance (postgres) view copies a second unmarked copy of one fingerprint is refused -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:1797 StorageBackend conformance (postgres, runtime role) view copies a second unmarked copy of one fingerprint is refused -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:1797 StorageBackend conformance (sembast (memory)) view copies a second unmarked copy of one fingerprint is refused -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:1812 StorageBackend conformance (postgres) view copies deleting rows in bounded batches empties a copy, then its record can be dropped -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:1812 StorageBackend conformance (postgres, runtime role) view copies deleting rows in bounded batches empties a copy, then its record can be dropped -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:1812 StorageBackend conformance (sembast (memory)) view copies deleting rows in bounded batches empties a copy, then its record can be dropped -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:1845 StorageBackend conformance (postgres) view copies a write in a transaction that throws is rolled back -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:1845 StorageBackend conformance (postgres, runtime role) view copies a write in a transaction that throws is rolled back -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:1845 StorageBackend conformance (sembast (memory)) view copies a write in a transaction that throws is rolled back -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:1797 StorageBackend conformance (postgres) view copies marking for deletion is idempotent and lets a fresh copy of the same fingerprint be created -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:1797 StorageBackend conformance (postgres, runtime role) view copies marking for deletion is idempotent and lets a fresh copy of the same fingerprint be created -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:1797 StorageBackend conformance (sembast (memory)) view copies marking for deletion is idempotent and lets a fresh copy of the same fingerprint be created -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:1832 StorageBackend conformance (postgres) view copies a second unmarked copy of one fingerprint is refused -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:1832 StorageBackend conformance (postgres, runtime role) view copies a second unmarked copy of one fingerprint is refused -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:1832 StorageBackend conformance (sembast (memory)) view copies a second unmarked copy of one fingerprint is refused -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:1847 StorageBackend conformance (postgres) view copies deleting rows in bounded batches empties a copy, then its record can be dropped -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:1847 StorageBackend conformance (postgres, runtime role) view copies deleting rows in bounded batches empties a copy, then its record can be dropped -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:1847 StorageBackend conformance (sembast (memory)) view copies deleting rows in bounded batches empties a copy, then its record can be dropped -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:1880 StorageBackend conformance (postgres) view copies a write in a transaction that throws is rolled back -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:1880 StorageBackend conformance (postgres, runtime role) view copies a write in a transaction that throws is rolled back -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:1880 StorageBackend conformance (sembast (memory)) view copies a write in a transaction that throws is rolled back -- passed
 
 **B**
 
@@ -7272,11 +7272,13 @@ Code:
 - event_sourcing/lib/src/event_store.dart:2143
 - event_sourcing/lib/src/event_store.dart:3426
 - event_sourcing/lib/src/projections/interpreter/projection_interpreter.dart:170
-- event_sourcing/lib/src/projections/interpreter/projection_interpreter.dart:305
+- event_sourcing/lib/src/projections/interpreter/projection_interpreter.dart:312
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1460
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1505
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2245
 - event_sourcing/lib/src/storage/sembast_backend.dart:527
 - event_sourcing/lib/src/storage/storage_backend.dart:215
+- event_sourcing/lib/src/storage/storage_backend.dart:605
 - event_sourcing/lib/src/sync/drain.dart:1577
 - event_sourcing/lib/src/sync/succession_restore.dart:401
 
@@ -7296,6 +7298,9 @@ Tests:
 - event_sourcing/test/storage/postgres/delivery_receiver_postgres_test.dart:354 when one of the copies an event folds into meets a row write the server rejects, only that copy passes over the event and records a fold_failed finding; the other copy folds it -- passed, skipped
 - event_sourcing/test/storage/postgres/delivery_receiver_postgres_test.dart:445 a genuine storage failure (SQLSTATE 40001) raised inside the fold's savepoint is not caught as a fold failure: it refuses the whole delivery, leaving nothing behind -- passed, skipped
 - event_sourcing/test/storage/postgres/postgres_view_catch_up_test.dart:436 a converging copy whose row write the server rejects (SQLSTATE 54000, index row too large) inside catch-up records one fold_failed finding of reason row_write_failed, passes over the event and becomes current -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:1763 StorageBackend conformance (postgres) view copies setting the watermark of several copies at once moves exactly those -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:1763 StorageBackend conformance (postgres, runtime role) view copies setting the watermark of several copies at once moves exactly those -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:1763 StorageBackend conformance (sembast (memory)) view copies setting the watermark of several copies at once moves exactly those -- passed
 - event_sourcing/test/storage/storage_backend_conformance.dart:352 StorageBackend conformance (postgres) runInSavepointInTxn a server error inside the savepoint leaves the transaction usable -- passed, skipped
 - event_sourcing/test/storage/storage_backend_conformance.dart:352 StorageBackend conformance (postgres, runtime role) runInSavepointInTxn a server error inside the savepoint leaves the transaction usable -- passed
 - event_sourcing/test/storage/storage_backend_conformance.dart:352 StorageBackend conformance (sembast (memory)) runInSavepointInTxn a server error inside the savepoint leaves the transaction usable -- skipped
@@ -7326,10 +7331,15 @@ Code:
 - event_sourcing/lib/src/event_store.dart:3429
 - event_sourcing/lib/src/projections/interpreter/projection_interpreter.dart:176
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1505
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2245
+- event_sourcing/lib/src/storage/storage_backend.dart:605
 
 Tests:
 
 - event_sourcing/test/projections/view_copies_boot_test.dart:195 view copies at boot an append beside a converging copy leaves its rows and watermark unchanged -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:1763 StorageBackend conformance (postgres) view copies setting the watermark of several copies at once moves exactly those -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:1763 StorageBackend conformance (postgres, runtime role) view copies setting the watermark of several copies at once moves exactly those -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:1763 StorageBackend conformance (sembast (memory)) view copies setting the watermark of several copies at once moves exactly those -- passed
 - event_sourcing/test/test_support/delivery_receiver_conformance.dart:1021 receiver accept path (postgres) a delivered event a table fold cannot key is passed over; the delivery is accepted whole, the copy stays current and one fold_failed finding is recorded -- passed, skipped
 - event_sourcing/test/test_support/delivery_receiver_conformance.dart:1021 receiver accept path (sembast) a delivered event a table fold cannot key is passed over; the delivery is accepted whole, the copy stays current and one fold_failed finding is recorded -- passed
 
@@ -7387,7 +7397,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/projections/interpreter/projection_interpreter.dart:425
+- event_sourcing/lib/src/projections/interpreter/projection_interpreter.dart:430
 - event_sourcing/lib/src/projections/interpreter/view_row_access.dart:9
 - event_sourcing/lib/src/promoters/promoter_registry.dart:2
 - event_sourcing/lib/src/promoters/promoter_spec.dart:3
@@ -7407,7 +7417,7 @@ Code:
 - event_sourcing/lib/src/projections/view_catch_up.dart:16
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1254
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1505
-- event_sourcing/lib/src/storage/storage_backend.dart:1162
+- event_sourcing/lib/src/storage/storage_backend.dart:1185
 
 Tests:
 
@@ -7421,7 +7431,7 @@ Code:
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1255
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1505
 - event_sourcing/lib/src/storage/sembast_backend.dart:294
-- event_sourcing/lib/src/storage/storage_backend.dart:1163
+- event_sourcing/lib/src/storage/storage_backend.dart:1186
 - event_sourcing/lib/src/storage/view_copy_lock.dart:1
 - event_sourcing/lib/src/storage/web_locks.dart:302
 
@@ -8023,12 +8033,12 @@ Code:
 - event_sourcing/lib/src/destinations/destination_registry.dart:1
 - event_sourcing/lib/src/destinations/destination_schedule.dart:1
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:22
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2312
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2507
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2562
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2635
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2337
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2532
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2587
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2660
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2721
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2685
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2746
 
 Tests:
 
@@ -8046,12 +8056,12 @@ Code:
 - event_sourcing/lib/src/destinations/destination.dart:1
 - event_sourcing/lib/src/destinations/subscription_filter.dart:1
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:22
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2312
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2507
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2562
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2635
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2337
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2532
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2587
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2660
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2721
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2685
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2746
 - event_sourcing/lib/src/sync/fill_batch.dart:1
 - event_sourcing/lib/src/sync/historical_replay.dart:1
 
@@ -8086,12 +8096,12 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:22
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2312
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2507
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2562
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2635
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2337
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2532
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2587
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2660
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2721
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2685
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2746
 - event_sourcing/lib/src/sync/drain.dart:1
 - event_sourcing/lib/src/sync/fill_batch.dart:5
 - event_sourcing/lib/src/sync/historical_replay.dart:5
@@ -8134,12 +8144,12 @@ Code:
 
 - event_sourcing/lib/src/destinations/destination_registry.dart:1
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:22
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2312
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2507
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2562
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2635
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2337
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2532
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2587
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2660
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2721
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2685
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2746
 - event_sourcing/lib/src/sync/drain.dart:5
 - event_sourcing/lib/src/sync/fill_batch.dart:9
 
@@ -8161,12 +8171,12 @@ Code:
 - event_sourcing/lib/src/destinations/destination.dart:1
 - event_sourcing/lib/src/destinations/wire_payload.dart:1
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:22
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2312
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2507
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2562
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2635
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2337
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2532
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2587
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2660
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2721
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2685
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2746
 - event_sourcing/lib/src/sync/drain.dart:8
 - event_sourcing/lib/src/sync/sync_cycle.dart:5
 
@@ -8184,12 +8194,12 @@ Code:
 
 - event_sourcing/lib/src/destinations/destination_registry.dart:1
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:22
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2312
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2507
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2562
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2635
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2337
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2532
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2587
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2660
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2721
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2685
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2746
 - event_sourcing/lib/src/sync/sync_cycle.dart:8
 
 Tests:
@@ -8206,12 +8216,12 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:22
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2312
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2507
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2562
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2635
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2337
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2532
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2587
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2660
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2721
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2685
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2746
 - event_sourcing/lib/src/sync/drain.dart:11
 
 Tests:
@@ -8229,12 +8239,12 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:22
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2312
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2507
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2562
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2635
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2337
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2532
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2587
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2660
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2721
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2685
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2746
 - event_sourcing/lib/src/sync/drain.dart:15
 
 Tests:
@@ -8246,12 +8256,12 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:22
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2312
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2507
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2562
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2635
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2337
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2532
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2587
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2660
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2721
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2685
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2746
 - event_sourcing/lib/src/sync/drain.dart:19
 
 Tests:
@@ -8263,12 +8273,12 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:22
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2312
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2507
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2562
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2635
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2337
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2532
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2587
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2660
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2721
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2685
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2746
 - event_sourcing/lib/src/sync/drain.dart:23
 
 Tests:
@@ -8298,12 +8308,12 @@ Code:
 - event_sourcing/lib/src/event_store.dart:487
 - event_sourcing/lib/src/security/security_context_store.dart:42
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:22
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2312
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2507
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2562
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2635
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2337
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2532
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2587
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2660
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2721
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2685
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2746
 - event_sourcing/lib/src/storage/storage_backend.dart:81
 - event_sourcing/lib/src/sync/clock.dart:1
 
@@ -8323,15 +8333,15 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:22
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2312
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2507
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2562
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2635
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2337
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2532
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2587
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2660
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2721
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2685
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2746
 - event_sourcing/lib/src/storage/sembast_backend.dart:865
 - event_sourcing/lib/src/storage/sembast_backend.dart:913
-- event_sourcing/lib/src/storage/storage_backend.dart:1057
+- event_sourcing/lib/src/storage/storage_backend.dart:1080
 - event_sourcing/lib/src/storage/storage_backend.dart:85
 - event_sourcing/lib/src/storage/view_copy.dart:4
 
@@ -8349,12 +8359,12 @@ Code:
 
 - event_sourcing/lib/src/destinations/destination_registry.dart:6
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:22
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2312
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2507
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2562
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2635
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2337
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2532
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2587
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2660
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2721
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2685
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2746
 
 Tests:
 
@@ -8384,12 +8394,12 @@ Code:
 
 - event_sourcing/lib/src/destinations/destination_registry.dart:6
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:22
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2312
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2507
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2562
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2635
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2337
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2532
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2587
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2660
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2721
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2685
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2746
 
 Tests:
 
@@ -8412,12 +8422,12 @@ Code:
 
 - event_sourcing/lib/src/destinations/destination_registry.dart:6
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:22
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2312
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2507
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2562
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2635
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2337
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2532
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2587
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2660
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2721
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2685
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2746
 
 Tests:
 
@@ -8460,12 +8470,12 @@ Code:
 
 - event_sourcing/lib/src/destinations/destination_registry.dart:20
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:22
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2312
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2507
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2562
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2635
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2337
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2532
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2587
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2660
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2721
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2685
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2746
 - event_sourcing/lib/src/sync/drain.dart:35
 
 Tests:
@@ -8501,12 +8511,12 @@ Code:
 - event_sourcing/lib/src/destinations/destination_registry.dart:20
 - event_sourcing/lib/src/destinations/wedge_cause.dart:1
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:22
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2312
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2507
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2562
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2635
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2337
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2532
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2587
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2660
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2721
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2685
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2746
 - event_sourcing/lib/src/sync/drain.dart:35
 - event_sourcing/lib/src/sync/drain.dart:376
 
@@ -8539,12 +8549,12 @@ Code:
 
 - event_sourcing/lib/src/destinations/destination_registry.dart:20
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:22
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2312
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2507
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2562
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2635
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2337
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2532
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2587
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2660
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2721
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2685
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2746
 
 Tests:
 
@@ -8561,12 +8571,12 @@ Code:
 
 - event_sourcing/lib/src/destinations/default_destination_wedges_spec.dart:1
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:22
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2312
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2507
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2562
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2635
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2337
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2532
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2587
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2660
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2721
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2685
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2746
 
 Tests:
 
@@ -8602,12 +8612,12 @@ Code:
 - event_sourcing/lib/src/destinations/destination_registry.dart:698
 - event_sourcing/lib/src/destinations/destination_registry.dart:935
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:22
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2312
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2507
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2562
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2635
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2337
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2532
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2587
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2660
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2721
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2685
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2746
 
 Tests:
 
@@ -8628,12 +8638,12 @@ Code:
 
 - event_sourcing/lib/src/destinations/destination_registry.dart:30
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:22
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2312
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2507
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2562
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2635
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2337
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2532
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2587
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2660
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2721
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2685
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2746
 - event_sourcing/lib/src/sync/drain.dart:45
 
 Tests:
@@ -8670,12 +8680,12 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:22
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2312
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2507
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2562
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2635
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2337
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2532
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2587
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2660
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2721
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2685
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2746
 - event_sourcing/lib/src/sync/sync_cycle.dart:26
 
 Tests:
@@ -8708,12 +8718,12 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:22
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2312
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2507
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2562
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2635
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2337
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2532
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2587
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2660
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2721
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2685
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2746
 - event_sourcing/lib/src/sync/drain.dart:802
 
 Tests:
@@ -8729,12 +8739,12 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:22
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2312
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2507
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2562
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2635
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2337
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2532
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2587
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2660
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2721
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2685
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2746
 
 Tests:
 
@@ -8745,12 +8755,12 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:22
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2312
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2507
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2562
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2635
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2337
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2532
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2587
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2660
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2721
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2685
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2746
 
 Tests:
 
@@ -8868,7 +8878,7 @@ Code:
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1607
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1772
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1788
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:3600
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:3625
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:9
 - event_sourcing/lib/src/storage/sembast_backend.dart:607
 - event_sourcing/lib/src/storage/sembast_backend.dart:767
@@ -8881,9 +8891,9 @@ Tests:
 - event_sourcing/test/storage/sembast_backend_watch_events_test.dart:105 SembastBackend.watchEvents watchEvents replays then transitions to live -- passed
 - event_sourcing/test/storage/sembast_backend_watch_events_test.dart:123 SembastBackend.watchEvents an append committed between the replay read and the live attach is delivered once -- passed
 - event_sourcing/test/storage/sembast_backend_watch_events_test.dart:147 SembastBackend.watchEvents watchEvents skips replay events at or below afterSequence -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:4719 StorageBackend conformance (postgres) findEventById findEventById returns the stored event when present -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:4719 StorageBackend conformance (postgres, runtime role) findEventById findEventById returns the stored event when present -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:4719 StorageBackend conformance (sembast (memory)) findEventById findEventById returns the stored event when present -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:4754 StorageBackend conformance (postgres) findEventById findEventById returns the stored event when present -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:4754 StorageBackend conformance (postgres, runtime role) findEventById findEventById returns the stored event when present -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:4754 StorageBackend conformance (sembast (memory)) findEventById findEventById returns the stored event when present -- passed
 - event_sourcing/test/storage/storage_backend_conformance.dart:549 StorageBackend conformance (postgres) event log findAllEvents(afterSequence, limit) slices correctly and keeps order -- passed, skipped
 - event_sourcing/test/storage/storage_backend_conformance.dart:549 StorageBackend conformance (postgres, runtime role) event log findAllEvents(afterSequence, limit) slices correctly and keeps order -- passed
 - event_sourcing/test/storage/storage_backend_conformance.dart:549 StorageBackend conformance (sembast (memory)) event log findAllEvents(afterSequence, limit) slices correctly and keeps order -- passed
@@ -9159,39 +9169,39 @@ Tests:
 - event_sourcing/test/event_store/causal_stamping_test.dart:100 the causal object in the event hash a parsed record writes its causal object back as it carried it, and hashes as it did before parsing -- passed
 - event_sourcing/test/event_store/event_hash_versions_test.dart:169 the event hash is the SHA-256 of the JCS form of the hashed fields, pinned by a fixed vector -- passed
 - event_sourcing/test/ingest/ingest_batch_reconstruction_test.dart:202 Batch reconstruction (design §2.3) full round-trip: strip receiver hop → re-encode → sha256 matches batchWireBytesHash (Risk 7 resolved) -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres) hashed fields as spelled an event with a timestamp in year 0000 reads back as it was stored through every read path, and its hash verifies -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres) hashed fields as spelled an event with a timestamp in year 9999 reads back as it was stored through every read path, and its hash verifies -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres) hashed fields as spelled an event with a timestamp with a +00:00 offset reads back as it was stored through every read path, and its hash verifies -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres) hashed fields as spelled an event with a timestamp with a +02:00 offset reads back as it was stored through every read path, and its hash verifies -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres) hashed fields as spelled an event with a timestamp with a -05:30 offset reads back as it was stored through every read path, and its hash verifies -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres) hashed fields as spelled an event with a timestamp with microseconds reads back as it was stored through every read path, and its hash verifies -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres) hashed fields as spelled an event with a timestamp without a fraction reads back as it was stored through every read path, and its hash verifies -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres) hashed fields as spelled an event with an automation initiator without its optional key reads back as it was stored through every read path, and its hash verifies -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres) hashed fields as spelled an event with an initiator with a key this build does not read reads back as it was stored through every read path, and its hash verifies -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres) hashed fields as spelled an event with top-level keys this build does not read reads back as it was stored through every read path, and its hash verifies -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres) hashed fields as spelled an event with version maps with keys this build does not read reads back as it was stored through every read path, and its hash verifies -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with a timestamp in year 0000 reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with a timestamp in year 9999 reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with a timestamp with a +00:00 offset reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with a timestamp with a +02:00 offset reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with a timestamp with a -05:30 offset reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with a timestamp with microseconds reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with a timestamp without a fraction reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with an automation initiator without its optional key reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with an initiator with a key this build does not read reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with top-level keys this build does not read reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with version maps with keys this build does not read reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with a timestamp in year 0000 reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with a timestamp in year 9999 reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with a timestamp with a +00:00 offset reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with a timestamp with a +02:00 offset reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with a timestamp with a -05:30 offset reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with a timestamp with microseconds reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with a timestamp without a fraction reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with an automation initiator without its optional key reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with an initiator with a key this build does not read reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with top-level keys this build does not read reads back as it was stored through every read path, and its hash verifies -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6054 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with version maps with keys this build does not read reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres) hashed fields as spelled an event with a timestamp in year 0000 reads back as it was stored through every read path, and its hash verifies -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres) hashed fields as spelled an event with a timestamp in year 9999 reads back as it was stored through every read path, and its hash verifies -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres) hashed fields as spelled an event with a timestamp with a +00:00 offset reads back as it was stored through every read path, and its hash verifies -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres) hashed fields as spelled an event with a timestamp with a +02:00 offset reads back as it was stored through every read path, and its hash verifies -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres) hashed fields as spelled an event with a timestamp with a -05:30 offset reads back as it was stored through every read path, and its hash verifies -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres) hashed fields as spelled an event with a timestamp with microseconds reads back as it was stored through every read path, and its hash verifies -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres) hashed fields as spelled an event with a timestamp without a fraction reads back as it was stored through every read path, and its hash verifies -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres) hashed fields as spelled an event with an automation initiator without its optional key reads back as it was stored through every read path, and its hash verifies -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres) hashed fields as spelled an event with an initiator with a key this build does not read reads back as it was stored through every read path, and its hash verifies -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres) hashed fields as spelled an event with top-level keys this build does not read reads back as it was stored through every read path, and its hash verifies -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres) hashed fields as spelled an event with version maps with keys this build does not read reads back as it was stored through every read path, and its hash verifies -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with a timestamp in year 0000 reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with a timestamp in year 9999 reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with a timestamp with a +00:00 offset reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with a timestamp with a +02:00 offset reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with a timestamp with a -05:30 offset reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with a timestamp with microseconds reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with a timestamp without a fraction reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with an automation initiator without its optional key reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with an initiator with a key this build does not read reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with top-level keys this build does not read reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (postgres, runtime role) hashed fields as spelled an event with version maps with keys this build does not read reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with a timestamp in year 0000 reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with a timestamp in year 9999 reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with a timestamp with a +00:00 offset reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with a timestamp with a +02:00 offset reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with a timestamp with a -05:30 offset reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with a timestamp with microseconds reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with a timestamp without a fraction reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with an automation initiator without its optional key reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with an initiator with a key this build does not read reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with top-level keys this build does not read reads back as it was stored through every read path, and its hash verifies -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6089 StorageBackend conformance (sembast (memory)) hashed fields as spelled an event with version maps with keys this build does not read reads back as it was stored through every read path, and its hash verifies -- passed
 - event_sourcing/test/test_support/ingest_hash_conformance.dart:583 ingest event-hash scenarios (postgres) delivery of records as a sender spelled them admits an event with a client timestamp with a +00:00 offset, stores the record as it arrived, and a downstream store admits the copy it forwards -- passed, skipped
 - event_sourcing/test/test_support/ingest_hash_conformance.dart:583 ingest event-hash scenarios (postgres) delivery of records as a sender spelled them admits an event with a client timestamp with a -05:30 offset, stores the record as it arrived, and a downstream store admits the copy it forwards -- passed, skipped
 - event_sourcing/test/test_support/ingest_hash_conformance.dart:583 ingest event-hash scenarios (postgres) delivery of records as a sender spelled them admits an event with a client timestamp without a fraction, stores the record as it arrived, and a downstream store admits the copy it forwards -- passed, skipped
@@ -9966,9 +9976,9 @@ Code:
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2006
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2037
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2090
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:4005
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:4017
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:4030
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:4042
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:4067
 - event_sourcing/lib/src/storage/sembast_backend.dart:1200
 - event_sourcing/lib/src/storage/sembast_backend.dart:1219
 - event_sourcing/lib/src/storage/sembast_backend.dart:1367
@@ -9977,10 +9987,10 @@ Code:
 - event_sourcing/lib/src/storage/sembast_backend.dart:935
 - event_sourcing/lib/src/storage/sembast_backend.dart:955
 - event_sourcing/lib/src/storage/sembast_backend.dart:989
-- event_sourcing/lib/src/storage/storage_backend.dart:1592
-- event_sourcing/lib/src/storage/storage_backend.dart:1672
-- event_sourcing/lib/src/storage/storage_backend.dart:1690
-- event_sourcing/lib/src/storage/storage_backend.dart:1702
+- event_sourcing/lib/src/storage/storage_backend.dart:1615
+- event_sourcing/lib/src/storage/storage_backend.dart:1695
+- event_sourcing/lib/src/storage/storage_backend.dart:1713
+- event_sourcing/lib/src/storage/storage_backend.dart:1725
 - event_sourcing/lib/src/storage/storage_backend.dart:463
 - event_sourcing/lib/src/storage/storage_backend.dart:479
 
@@ -9990,12 +10000,12 @@ Tests:
 - event_sourcing/test/projections/finding_past_watermark_test.dart:331 an event of a forked database past the watermark that shares a held fork_unrecorded finding's predecessor hash, stored by a build that does not register the view and matches no interest, is reported converging until catch-up folds it, and a further append neither folds into the copy nor advances its watermark past it -- passed
 - event_sourcing/test/projections/integrity_marks_reads_test.dart:192 an append with a received chain finding held, whose originating database has a succession lineage, makes no sender-succession scan -- passed
 - event_sourcing/test/storage/sembast_append_constant_cost_test.dart:335 ordinary append cost at 40k stored events is well under 4x its cost at 1k (a linear scan would be about 40x) -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:5544 StorageBackend conformance (postgres) chain lookups aggregate authorship names every originating database with a held event of the aggregate, at its highest origin position -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:5544 StorageBackend conformance (postgres, runtime role) chain lookups aggregate authorship names every originating database with a held event of the aggregate, at its highest origin position -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:5544 StorageBackend conformance (sembast (memory)) chain lookups aggregate authorship names every originating database with a held event of the aggregate, at its highest origin position -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:5619 StorageBackend conformance (postgres) chain lookups the lowest origin position sharing a predecessor is read regardless of storage order, and a null predecessor is its own key -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:5619 StorageBackend conformance (postgres, runtime role) chain lookups the lowest origin position sharing a predecessor is read regardless of storage order, and a null predecessor is its own key -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:5619 StorageBackend conformance (sembast (memory)) chain lookups the lowest origin position sharing a predecessor is read regardless of storage order, and a null predecessor is its own key -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:5579 StorageBackend conformance (postgres) chain lookups aggregate authorship names every originating database with a held event of the aggregate, at its highest origin position -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:5579 StorageBackend conformance (postgres, runtime role) chain lookups aggregate authorship names every originating database with a held event of the aggregate, at its highest origin position -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:5579 StorageBackend conformance (sembast (memory)) chain lookups aggregate authorship names every originating database with a held event of the aggregate, at its highest origin position -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:5654 StorageBackend conformance (postgres) chain lookups the lowest origin position sharing a predecessor is read regardless of storage order, and a null predecessor is its own key -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:5654 StorageBackend conformance (postgres, runtime role) chain lookups the lowest origin position sharing a predecessor is read regardless of storage order, and a null predecessor is its own key -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:5654 StorageBackend conformance (sembast (memory)) chain lookups the lowest origin position sharing a predecessor is read regardless of storage order, and a null predecessor is its own key -- passed
 - event_sourcing/test/test_support/outstanding_finding_mark_conformance.dart:206 outstanding-finding mark (postgres) a position_reused finding about a database marks the aggregates of its events at or above the position, an event folded after the finding included, and not those below it -- passed, skipped
 - event_sourcing/test/test_support/outstanding_finding_mark_conformance.dart:206 outstanding-finding mark (sembast) a position_reused finding about a database marks the aggregates of its events at or above the position, an event folded after the finding included, and not those below it -- passed
 - event_sourcing/test/test_support/outstanding_finding_mark_conformance.dart:250 outstanding-finding mark (postgres) a fork_unrecorded finding marks the aggregates of the forked database's events at or above the lowest position among the events carrying the named predecessor -- passed, skipped
@@ -10019,12 +10029,12 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/projections/interpreter/projection_interpreter.dart:512
+- event_sourcing/lib/src/projections/interpreter/projection_interpreter.dart:517
 - event_sourcing/lib/src/projections/view_read.dart:230
 - event_sourcing/lib/src/storage/sembast_backend.dart:1324
 - event_sourcing/lib/src/storage/sembast_backend.dart:1334
-- event_sourcing/lib/src/storage/storage_backend.dart:1606
-- event_sourcing/lib/src/storage/storage_backend.dart:1617
+- event_sourcing/lib/src/storage/storage_backend.dart:1629
+- event_sourcing/lib/src/storage/storage_backend.dart:1640
 
 Tests:
 
@@ -10326,6 +10336,8 @@ Code:
 Tests:
 
 - event_sourcing/test/permissions/bootstrap_action_permissions_test.dart:17 bootstrapActionPermissions clean yaml + matching declared perms -> PolicyReady, ready answers permitted -- passed
+- event_sourcing/test/permissions/seed_one_transaction_test.dart:110 a seed of 70 grants appends them all in one transaction -- passed
+- event_sourcing/test/storage/postgres/postgres_seed_latency_test.dart:147 a first boot seeds 70 grants in one transaction over a link with 2 ms each way -- passed, skipped
 
 **B**
 
@@ -10360,6 +10372,20 @@ Code:
 Tests:
 
 - event_sourcing/test/permissions/bootstrap_action_permissions_test.dart:104 bootstrapActionPermissions re-bootstrap with same yaml is idempotent (no new events) -- passed
+- event_sourcing/test/permissions/seed_one_transaction_test.dart:146 a second run of the same seed opens no writing transaction -- passed
+
+**E**
+
+Code:
+
+- event_sourcing/lib/src/permissions/permission_seed_applier.dart:22
+
+Tests:
+
+- event_sourcing/test/permissions/seed_one_transaction_test.dart:110 a seed of 70 grants appends them all in one transaction -- passed
+- event_sourcing/test/permissions/seed_one_transaction_test.dart:146 a second run of the same seed opens no writing transaction -- passed
+- event_sourcing/test/permissions/seed_one_transaction_test.dart:164 a run that adds grants to a seeded log appends only those, together -- passed
+- event_sourcing/test/storage/postgres/postgres_seed_latency_test.dart:147 a first boot seeds 70 grants in one transaction over a link with 2 ms each way -- passed, skipped
 
 </details>
 
@@ -10413,12 +10439,12 @@ Code:
 
 Tests:
 
-- event_sourcing/test/storage/storage_backend_conformance.dart:6414 StorageBackend conformance (postgres) recorded_at comparisons findOlderThanInTxn and findUnredactedOlderThanInTxn include a record at the cutoff and exclude one a microsecond after it -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:6414 StorageBackend conformance (postgres, runtime role) recorded_at comparisons findOlderThanInTxn and findUnredactedOlderThanInTxn include a record at the cutoff and exclude one a microsecond after it -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6414 StorageBackend conformance (sembast (memory)) recorded_at comparisons findOlderThanInTxn and findUnredactedOlderThanInTxn include a record at the cutoff and exclude one a microsecond after it -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6445 StorageBackend conformance (postgres) recorded_at comparisons queryAudit from and to include a record at the bound and exclude one a microsecond outside it -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:6445 StorageBackend conformance (postgres, runtime role) recorded_at comparisons queryAudit from and to include a record at the bound and exclude one a microsecond outside it -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:6445 StorageBackend conformance (sembast (memory)) recorded_at comparisons queryAudit from and to include a record at the bound and exclude one a microsecond outside it -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6449 StorageBackend conformance (postgres) recorded_at comparisons findOlderThanInTxn and findUnredactedOlderThanInTxn include a record at the cutoff and exclude one a microsecond after it -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:6449 StorageBackend conformance (postgres, runtime role) recorded_at comparisons findOlderThanInTxn and findUnredactedOlderThanInTxn include a record at the cutoff and exclude one a microsecond after it -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6449 StorageBackend conformance (sembast (memory)) recorded_at comparisons findOlderThanInTxn and findUnredactedOlderThanInTxn include a record at the cutoff and exclude one a microsecond after it -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6480 StorageBackend conformance (postgres) recorded_at comparisons queryAudit from and to include a record at the bound and exclude one a microsecond outside it -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:6480 StorageBackend conformance (postgres, runtime role) recorded_at comparisons queryAudit from and to include a record at the bound and exclude one a microsecond outside it -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:6480 StorageBackend conformance (sembast (memory)) recorded_at comparisons queryAudit from and to include a record at the bound and exclude one a microsecond outside it -- passed
 
 **D**
 
@@ -10438,24 +10464,24 @@ Tests:
 - event_sourcing/test/storage/storage_backend_conformance.dart:1275 StorageBackend conformance (postgres) generic view storage readViewRowInTxn on missing key returns null -- passed, skipped
 - event_sourcing/test/storage/storage_backend_conformance.dart:1275 StorageBackend conformance (postgres, runtime role) generic view storage readViewRowInTxn on missing key returns null -- passed
 - event_sourcing/test/storage/storage_backend_conformance.dart:1275 StorageBackend conformance (sembast (memory)) generic view storage readViewRowInTxn on missing key returns null -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:1882 StorageBackend conformance (postgres) FIFO enqueueFifoTxn + readFifoHead round-trip -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:1882 StorageBackend conformance (postgres, runtime role) FIFO enqueueFifoTxn + readFifoHead round-trip -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:1882 StorageBackend conformance (sembast (memory)) FIFO enqueueFifoTxn + readFifoHead round-trip -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:1917 StorageBackend conformance (postgres) FIFO enqueueFifoTxn + readFifoHead round-trip -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:1917 StorageBackend conformance (postgres, runtime role) FIFO enqueueFifoTxn + readFifoHead round-trip -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:1917 StorageBackend conformance (sembast (memory)) FIFO enqueueFifoTxn + readFifoHead round-trip -- passed
 - event_sourcing/test/storage/storage_backend_conformance.dart:225 StorageBackend conformance (postgres) transaction successful body commits all writes -- passed, skipped
 - event_sourcing/test/storage/storage_backend_conformance.dart:225 StorageBackend conformance (postgres, runtime role) transaction successful body commits all writes -- passed
 - event_sourcing/test/storage/storage_backend_conformance.dart:225 StorageBackend conformance (sembast (memory)) transaction successful body commits all writes -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:3405 StorageBackend conformance (postgres) listFifoEntries listFifoEntries on unknown destination returns empty list -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:3405 StorageBackend conformance (postgres, runtime role) listFifoEntries listFifoEntries on unknown destination returns empty list -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:3405 StorageBackend conformance (sembast (memory)) listFifoEntries listFifoEntries on unknown destination returns empty list -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:3491 StorageBackend conformance (postgres) fill_cursor readFillCursor returns -1 when unset -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:3491 StorageBackend conformance (postgres, runtime role) fill_cursor readFillCursor returns -1 when unset -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:3491 StorageBackend conformance (sembast (memory)) fill_cursor readFillCursor returns -1 when unset -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:4118 StorageBackend conformance (postgres) backend_state schema_version round-trips -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:4118 StorageBackend conformance (postgres, runtime role) backend_state schema_version round-trips -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:4118 StorageBackend conformance (sembast (memory)) backend_state schema_version round-trips -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:5803 StorageBackend conformance (postgres) close close() closes the underlying database -- passed, skipped
-- event_sourcing/test/storage/storage_backend_conformance.dart:5803 StorageBackend conformance (postgres, runtime role) close close() closes the underlying database -- passed
-- event_sourcing/test/storage/storage_backend_conformance.dart:5803 StorageBackend conformance (sembast (memory)) close close() closes the underlying database -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:3440 StorageBackend conformance (postgres) listFifoEntries listFifoEntries on unknown destination returns empty list -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:3440 StorageBackend conformance (postgres, runtime role) listFifoEntries listFifoEntries on unknown destination returns empty list -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:3440 StorageBackend conformance (sembast (memory)) listFifoEntries listFifoEntries on unknown destination returns empty list -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:3526 StorageBackend conformance (postgres) fill_cursor readFillCursor returns -1 when unset -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:3526 StorageBackend conformance (postgres, runtime role) fill_cursor readFillCursor returns -1 when unset -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:3526 StorageBackend conformance (sembast (memory)) fill_cursor readFillCursor returns -1 when unset -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:4153 StorageBackend conformance (postgres) backend_state schema_version round-trips -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:4153 StorageBackend conformance (postgres, runtime role) backend_state schema_version round-trips -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:4153 StorageBackend conformance (sembast (memory)) backend_state schema_version round-trips -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:5838 StorageBackend conformance (postgres) close close() closes the underlying database -- passed, skipped
+- event_sourcing/test/storage/storage_backend_conformance.dart:5838 StorageBackend conformance (postgres, runtime role) close close() closes the underlying database -- passed
+- event_sourcing/test/storage/storage_backend_conformance.dart:5838 StorageBackend conformance (sembast (memory)) close close() closes the underlying database -- passed
 
 </details>
 
@@ -11428,7 +11454,7 @@ Code:
 - event_sourcing/lib/src/security/sembast_security_context_store.dart:11
 - event_sourcing/lib/src/security/system_entry_types.dart:8
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:31
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:4124
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:4149
 
 Tests:
 
@@ -11444,7 +11470,7 @@ Code:
 - event_sourcing/lib/src/security/security_retention_policy.dart:4
 - event_sourcing/lib/src/security/sembast_security_context_store.dart:11
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:31
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:4124
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:4149
 
 Tests:
 
@@ -11460,7 +11486,7 @@ Code:
 - event_sourcing/lib/src/security/security_retention_policy.dart:4
 - event_sourcing/lib/src/security/sembast_security_context_store.dart:11
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:31
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:4124
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:4149
 
 Tests:
 
@@ -11476,7 +11502,7 @@ Code:
 - event_sourcing/lib/src/security/security_retention_policy.dart:4
 - event_sourcing/lib/src/security/sembast_security_context_store.dart:11
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:31
-- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:4124
+- event_sourcing/lib/src/storage/postgres/postgres_backend.dart:4149
 
 Tests:
 

@@ -19,6 +19,10 @@
 //   operation through I's deadline-bounded wait rather than a typed
 //   refusal, since I requires waiting the view current before reading it
 //   in the first place.
+// Implements: EVS-DEV-bootstrap-action-permissions/E
+// the grants one run of the seed appends are appended in one transaction
+//   of the store, so the run waits once, not once per grant, for the lock
+//   every transaction that appends takes.
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing/src/permissions/wait_for_current_views.dart';
@@ -96,29 +100,53 @@ class PermissionSeedApplier {
     final present = inSeed.intersection(inView);
     final drift = inView.difference(inSeed).toList()..sort();
 
-    // Emit a permission_granted for each missing.
-    for (final id in missing) {
-      final colonIx = id.indexOf(':');
-      final role = id.substring(0, colonIx);
-      final permName = id.substring(colonIx + 1);
-      final perm = declaredByName[permName];
-      if (perm == null) {
-        // Validator should have caught this earlier; defensive.
-        throw StateError(
-          'permission $permName not in declaredPermissions during apply',
-        );
-      }
-      await eventStore.append(
-        entryType: 'role_permission_grant',
-        aggregateType: 'role_permission_grant',
-        aggregateId: id,
-        eventType: 'permission_granted',
-        data: PermissionGrantedPayload(
-          role: role,
-          permissionName: permName,
-        ).toJson(),
-        initiator: seedInitiator,
-      );
+    // Emit a permission_granted for each missing, all in one transaction.
+    //
+    // On Postgres every transaction that appends waits for the lock the
+    // view catch-up holds on the table every append writes, and a first
+    // boot seeds every grant a deployment declares. One transaction per
+    // grant made that boot wait once per grant, so a deployment whose
+    // appends wait seconds each, as a cloud database's do, overran its
+    // boot's budget on a seed of several dozen grants. One transaction for
+    // the whole seed waits once, however many grants it appends.
+    // (EVS-DEV-bootstrap-action-permissions/E)
+    //
+    // The validator has already refused a seed naming an undeclared
+    // permission; the check inside the loop is defensive, and throwing
+    // from the body ends the transaction unwritten.
+    if (missing.isNotEmpty) {
+      await eventStore.runTransaction<void>((txn, collector) async {
+        for (final id in missing) {
+          final colonIx = id.indexOf(':');
+          final role = id.substring(0, colonIx);
+          final permName = id.substring(colonIx + 1);
+          final perm = declaredByName[permName];
+          if (perm == null) {
+            throw StateError(
+              'permission $permName not in declaredPermissions during apply',
+            );
+          }
+          await eventStore.appendInTxn(
+            txn,
+            entryType: 'role_permission_grant',
+            aggregateType: 'role_permission_grant',
+            aggregateId: id,
+            eventType: 'permission_granted',
+            data: PermissionGrantedPayload(
+              role: role,
+              permissionName: permName,
+            ).toJson(),
+            initiator: seedInitiator,
+            flowToken: null,
+            metadata: null,
+            security: null,
+            checkpointReason: null,
+            changeReason: null,
+            dedupeByContent: false,
+            collector: collector,
+          );
+        }
+      });
     }
 
     return SeedApplyResult(

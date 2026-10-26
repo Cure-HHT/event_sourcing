@@ -39,7 +39,7 @@
 | ------------------------------------------ | ------------------------------------------------------------ | --------------------------------------- | -------- |
 | EVS-DEV-append-stamps-registered-version   | Substrate stamps entryTypeVersion on append                  | dev-append-stamps-registered-version.md | b0a57e30 |
 | EVS-DEV-authz-watcher                      | Mid-session permission-change signalling                     | reaction-remote.md                      | 533309a9 |
-| EVS-DEV-bootstrap-action-permissions       | YAML-seeded role/permission bootstrap                        | prd-permissions-as-events.md            | c76af2cd |
+| EVS-DEV-bootstrap-action-permissions       | YAML-seeded role/permission bootstrap                        | prd-permissions-as-events.md            | ee6ce7e8 |
 | EVS-DEV-causal-parents                     | Causal parents within an aggregate                           | causal-history.md                       | e2eee9c4 |
 | EVS-DEV-chain-verification                 | Storage and origin chain verification                        | causal-history.md                       | 201d5630 |
 | EVS-DEV-containment-resolver               | Containment-chain walk via TableProjections                  | scoped-permissions.md                   | aa0359a8 |

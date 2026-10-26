@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.6.3
+
+Data: data format 3.0, unchanged. A database written by 0.6.2 opens.
+
+### Views
+
+- A transaction that stores an event sets the watermark of every copy it
+  folds into, or passes over, in one statement on Postgres
+  (`StorageBackend.setViewCopyWatermarksInTxn`, which other backends run
+  as one write per copy). It wrote one statement per registered view,
+  which over a network was the largest share of an append's round trips:
+  on a deployed portal with some thirty views, most of each append's time.
+  The obligation is unchanged (EVS-DEV-view-convergence/E).
+
+### Permissions
+
+- `bootstrapActionPermissions` appends every `permission_granted` event of
+  one run in one transaction of the store, where it appended each in a
+  transaction of its own (EVS-DEV-bootstrap-action-permissions/E). On
+  Postgres every transaction that appends waits for the lock the view
+  catch-up holds on the table every append writes, so a first boot on an
+  empty log waited once per grant it seeded: on a cloud database, where
+  each wait ran to seconds, a seed of some seventy grants overran the
+  budget a consumer gave its whole permission boot. The seed now waits
+  once, however many grants it appends, and its grants commit together.
+  A consumer that bounded the seed by a deadline sized to one wait per
+  grant can shorten it.
+
 ## 0.6.2
 
 Data: data format 3.0, unchanged. A database written by 0.6.1 opens.
