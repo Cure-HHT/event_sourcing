@@ -482,20 +482,22 @@ docker_running() {
   command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1
 }
 
-# Starts a container with a free host port Docker chooses; prints nothing.
+# Starts a container with a free host port Docker chooses; prints nothing. The
+# database is $3 if given, else PG_DB.
 pg_start() {
-  local name="$1" label="$2"
+  local name="$1" label="$2" db="${3:-$PG_DB}"
   docker run -d --rm --name "$name" --label "$label" \
     -e POSTGRES_USER="$PG_USER" -e POSTGRES_PASSWORD="$PG_PASSWORD" \
-    -e POSTGRES_DB="$PG_DB" -p 127.0.0.1::5432 "$PG_IMAGE" \
+    -e POSTGRES_DB="$db" -p 127.0.0.1::5432 "$PG_IMAGE" \
     -c fsync=off -c synchronous_commit=off -c full_page_writes=off >/dev/null
 }
 
 # Waits for the container's server (over TCP, so not the image's
-# initialization-time server) and prints its URL.
+# initialization-time server) and prints its URL. The database is $2 if given,
+# else PG_DB.
 pg_ready_url() {
-  local name="$1" tries=0 port
-  while ! docker exec "$name" pg_isready -q -h 127.0.0.1 -U "$PG_USER" -d "$PG_DB" >/dev/null 2>&1; do
+  local name="$1" db="${2:-$PG_DB}" tries=0 port
+  while ! docker exec "$name" pg_isready -q -h 127.0.0.1 -U "$PG_USER" -d "$db" >/dev/null 2>&1; do
     tries=$((tries + 1))
     if [ "$tries" -gt 120 ]; then
       echo "container $name did not become ready" >&2
@@ -508,7 +510,13 @@ pg_ready_url() {
     echo "container $name has no published port" >&2
     return 1
   fi
-  echo "postgres://$PG_USER:$PG_PASSWORD@127.0.0.1:$port/$PG_DB"
+  echo "postgres://$PG_USER:$PG_PASSWORD@127.0.0.1:$port/$db"
+}
+
+# The database a Postgres URL ($1) names.
+url_database() {
+  local path="${1%%\?*}"
+  echo "${path##*/}"
 }
 
 # ---------------------------------------------------------------------------
@@ -847,7 +855,9 @@ timed, harness = set(), {}
 with open(timings, encoding="utf-8") as fh:
     for line in fh:
         rec = json.loads(line)
-        f, d = rec.get("file", ""), rec.get("duration")
+        # A shared harness's tests name the file that ran them in `runner`;
+        # `file` is the harness.
+        f, d = rec.get("runner") or rec.get("file", ""), rec.get("duration")
         if not rec.get("target", "").endswith("-" + kind) or not f.startswith(prefix):
             continue
         if not isinstance(d, (int, float)):
@@ -1160,24 +1170,29 @@ target_postgres() {
   else
     # shellcheck disable=SC2086 # one URL per word
     set -- $urls
+    local other_db=""
     j=1
     for b in "${mine[@]}"; do
       shard_urls[j]="$1"
+      if grep -q "^$OTHER_SERVER_FILE	" "$TLOG/plan/$b.list"; then
+        other_db="$(url_database "$1")"
+      fi
       shift
       j=$((j + 1))
     done
     # The second server, where this slice runs the file that needs it and
     # none is given: a throwaway container, as when the containers are this
     # run's own, wherever Docker runs. CI's Postgres jobs give their one
-    # server and leave this to the job whose slice holds the file. A server
-    # that does not start fails the target rather than letting the check
-    # skip.
+    # server and leave this to the job whose slice holds the file. The file
+    # needs the same database name on both servers, so the container takes
+    # the name from the URL of the server that runs it. A server that does
+    # not start fails the target rather than letting the check skip.
     if [ "$need_other" -eq 1 ] && [ -z "$other" ] && docker_running; then
       require_docker
       CONTAINER_LABEL="evs-checks.run=$(new_runid)"
       local other_name="evs-checks-${CONTAINER_LABEL#evs-checks.run=}-other"
-      if ! pg_start "$other_name" "$CONTAINER_LABEL" ||
-        ! other="$(pg_ready_url "$other_name")"; then
+      if ! pg_start "$other_name" "$CONTAINER_LABEL" "$other_db" ||
+        ! other="$(pg_ready_url "$other_name" "$other_db")"; then
         echo "could not start the second server ($other_name) for $OTHER_SERVER_FILE" >&2
         remove_containers
         return 1
