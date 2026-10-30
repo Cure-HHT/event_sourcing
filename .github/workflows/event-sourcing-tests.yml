@@ -24,12 +24,18 @@
 #                 integration test on a Linux desktop build under a virtual
 #                 display.
 #   postgres    -- the `postgres` group, cut into PG_PART slices (matrix), each
-#                 against its own Postgres service and the second server one
-#                 file compares against.
+#                 against its own Postgres service. tools/run-checks.sh
+#                 weighs the files by their median CI times
+#                 (tools/postgres-ci-durations.tsv; the Evidence Snapshot's
+#                 timings for a file it does not list), so every slice
+#                 computes the same plan, and starts the second
+#                 server one file compares against as a container in the one
+#                 slice that runs that file.
 #                 event_sourcing/test/ci/postgres_ci_listing_test.dart fails
-#                 when a gated file is not run by a target this job runs,
-#                 and the job fails when a gated test skipped for want of
-#                 PG_TEST_URL.
+#                 when a gated file is not run by a target this job runs, or
+#                 when the slices of the matrix do not run every gated file
+#                 exactly once, and the job fails when a gated test skipped
+#                 for want of PG_TEST_URL or of the second server.
 #   throughput  -- the `throughput` group: the throughput guard checks out the
 #                 baseline commit into a temporary worktree, so it needs the
 #                 full history (fetch-depth 0). It is blocking, and its result
@@ -46,6 +52,21 @@
 # other check, so no job may run longer. The Flutter SDK, the Postgres image
 # and elspais are pinned in .github/versions.env, so a new release cannot
 # change a run's outcome; bump them there.
+#
+# Caches: every job restores the pinned Flutter SDK (subosito/flutter-action
+# `cache`, keyed on the version) and the pub cache (keyed on the job, the ISO
+# week and every pubspec.yaml; the packages commit no pubspec.lock, so `pub
+# get` still resolves against pub.dev every run and the cache only saves
+# downloads). The pub cache's restore prefix carries the week too, so each
+# week starts from an empty cache instead of growing last week's. Neither
+# holds a test result or a build output, so a cache hit runs the same code as
+# a miss, and GitHub scopes a pull request's caches to it, so none reaches
+# main. The two caching actions are pinned by commit; the workflow's other
+# actions keep the tag pins main already had.
+#
+# The workflow runs on every change, documentation included: the Evidence
+# Snapshot binds to the digest of every tracked file, so a commit the gate
+# skipped would leave a snapshot on main that no run verified.
 
 name: Event sourcing tests
 
@@ -69,6 +90,7 @@ jobs:
     outputs:
       flutter_version: ${{ steps.read.outputs.flutter_version }}
       postgres_image: ${{ steps.read.outputs.postgres_image }}
+      pub_cache_week: ${{ steps.read.outputs.pub_cache_week }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -83,6 +105,11 @@ jobs:
           {
             echo "flutter_version=$FLUTTER_VERSION"
             echo "postgres_image=$POSTGRES_IMAGE"
+            # The repo commits no pubspec.lock, so the pubspecs alone never
+            # change the pub cache key and an exact hit is never re-saved.
+            # An ISO-week bucket lets the cache pick up newly resolved
+            # versions once a week; resolution itself is online either way.
+            echo "pub_cache_week=$(date -u +%G-W%V)"
           } >>"$GITHUB_OUTPUT"
 
   unit:
@@ -118,10 +145,20 @@ jobs:
             target: canonical_json_jcs
     steps:
       - uses: actions/checkout@v4
-      - uses: subosito/flutter-action@v2
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2  # v2.23.0
         with:
           channel: stable
           flutter-version: ${{ needs.pins.outputs.flutter_version }}
+          cache: true
+          # The pub cache is the step below, keyed on the pubspecs.
+          pub-cache: false
+      - name: Cache pub packages
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4
+        with:
+          path: ~/.pub-cache
+          key: pub-${{ runner.os }}-flutter-${{ needs.pins.outputs.flutter_version }}-unit-${{ matrix.target }}-${{ needs.pins.outputs.pub_cache_week }}-${{ hashFiles('**/pubspec.yaml') }}
+          restore-keys: |
+            pub-${{ runner.os }}-flutter-${{ needs.pins.outputs.flutter_version }}-unit-${{ matrix.target }}-${{ needs.pins.outputs.pub_cache_week }}-
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -171,10 +208,20 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - uses: subosito/flutter-action@v2
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2  # v2.23.0
         with:
           channel: stable
           flutter-version: ${{ needs.pins.outputs.flutter_version }}
+          cache: true
+          # The pub cache is the step below, keyed on the pubspecs.
+          pub-cache: false
+      - name: Cache pub packages
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4
+        with:
+          path: ~/.pub-cache
+          key: pub-${{ runner.os }}-flutter-${{ needs.pins.outputs.flutter_version }}-browser-${{ needs.pins.outputs.pub_cache_week }}-${{ hashFiles('**/pubspec.yaml') }}
+          restore-keys: |
+            pub-${{ runner.os }}-flutter-${{ needs.pins.outputs.flutter_version }}-browser-${{ needs.pins.outputs.pub_cache_week }}-
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -207,10 +254,20 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-      - uses: subosito/flutter-action@v2
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2  # v2.23.0
         with:
           channel: stable
           flutter-version: ${{ needs.pins.outputs.flutter_version }}
+          cache: true
+          # The pub cache is the step below, keyed on the pubspecs.
+          pub-cache: false
+      - name: Cache pub packages
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4
+        with:
+          path: ~/.pub-cache
+          key: pub-${{ runner.os }}-flutter-${{ needs.pins.outputs.flutter_version }}-desktop-${{ needs.pins.outputs.pub_cache_week }}-${{ hashFiles('**/pubspec.yaml') }}
+          restore-keys: |
+            pub-${{ runner.os }}-flutter-${{ needs.pins.outputs.flutter_version }}-desktop-${{ needs.pins.outputs.pub_cache_week }}-
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -218,6 +275,9 @@ jobs:
         run: |
           . .github/versions.env
           python -m pip install "elspais==${ELSPAIS_VERSION}"
+      # Not cached: the step takes about 25 s, 9 s of it the download, and a
+      # cache of the root-owned packages needs sudo tar or a third-party
+      # action to restore, for about 10 s.
       - name: Install Linux desktop build dependencies
         run: |
           sudo apt-get update
@@ -251,7 +311,10 @@ jobs:
       matrix:
         # PG_PART slices of one shard plan; the plan is computed the same way
         # in every job, so together the parts run every Postgres-gated file
-        # once. Keep the count in PG_PART below in step with this list.
+        # once. Keep the count in PG_PART below in step with this list
+        # (postgres_ci_listing_test.dart checks both). Six, not fewer: the
+        # plan's largest pieces bound a slice, and four slices of the same
+        # files would each run about 40% longer than the longest of six.
         part: [1, 2, 3, 4, 5, 6]
     services:
       postgres:
@@ -267,31 +330,29 @@ jobs:
           --health-interval 2s
           --health-timeout 2s
           --health-retries 30
-      # A second server whose database and schema have the same names, for
-      # the check that a lock session reaches the pool's server.
-      postgres_other:
-        image: ${{ needs.pins.outputs.postgres_image }}
-        env:
-          POSTGRES_USER: evs
-          POSTGRES_PASSWORD: evs
-          POSTGRES_DB: evs_test
-        ports:
-          - 5433:5432
-        options: >-
-          --health-cmd "pg_isready -U evs -d evs_test"
-          --health-interval 2s
-          --health-timeout 2s
-          --health-retries 30
+    # The second server, whose database and schema have the same names, for
+    # the check that a lock session reaches the pool's server: no service.
+    # PG_TEST_URL_OTHER_SERVER is unset, so tools/run-checks.sh starts it as
+    # a container (the pinned image) in the slice whose plan holds that file.
     env:
       PG_TEST_URL: postgres://evs:evs@localhost:5432/evs_test
-      PG_TEST_URL_OTHER_SERVER: postgres://evs:evs@localhost:5433/evs_test
       PG_PART: ${{ matrix.part }}/6
     steps:
       - uses: actions/checkout@v4
-      - uses: subosito/flutter-action@v2
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2  # v2.23.0
         with:
           channel: stable
           flutter-version: ${{ needs.pins.outputs.flutter_version }}
+          cache: true
+          # The pub cache is the step below, keyed on the pubspecs.
+          pub-cache: false
+      - name: Cache pub packages
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4
+        with:
+          path: ~/.pub-cache
+          key: pub-${{ runner.os }}-flutter-${{ needs.pins.outputs.flutter_version }}-postgres-${{ needs.pins.outputs.pub_cache_week }}-${{ hashFiles('**/pubspec.yaml') }}
+          restore-keys: |
+            pub-${{ runner.os }}-flutter-${{ needs.pins.outputs.flutter_version }}-postgres-${{ needs.pins.outputs.pub_cache_week }}-
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -308,8 +369,9 @@ jobs:
       - name: Postgres-gated files (elspais group postgres)
         run: elspais test --targets postgres
       # A gated test that finds no server skips itself with a reason naming
-      # PG_TEST_URL (a shared harness says "no database for ..."). Here a
-      # server is configured, so a skip means a file ran without it.
+      # PG_TEST_URL (a shared harness says "no database for ..."), and the
+      # second-server check with one naming PG_TEST_URL_OTHER_SERVER. Here
+      # both are provided, so a skip means a file ran without one.
       - name: No Postgres-gated test skipped
         run: |
           targets=".results/event_sourcing-postgres .results/event_sourcing-example_action_permissions-postgres"
@@ -321,7 +383,7 @@ jobs:
             echo "::error::no Postgres test results under $targets"
             exit 1
           fi
-          pattern='PG_TEST_URL( is)? (unset|not set)|no (database|backend available) for '
+          pattern='PG_TEST_URL(_OTHER_SERVER)?( is)? (unset|not set)|no (database|backend available) for '
           if grep -rEl --include='*.jsonl' "$pattern" $results; then
             echo "::error::Postgres-gated tests skipped although PG_TEST_URL is set:"
             grep -rhoE --include='*.jsonl' '"messageType":"skip","message":"[^"]*"' $results | sort | uniq -c
@@ -368,10 +430,20 @@ jobs:
           # The baseline worktree checks out a commit from the tree's own
           # history, so the full history must be present.
           fetch-depth: 0
-      - uses: subosito/flutter-action@v2
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2  # v2.23.0
         with:
           channel: stable
           flutter-version: ${{ needs.pins.outputs.flutter_version }}
+          cache: true
+          # The pub cache is the step below, keyed on the pubspecs.
+          pub-cache: false
+      - name: Cache pub packages
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4
+        with:
+          path: ~/.pub-cache
+          key: pub-${{ runner.os }}-flutter-${{ needs.pins.outputs.flutter_version }}-throughput-${{ needs.pins.outputs.pub_cache_week }}-${{ hashFiles('**/pubspec.yaml') }}
+          restore-keys: |
+            pub-${{ runner.os }}-flutter-${{ needs.pins.outputs.flutter_version }}-throughput-${{ needs.pins.outputs.pub_cache_week }}-
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
