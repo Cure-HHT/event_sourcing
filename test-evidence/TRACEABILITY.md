@@ -474,7 +474,7 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/event_store.dart:2014
-- event_sourcing/lib/src/event_store.dart:4291
+- event_sourcing/lib/src/event_store.dart:4301
 
 Tests:
 
@@ -2245,7 +2245,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:4300
+- event_sourcing/lib/src/event_store.dart:4310
 - event_sourcing/lib/src/ingest/sender_succession.dart:249
 - event_sourcing/lib/src/ingest/sender_succession.dart:309
 - event_sourcing/lib/src/ingest/sender_succession.dart:6
@@ -2403,8 +2403,8 @@ Code:
 
 Tests:
 
-- event_sourcing/test/event_store/converging_view_reads_test.dart:180 converging view reads state and rows are read in one transaction: an append queued between the state read and the row read has not landed by the time the rows are read -- passed
-- event_sourcing/test/event_store/converging_view_reads_test.dart:226 converging view reads readViewRowsByKeys reads state and rows in one transaction: an append queued between them has not landed by the time the rows are read -- passed
+- event_sourcing/test/event_store/converging_view_reads_test.dart:218 converging view reads state and rows are read in one transaction: an append queued between the state read and the row read has not landed by the time the rows are read -- passed
+- event_sourcing/test/event_store/converging_view_reads_test.dart:264 converging view reads readViewRowsByKeys reads state and rows in one transaction: an append queued between them has not landed by the time the rows are read -- passed
 - event_sourcing/test/event_store/storage_reader_conformance.dart:313 storage reader (postgres) the reads return what the store holds readViewRowsByKeys reads state and rows in one transaction: an append that commits between them is not visible to the row fetch -- passed, skipped
 - event_sourcing/test/event_store/storage_reader_conformance.dart:313 storage reader (sembast (memory)) the reads return what the store holds readViewRowsByKeys reads state and rows in one transaction: an append that commits between them is not visible to the row fetch -- passed
 - event_sourcing/test/projections/marked_copy_test.dart:73 a copy marked for deletion, or whose record is gone is never served as current or folded into, and a read never throws once its record is gone -- passed
@@ -2416,13 +2416,13 @@ Code:
 
 - event_sourcing/lib/src/event_store.dart:4100
 - event_sourcing/lib/src/event_store.dart:4158
-- event_sourcing/lib/src/projections/view_read.dart:228
+- event_sourcing/lib/src/projections/view_read.dart:268
 - event_sourcing/lib/src/projections/view_read.dart:8
 
 Tests:
 
-- event_sourcing/test/event_store/converging_view_reads_test.dart:104 converging view reads an aggregate view converging on one aggregate withholds its row and serves the untouched aggregate's settled row -- passed
-- event_sourcing/test/event_store/converging_view_reads_test.dart:150 converging view reads a converging table view returns no rows, every key pending -- passed
+- event_sourcing/test/event_store/converging_view_reads_test.dart:142 converging view reads an aggregate view converging on one aggregate withholds its row and serves the untouched aggregate's settled row -- passed
+- event_sourcing/test/event_store/converging_view_reads_test.dart:188 converging view reads a converging table view returns no rows, every key pending -- passed
 - event_sourcing/test/projections/finding_past_watermark_test.dart:129 a security finding past the watermark is reported converging with the finding's aggregate unsettled, and a further append neither folds into the copy nor advances its watermark past the finding -- passed
 
 **C**
@@ -2435,8 +2435,8 @@ Code:
 
 Tests:
 
-- event_sourcing/test/event_store/converging_view_reads_test.dart:104 converging view reads an aggregate view converging on one aggregate withholds its row and serves the untouched aggregate's settled row -- passed
-- event_sourcing/test/event_store/converging_view_reads_test.dart:150 converging view reads a converging table view returns no rows, every key pending -- passed
+- event_sourcing/test/event_store/converging_view_reads_test.dart:142 converging view reads an aggregate view converging on one aggregate withholds its row and serves the untouched aggregate's settled row -- passed
+- event_sourcing/test/event_store/converging_view_reads_test.dart:188 converging view reads a converging table view returns no rows, every key pending -- passed
 
 **D**
 
@@ -2444,11 +2444,11 @@ Code:
 
 - event_sourcing/lib/src/event_store.dart:4159
 - event_sourcing/lib/src/projections/view_read.dart:16
-- event_sourcing/lib/src/projections/view_read.dart:229
+- event_sourcing/lib/src/projections/view_read.dart:269
 
 Tests:
 
-- event_sourcing/test/event_store/converging_view_reads_test.dart:270 converging view reads settled rows equal a replay: once the copy catches up, its rows match what the converging read already reported as settled -- passed
+- event_sourcing/test/event_store/converging_view_reads_test.dart:308 converging view reads settled rows equal a replay: once the copy catches up, its rows match what the converging read already reported as settled -- passed
 - event_sourcing/test/projections/finding_lineage_past_watermark_test.dart:132 a received finding naming an aggregate directly, past the watermark reports converging once the finding's own originating database authors an event of the named aggregate outside the view's interest, and a further append neither folds into the copy nor advances its watermark past it -- passed
 - event_sourcing/test/projections/finding_lineage_past_watermark_test.dart:259 a held position_reused finding whose chain database authors an event at its threshold position stored by a build that does not register the view and matches no interest, is reported converging until catch-up folds it, and a further append neither folds into the copy nor advances its watermark past it -- passed
 - event_sourcing/test/projections/finding_past_watermark_test.dart:129 a security finding past the watermark is reported converging with the finding's aggregate unsettled, and a further append neither folds into the copy nor advances its watermark past the finding -- passed
@@ -2549,7 +2549,8 @@ Code:
 
 Tests:
 
-- event_sourcing/test/event_store/converging_view_reads_test.dart:312 converging view reads viewProgress reports state, watermark, log head and last failure per registered view -- passed
+- event_sourcing/test/event_store/converging_view_reads_test.dart:350 converging view reads viewProgress reports state, watermark, log head and last failure per registered view -- passed
+- event_sourcing/test/event_store/converging_view_reads_test.dart:389 converging view reads viewProgress of a copy far behind the log reads the events up to the first one its definition folds, not the whole backlog -- passed
 - event_sourcing/test/event_store/storage_reader_conformance.dart:189 storage reader (postgres) the reads return what the store holds outside a transaction -- passed, skipped
 - event_sourcing/test/event_store/storage_reader_conformance.dart:189 storage reader (sembast (memory)) the reads return what the store holds outside a transaction -- passed
 
@@ -10020,7 +10021,7 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/projections/interpreter/projection_interpreter.dart:512
-- event_sourcing/lib/src/projections/view_read.dart:230
+- event_sourcing/lib/src/projections/view_read.dart:270
 - event_sourcing/lib/src/storage/sembast_backend.dart:1324
 - event_sourcing/lib/src/storage/sembast_backend.dart:1334
 - event_sourcing/lib/src/storage/storage_backend.dart:1606
