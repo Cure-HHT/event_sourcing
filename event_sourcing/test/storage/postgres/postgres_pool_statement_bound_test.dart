@@ -52,6 +52,30 @@ void main() {
     }
   });
 
+  group('the maximum connection age', () {
+    for (final age in <Duration>[Duration.zero, const Duration(seconds: -1)]) {
+      // Verifies: EVS-DEV-postgres-backend/Y
+      // a maximum connection age that is not positive is refused before any
+      //   connection is opened.
+      test('$age is refused', () async {
+        await expectLater(
+          PostgresBackend.open(
+            url: 'postgres://nobody:none@127.0.0.1:1/none',
+            schema: 'none',
+            maxConnectionAge: age,
+          ),
+          throwsA(
+            isA<ArgumentError>().having(
+              (e) => e.name,
+              'name',
+              'maxConnectionAge',
+            ),
+          ),
+        );
+      });
+    }
+  });
+
   final db = PostgresTestDatabase.fromEnvironment(tag: 'bound');
   if (db == null) {
     test('skipped — PG_TEST_URL unset', () {
@@ -98,6 +122,58 @@ void main() {
       );
     } finally {
       await unconfigured.close();
+    }
+  });
+
+  // Verifies: EVS-DEV-postgres-backend/Z
+  // a backend opened without a maximum connection age retires its pool
+  //   connections after 5 minutes.
+  test('the maximum connection age defaults to 5 minutes', () async {
+    final unconfigured = await PostgresBackend.open(
+      url: db.runtimeUrl,
+      schema: db.schema,
+      sslMode: SslMode.disable,
+    );
+    try {
+      expect(
+        (unconfigured.pool as BoundedPool).maxConnectionAge,
+        const Duration(minutes: 5),
+      );
+    } finally {
+      await unconfigured.close();
+    }
+  });
+
+  // Verifies: EVS-DEV-postgres-backend/Y
+  // the pool hands out again a connection younger than the maximum
+  //   connection age, and opens a new server session for the next statement
+  //   once its only connection has passed that age.
+  test('a pool connection older than the maximum age is not reused', () async {
+    const age = Duration(seconds: 1);
+    final aged = await PostgresBackend.open(
+      url: db.runtimeUrl,
+      schema: db.schema,
+      sslMode: SslMode.disable,
+      maxConnectionAge: age,
+    );
+    Future<int> pid() => aged.transaction(
+      (txn) async =>
+          (await aged.queryInTxnForTest(
+                txn,
+                'SELECT pg_backend_pid()',
+              )).first[0]!
+              as int,
+    );
+    try {
+      // The connections open's own checks used are retired first, so the
+      // pool starts from one connection opened now.
+      await Future<void>.delayed(age + _schedulingSlack);
+      final first = await pid();
+      expect(await pid(), first, reason: 'a young connection is reused');
+      await Future<void>.delayed(age + _schedulingSlack);
+      expect(await pid(), isNot(first));
+    } finally {
+      await aged.close();
     }
   });
 

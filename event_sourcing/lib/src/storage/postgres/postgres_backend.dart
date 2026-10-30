@@ -112,6 +112,13 @@ const _uuidGen = Uuid();
 // Implements: EVS-DEV-postgres-backend/X
 const Duration defaultPostgresQueryTimeout = Duration(minutes: 5);
 
+/// The default maximum age of a connection on the Postgres backend's pool.
+/// A connection that has been open this long serves no further statement,
+/// so the pool never reuses one that the network path may have dropped
+/// while it sat idle.
+// Implements: EVS-DEV-postgres-backend/Z
+const Duration defaultPostgresMaxConnectionAge = Duration(minutes: 5);
+
 /// Thrown by every public [PostgresBackend] I/O method after
 /// `PostgresBackend.close` has run. Implements [Exception] (not [Error])
 /// so callers can match on `isA<Exception>()` in the conformance harness
@@ -356,6 +363,13 @@ class PostgresBackend extends StorageBackend {
   /// [bootLockWait]) for the boot's whole duration. It must be positive, or
   /// `open` throws [ArgumentError].
   ///
+  /// [maxConnectionAge] bounds how long a pool connection is reused: a
+  /// connection opened that long ago serves no further statement, and the
+  /// pool opens a new one for the next. A network path that silently drops
+  /// an idle connection would otherwise fail the next statement handed it.
+  /// A statement already running when its connection reaches the age
+  /// finishes. It must be positive, or `open` throws [ArgumentError].
+  ///
   /// The default [sslMode], `SslMode.require`, matches a managed Postgres's
   /// default "require SSL" posture. Local development against an
   /// unencrypted Postgres passes `SslMode.disable`; a deployment reaching a
@@ -378,6 +392,9 @@ class PostgresBackend extends StorageBackend {
   // the pool's statements carry the configured statement timeout, the
   //   driver's default unless given, and every one of them, with every
   //   exchange the driver makes for it, is bounded by twice that timeout.
+  // Implements: EVS-DEV-postgres-backend/Y+Z
+  // the pool reuses a connection only while it is younger than the
+  //   configured maximum connection age, 5 minutes unless given.
   static Future<PostgresBackend> open({
     required String url,
     required String schema,
@@ -387,8 +404,16 @@ class PostgresBackend extends StorageBackend {
     Duration lockQueryTimeout = const Duration(seconds: 5),
     Duration lockHeartbeat = const Duration(seconds: 5),
     Duration bootLockWait = const Duration(seconds: 60),
+    Duration maxConnectionAge = defaultPostgresMaxConnectionAge,
   }) async {
     quotePostgresIdentifier(schema);
+    if (maxConnectionAge <= Duration.zero) {
+      throw ArgumentError.value(
+        maxConnectionAge,
+        'maxConnectionAge',
+        'the maximum age of a pool connection must be positive',
+      );
+    }
     if (queryTimeout <= Duration.zero) {
       throw ArgumentError.value(
         queryTimeout,
@@ -404,11 +429,13 @@ class PostgresBackend extends StorageBackend {
         [endpoint],
         settings: PoolSettings(
           maxConnectionCount: _poolConnections,
+          maxConnectionAge: maxConnectionAge,
           sslMode: sslMode,
           queryTimeout: queryTimeout,
         ),
       ),
       queryTimeout: queryTimeout,
+      maxConnectionAge: maxConnectionAge,
       // The margin past the driver's own statement timeout before the
       // connection is closed. The pool's connects keep the driver's default
       // connect timeout.
