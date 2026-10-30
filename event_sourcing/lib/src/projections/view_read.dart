@@ -222,6 +222,46 @@ class ViewCurrencyScan {
   final bool allUnsettled;
 }
 
+/// The first page [copyFoldsPastWatermark] reads, doubling on each page
+/// that holds no event the copy folds, up to [_kFoldsPastWatermarkMaxPage].
+const int _kFoldsPastWatermarkFirstPage = 16;
+const int _kFoldsPastWatermarkMaxPage = 500;
+
+/// Whether the log past [copy]'s watermark, inside [txn], holds an event
+/// [spec]'s definition folds (EVS-DEV-view-convergence Terms): the same
+/// test as [scanViewCurrency]'s state, decided at the first such event.
+/// A copy far behind the log is converging after the first page, so the
+/// cost of asking does not grow with how far behind it is; only a copy
+/// with no folding event past its watermark is read to the log's head.
+@internal
+Future<bool> copyFoldsPastWatermark({
+  required Transaction txn,
+  required StorageBackend backend,
+  required ProjectionSpec spec,
+  required ViewCopy copy,
+}) async {
+  var after = copy.watermark;
+  var pageSize = _kFoldsPastWatermarkFirstPage;
+  while (true) {
+    final page = await backend.findAllEventsInTxn(
+      txn,
+      afterSequence: after,
+      limit: pageSize,
+    );
+    for (final e in page) {
+      if (spec.interest.matches(e)) return true;
+      if (await isMarkRefreshingEvent(txn, backend, e)) return true;
+    }
+    if (page.length < pageSize) return false;
+    after = page.last.sequenceNumber;
+    if (pageSize < _kFoldsPastWatermarkMaxPage) {
+      pageSize = pageSize * 2 > _kFoldsPastWatermarkMaxPage
+          ? _kFoldsPastWatermarkMaxPage
+          : pageSize * 2;
+    }
+  }
+}
+
 /// Scans the log past [copy]'s watermark, inside [txn], for the events
 /// [spec]'s definition folds (EVS-DEV-view-convergence Terms): an event
 /// [spec]'s interest matches, or one [isMarkRefreshingEvent] names.

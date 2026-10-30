@@ -4,6 +4,17 @@
 
 Data: data format 3.0, unchanged. A database written by 0.6.1 opens.
 
+### Views
+
+- `StorageReader.viewProgress` decides each copy's state at the first
+  event past its watermark that the copy folds, and reads the log's head
+  once for every view. It read every event from each copy's watermark to
+  the head, so its cost grew with how far each copy was behind: an
+  application polling it while copies caught up from far back held its
+  isolate long enough to starve the catch-up itself. Its answers are
+  unchanged. Reads of a converging view still scan past the watermark,
+  since they name the aggregates still unsettled.
+
 ### Postgres
 
 - The Postgres backend's pool reuses a connection only while it is younger

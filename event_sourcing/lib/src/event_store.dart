@@ -4201,6 +4201,14 @@ final class _StorageReader implements StorageReader {
   @override
   Future<List<ViewCopyStatus>> viewProgress() => transaction((txn) async {
     final issued = _issued(txn);
+    // One read of the log's head serves every view: progress decides each
+    // copy's state at the first event past its watermark the copy folds
+    // (copyFoldsPastWatermark), so no copy's scan reaches the head.
+    var logHead = 0;
+    await for (final e in _backend.readEventsReverseInTxn(issued)) {
+      logHead = e.sequenceNumber;
+      break;
+    }
     final statuses = <ViewCopyStatus>[];
     for (final spec in _store.projections.all()) {
       final fingerprint = viewFingerprint(
@@ -4221,7 +4229,7 @@ final class _StorageReader implements StorageReader {
         watermark: 0,
         markedForDeletion: false,
       );
-      final scan = await scanViewCurrency(
+      final folding = await copyFoldsPastWatermark(
         txn: issued,
         backend: _backend,
         spec: spec,
@@ -4237,9 +4245,11 @@ final class _StorageReader implements StorageReader {
       statuses.add(
         ViewCopyStatus(
           viewName: spec.viewName,
-          state: scan.state,
+          state: folding
+              ? ViewConvergenceState.converging
+              : ViewConvergenceState.current,
           watermark: copy.watermark,
-          logHead: scan.logHead,
+          logHead: logHead > copy.watermark ? logHead : copy.watermark,
           lastFailure: progress?.lastFailure,
           lastFailureAt: progress?.lastFailureAt,
         ),
