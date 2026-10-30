@@ -59,14 +59,10 @@
 #   enter the group and can never displace a real evaluation.
 # - Permissions are granted on the job, not the workflow.
 #
-# Transition: while validation-summary.yml (the polling job) also exists, its "Validation
-# Summary" check run AND this commit status must both pass, so every PR in
-# that phase is a live test of this gate. The gate counts the polling
-# job's check run like any other check. To back out if the gate
-# misbehaves, disable this workflow (Actions > Validation Summary Gate >
-# Disable workflow) and push: new commits then carry only the polling
-# check. Branch rulesets have no bypass actors (HHT-OPS-cicd-app-operations/D),
-# so an override merge would need a ruleset change in hht_admin terraform.
+# The polling job this gate replaced is retired: this commit status is the
+# only source of the required context. To back out, disable this workflow
+# and restore the polling workflow in a pull request (its own check run
+# passes there, and nothing else then posts the context).
 
 name: Validation Summary Gate
 

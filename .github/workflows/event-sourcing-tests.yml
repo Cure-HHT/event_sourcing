@@ -48,8 +48,10 @@
 #                 and writes the coverage summary. It fails on any difference,
 #                 on any failing check, and when any other job did not succeed.
 #
-# The required Validation Summary check waits at most 30 minutes for every
-# other check, so no job may run longer. The Flutter SDK, the Postgres image
+# The required Validation Summary check is published by
+# validation-summary-gate.yml each time a workflow on the commit completes;
+# it imposes no wait limit, so each job's own timeout-minutes bounds it.
+# The Flutter SDK, the Postgres image
 # and elspais are pinned in .github/versions.env, so a new release cannot
 # change a run's outcome; bump them there.
 #
