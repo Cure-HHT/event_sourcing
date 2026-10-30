@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:sembast/sembast_memory.dart';
+import 'package:sembast/sembast_memory.dart' show newDatabaseFactoryMemory;
 
 const _kType = 'converging_read_note';
 const _kView = 'converging_read_notes';
@@ -32,12 +32,50 @@ void _pauseCatchUp(String copyId, String eventId) =>
 
 var _dbCounter = 0;
 
+/// A [SembastBackend] that counts the events [findAllEventsInTxn] returns
+/// while [counting] is set: the log a caller read to answer one question.
+class _CountingBackend extends SembastBackend {
+  _CountingBackend({required super.database});
+
+  bool counting = false;
+  int eventsRead = 0;
+
+  @override
+  Future<List<StoredEvent>> findAllEventsInTxn(
+    Transaction txn, {
+    int? afterSequence,
+    int? limit,
+    String? entryType,
+    DateTime? clientTimestampStart,
+    DateTime? clientTimestampEnd,
+  }) async {
+    final events = await super.findAllEventsInTxn(
+      txn,
+      afterSequence: afterSequence,
+      limit: limit,
+      entryType: entryType,
+      clientTimestampStart: clientTimestampStart,
+      clientTimestampEnd: clientTimestampEnd,
+    );
+    if (counting) eventsRead += events.length;
+    return events;
+  }
+}
+
 Future<SembastBackend> _openBackend() async {
   _dbCounter += 1;
   final db = await newDatabaseFactoryMemory().openDatabase(
     'converging-view-reads-$_dbCounter.db',
   );
   return SembastBackend(database: db);
+}
+
+Future<_CountingBackend> _openCountingBackend() async {
+  _dbCounter += 1;
+  final db = await newDatabaseFactoryMemory().openDatabase(
+    'converging-view-reads-$_dbCounter.db',
+  );
+  return _CountingBackend(database: db);
 }
 
 Future<EventStore> _open(
@@ -342,6 +380,41 @@ void main() {
           expect(view.watermark, settled.sequenceNumber);
           expect(view.lastFailure, isA<InjectedFailure>());
           expect(view.lastFailureAt, isNotNull);
+          await store.close();
+        },
+      );
+    });
+
+    // Verifies: EVS-DEV-converging-view-reads/J
+    test('viewProgress of a copy far behind the log reads the events up to '
+        'the first one its definition folds, not the whole backlog', () async {
+      final backend = await _openCountingBackend();
+      await runWithDeliveryTestHooks(
+        const DeliveryTestHooks(onCatchUpStep: _pauseCatchUp),
+        () async {
+          final store = await _open(backend);
+          final first = await _appendNote(store, 'agg-0', 'note 0');
+          var last = first;
+          for (var i = 1; i < 1200; i++) {
+            last = await _appendNote(store, 'agg-$i', 'note $i');
+          }
+          await _rewindWatermark(store, backend, _kView, 0);
+
+          backend.counting = true;
+          final progress = await store.reader.viewProgress();
+          backend.counting = false;
+
+          final view = progress.singleWhere((p) => p.viewName == _kView);
+          expect(view.state, ViewConvergenceState.converging);
+          expect(view.watermark, 0);
+          expect(view.logHead, last.sequenceNumber);
+          expect(
+            backend.eventsRead,
+            lessThan(100),
+            reason:
+                'the first event past the watermark is one the copy folds, '
+                'so deciding the copy converging needs no further read',
+          );
           await store.close();
         },
       );
