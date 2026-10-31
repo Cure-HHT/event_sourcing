@@ -346,7 +346,7 @@ void main() {
       await caughtUp.close();
     });
 
-    // Verifies: EVS-DEV-converging-view-reads/J
+    // Verifies: EVS-DEV-converging-view-reads/J+L
     test('viewProgress reports state, watermark, log head and last failure '
         'per registered view', () async {
       final backend = await _openBackend();
@@ -386,8 +386,8 @@ void main() {
     });
 
     // Verifies: EVS-DEV-converging-view-reads/J
-    test('viewProgress of a copy far behind the log reads the events up to '
-        'the first one its definition folds, not the whole backlog', () async {
+    test('viewProgress of a copy far behind the log reads no event of the '
+        'log: its state is the catch-up\'s own record', () async {
       final backend = await _openCountingBackend();
       await runWithDeliveryTestHooks(
         const DeliveryTestHooks(onCatchUpStep: _pauseCatchUp),
@@ -399,6 +399,9 @@ void main() {
             last = await _appendNote(store, 'agg-$i', 'note $i');
           }
           await _rewindWatermark(store, backend, _kView, 0);
+          // The catch-up's next attempt on the rewound copy meets the
+          // paused step and fails, leaving the copy behind the head.
+          await _waitUntilFailureRecorded(store, _kView);
 
           backend.counting = true;
           final progress = await store.reader.viewProgress();
@@ -410,16 +413,31 @@ void main() {
           expect(view.logHead, last.sequenceNumber);
           expect(
             backend.eventsRead,
-            lessThan(100),
+            0,
             reason:
-                'the first event past the watermark is one the copy folds, '
-                'so deciding the copy converging needs no further read',
+                'progress reports the catch-up driver\'s record of its last '
+                'attempt, so it reads no event past any watermark',
           );
           await store.close();
         },
       );
     });
   });
+}
+
+/// Waits until [store]'s catch-up of [viewName] has recorded a failure,
+/// polling its reader's `viewProgress`.
+Future<void> _waitUntilFailureRecorded(
+  EventStore store,
+  String viewName,
+) async {
+  for (var i = 0; i < 200; i++) {
+    final progress = await store.reader.viewProgress();
+    final view = progress.singleWhere((p) => p.viewName == viewName);
+    if (view.lastFailure != null) return;
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+  }
+  throw StateError('$viewName recorded no catch-up failure in time');
 }
 
 /// Waits until [store]'s copy of [viewName] is current, polling its

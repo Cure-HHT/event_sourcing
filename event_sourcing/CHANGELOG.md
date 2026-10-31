@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.6.3
+
+Data: data format 3.0, unchanged. A database written by 0.6.2 opens.
+
+### Views
+
+- `StorageReader.viewProgress` reports each view's state as the catch-up
+  driver last found its copy: current when the instance's last catch-up
+  transaction on the copy ended with it at the log's head, converging
+  otherwise, including before the first such transaction since the store
+  opened. It reads no event past any copy's watermark, so asking costs the
+  same however far behind a copy is, and an application polling it while
+  copies fold a long log no longer slows the catch-up it is waiting for.
+  After another build appends an event a copy folds, the reported state
+  can stay current until the instance's next catch-up transaction on the
+  copy, within the catch-up's idle interval. Reads of a view's rows and
+  the library's own decisions still decide the state in their own
+  transaction, so they serve no unsettled row on its word.
+
 ## 0.6.2
 
 Data: data format 3.0, unchanged. A database written by 0.6.1 opens.

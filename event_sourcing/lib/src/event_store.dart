@@ -401,6 +401,11 @@ class EventStore {
   ViewCopyProgress? catchUpProgressOf(String copyId) =>
       _catchUp.progressOf(copyId);
 
+  /// Whether the catch-up driver's last attempt on the copy [copyId]
+  /// committed with the copy at the log's head
+  /// (EVS-DEV-converging-view-reads/J).
+  bool _catchUpAtHead(String copyId) => _catchUp.atHead(copyId);
+
   /// The security contexts stored beside this store's events, for reading:
   /// an object of its own that declares no writing member. The event
   /// store's own operations (append, redaction, retention) write them.
@@ -4197,13 +4202,14 @@ final class _StorageReader implements StorageReader {
     return ViewRowsRead(state: scan.state, rows: settled);
   }
 
-  // Implements: EVS-DEV-converging-view-reads/J
+  // Implements: EVS-DEV-converging-view-reads/J+L
   @override
   Future<List<ViewCopyStatus>> viewProgress() => transaction((txn) async {
     final issued = _issued(txn);
-    // One read of the log's head serves every view: progress decides each
-    // copy's state at the first event past its watermark the copy folds
-    // (copyFoldsPastWatermark), so no copy's scan reaches the head.
+    // Progress reads no event past any copy's watermark: each view's state
+    // is the catch-up driver's own record of whether its last attempt left
+    // the copy at the log's head, and the log's head is read once for
+    // every view.
     var logHead = 0;
     await for (final e in _backend.readEventsReverseInTxn(issued)) {
       logHead = e.sequenceNumber;
@@ -4229,12 +4235,6 @@ final class _StorageReader implements StorageReader {
         watermark: 0,
         markedForDeletion: false,
       );
-      final folding = await copyFoldsPastWatermark(
-        txn: issued,
-        backend: _backend,
-        spec: spec,
-        copy: copy,
-      );
       // A failure while no copy existed was recorded under the
       // fingerprint (the catch-up driver's lock key when it has no known
       // copy id); a failure of a real copy's own catch-up was recorded
@@ -4245,9 +4245,9 @@ final class _StorageReader implements StorageReader {
       statuses.add(
         ViewCopyStatus(
           viewName: spec.viewName,
-          state: folding
-              ? ViewConvergenceState.converging
-              : ViewConvergenceState.current,
+          state: _store._catchUpAtHead(copy.copyId)
+              ? ViewConvergenceState.current
+              : ViewConvergenceState.converging,
           watermark: copy.watermark,
           logHead: logHead > copy.watermark ? logHead : copy.watermark,
           lastFailure: progress?.lastFailure,

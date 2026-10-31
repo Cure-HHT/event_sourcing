@@ -7,7 +7,7 @@
 
 What a read of a materialized view returns while the instance's copy of the view is catching up with the log (EVS-DEV-view-convergence), and how the library's own decisions treat such a view. While a view converges, the library serves only rows it knows are settled, reports every other requested row as pending, and says, with every read, that the view is converging; it never presents a converging view as current.
 
-Terms used below: a view is **current** for an instance in a transaction when the instance's copy of the view is current in that transaction, and **converging** otherwise (terms of EVS-DEV-view-convergence). A copy is current when no event past its watermark is one its definition folds, so an event outside the view's definition leaves it current. A row of an aggregate view is **settled** in a transaction when the view is current, or when the log holds no event past the copy's watermark that the copy's definition folds into that aggregate's row and no security finding past it that marks that aggregate; a table view has no settled row while it converges.
+Terms used below: a view is **current** for an instance in a transaction when the instance's copy of the view is current in that transaction, and **converging** otherwise (terms of EVS-DEV-view-convergence). A copy is current when no event past its watermark is one its definition folds, so an event outside the view's definition leaves it current. A row of an aggregate view is **settled** in a transaction when the view is current, or when the log holds no event past the copy's watermark that the copy's definition folds into that aggregate's row and no security finding past it that marks that aggregate; a table view has no settled row while it converges. A catch-up transaction ends with a copy **at the log's head** when it finds no event past the copy's watermark in the log as that transaction sees it. A copy's **progress** is its watermark, the position of the log's latest event, and its last catch-up failure, if any, with the time that failure was recorded.
 
 ## Assertions
 
@@ -29,9 +29,11 @@ H. Every library operation that decides from a view's rows, the authorization po
 
 I. The library's permission bootstrap and permission-seed operations SHALL wait until every view they read is current for the instance before they read it, and SHALL throw a typed error naming each such view still converging and its copy's progress when a deadline the caller supplies passes first.
 
-J. The library SHALL let a caller read, for each view the instance registers, whether the view is current or converging for the instance and its copy's progress.
+J. The library SHALL let a caller read, for each view the instance registers, whether the instance's last catch-up transaction on the view's copy ended with the copy at the log's head.
 
 K. <RETIRED> A caller awaits a set of views becoming current.
+
+L. The library SHALL let a caller read the progress of the instance's copy of each view the instance registers.
 
 ## Rationale
 
@@ -51,8 +53,11 @@ K. <RETIRED> A caller awaits a set of views becoming current.
 
 **Why does the wait take a deadline (assertion I)?** The permission bootstrap and seed operations run while an application starts and wait for current views, since a seed decided on a converging view could append role assignments the log already holds. A copy stays converging while its catch-up keeps failing, or while it folds a long log. An unbounded wait would hang the start of the application with no sign of why; the deadline turns it into a typed error that names the views and how far they have come. Any other caller reads the state and progress of each view (assertion J) and decides for itself how long to wait.
 
+**Why is the state a caller reads the catch-up's own record (assertions J and L)?** A caller such as an application's boot or a readiness probe asks again and again while a copy folds a long log. An answer decided from the log costs a read of the events past the copy's watermark, and that read competes with the catch-up it is waiting for, so asking more often makes the answer arrive later. The catch-up already knows, at the end of each of its transactions, whether it left the copy at the log's head, so reporting that record costs nothing that grows with the log. The record can lag the log: another build's append of an event the copy folds leaves the record at the head until the instance's next catch-up transaction on the copy, which follows within the catch-up's idle interval. No row is served on the record's word: every read decides the state of the rows it returns in its own transaction (assertion A), and the library's own decisions refuse on that state (assertion H). A caller that waits on the record and then reads the rows may therefore still find the view converging, and waits again.
+
 ## Changelog
 
+- 2026-10-31 | - | - | Michael Lewis (<michael@anspar.org>) | Amend J: the state a caller reads is whether the instance's last catch-up transaction on the copy ended at the log's head. Split the copy's progress out of J into L, with progress and "at the log's head" defined in Terms. Rationale: why the state is the catch-up's own record
 - 2026-10-02 | 0bf00f14 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-25 | e95c070e | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-26 | - | - | Michael Lewis (<michael@anspar.org>) | Terms: a copy is current when no event past its watermark is one its definition folds, so another build's events outside the definition never make a view converging. Retire F (periodic redelivery of settled rows) and K (await with a deadline; callers read the state with J). Rationale: the cost of another build's appends is one short catch-up, symmetric between the builds. No code or test references these assertions
