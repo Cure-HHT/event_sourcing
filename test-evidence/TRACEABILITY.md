@@ -11,7 +11,7 @@
 | EVS-DEV-resume-event | Resume and succession event types | DEV | Active | A,H (100%) | A,H (100%) [2P 0F 0A] | A,H (100%) | 0/2 (0%) | 0/2 (0%) | n/a | n/a |
 | EVS-DEV-sender-succession | Sender succession | DEV | Active | A-H,K (100%) | A-H,K (100%) [9P 0F 0A] | A-H,K (100%) | 0/9 (0%) | 0/9 (0%) | n/a | n/a |
 | EVS-DEV-append-stamps-registered-version | Substrate stamps entryTypeVersion on append | DEV | Active | A-D (100%) | A-D (100%) [4P 0F 0A] | A-D (100%) | 0/4 (0%) | 0/4 (0%) | n/a | n/a |
-| EVS-DEV-converging-view-reads | Reads of a converging view | DEV | Active | A-E,G-J (100%) | A-E,G-J (100%) [9P 0F 0A] | A-E,G-J (100%) | 0/9 (0%) | 0/9 (0%) | n/a | n/a |
+| EVS-DEV-converging-view-reads | Reads of a converging view | DEV | Active | A-E,G-J,L (100%) | A-E,G-J,L (100%) [10P 0F 0A] | A-E,G-J,L (100%) | 0/10 (0%) | 0/10 (0%) | n/a | n/a |
 | EVS-DEV-destination-drain-lock | Delivery cycle mechanics | DEV | Active | A-F (100%) | A-F (100%) [6P 0F 0A] | A-F (100%) | 0/6 (0%) | 0/6 (0%) | n/a | n/a |
 | EVS-DEV-destination-drain | Destination queue mechanics | DEV | Active | A-V,X-Z (100%) | A-V,X-Z (100%) [25P 0F 0A] | A-V,X-Z (100%) | 0/25 (0%) | 0/25 (0%) | n/a | n/a |
 | EVS-DEV-destination-retry-budget | Destination retry budget and attempt outcomes | DEV | Active | A-D (100%) | A-D (100%) [4P 0F 0A] | A-D (100%) | 0/4 (0%) | 0/4 (0%) | n/a | n/a |
@@ -74,7 +74,7 @@
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:3678
+- event_sourcing/lib/src/event_store.dart:3683
 - event_sourcing/lib/src/ingest/chain_checks.dart:64
 - event_sourcing/lib/src/storage/chain_coordinates.dart:43
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1381
@@ -110,7 +110,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:3612
+- event_sourcing/lib/src/event_store.dart:3617
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:3675
 - event_sourcing/lib/src/storage/sembast_backend.dart:861
 - event_sourcing/lib/src/storage/storage_backend.dart:1454
@@ -146,9 +146,9 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:2957
-- event_sourcing/lib/src/event_store.dart:3619
-- event_sourcing/lib/src/event_store.dart:3718
+- event_sourcing/lib/src/event_store.dart:2962
+- event_sourcing/lib/src/event_store.dart:3624
+- event_sourcing/lib/src/event_store.dart:3723
 - event_sourcing/lib/src/storage/sembast_backend.dart:728
 
 Tests:
@@ -268,7 +268,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:3027
+- event_sourcing/lib/src/event_store.dart:3032
 - event_sourcing/lib/src/ingest/chain_checks.dart:54
 - event_sourcing/lib/src/sync/succession_restore.dart:296
 
@@ -287,7 +287,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:3027
+- event_sourcing/lib/src/event_store.dart:3032
 - event_sourcing/lib/src/ingest/chain_checks.dart:59
 - event_sourcing/lib/src/sync/succession_restore.dart:301
 
@@ -344,7 +344,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:2897
+- event_sourcing/lib/src/event_store.dart:2902
 
 Tests:
 
@@ -457,8 +457,8 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:2806
-- event_sourcing/lib/src/event_store.dart:3060
+- event_sourcing/lib/src/event_store.dart:2811
+- event_sourcing/lib/src/event_store.dart:3065
 
 Tests:
 
@@ -473,7 +473,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:2014
+- event_sourcing/lib/src/event_store.dart:2019
 - event_sourcing/lib/src/event_store.dart:4301
 
 Tests:
@@ -503,7 +503,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:3622
+- event_sourcing/lib/src/event_store.dart:3627
 
 Tests:
 
@@ -538,7 +538,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:2859
+- event_sourcing/lib/src/event_store.dart:2864
 - event_sourcing/lib/src/storage/stored_event.dart:116
 - event_sourcing/lib/src/storage/stored_event.dart:419
 
@@ -619,8 +619,8 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:3650
-- event_sourcing/lib/src/event_store.dart:3696
+- event_sourcing/lib/src/event_store.dart:3655
+- event_sourcing/lib/src/event_store.dart:3701
 
 Tests:
 
@@ -637,7 +637,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:1846
+- event_sourcing/lib/src/event_store.dart:1851
 
 Tests:
 
@@ -647,7 +647,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:3654
+- event_sourcing/lib/src/event_store.dart:3659
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:3775
 - event_sourcing/lib/src/storage/sembast_backend.dart:1173
 - event_sourcing/lib/src/storage/sembast_backend.dart:885
@@ -1011,7 +1011,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:426
+- event_sourcing/lib/src/event_store.dart:431
 - event_sourcing/lib/src/ingest/receiver_endpoint.dart:182
 - event_sourcing/lib/src/ingest/receiver_endpoint.dart:9
 
@@ -1028,7 +1028,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:475
+- event_sourcing/lib/src/event_store.dart:480
 
 Tests:
 
@@ -1040,7 +1040,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:497
+- event_sourcing/lib/src/event_store.dart:502
 - event_sourcing/lib/src/ingest/ingest_errors.dart:184
 - event_sourcing/lib/src/sync/succession_restore.dart:21
 - event_sourcing/lib/src/sync/succession_restore.dart:270
@@ -1477,7 +1477,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:2977
+- event_sourcing/lib/src/event_store.dart:2982
 
 Tests:
 
@@ -2117,7 +2117,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:460
+- event_sourcing/lib/src/event_store.dart:465
 - event_sourcing/lib/src/sync/succession_restore.dart:1
 - event_sourcing/lib/src/sync/succession_restore.dart:58
 
@@ -2165,7 +2165,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:464
+- event_sourcing/lib/src/event_store.dart:469
 - event_sourcing/lib/src/sync/succession_restore.dart:10
 - event_sourcing/lib/src/sync/succession_restore.dart:152
 - event_sourcing/lib/src/sync/succession_restore.dart:209
@@ -2202,7 +2202,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:470
+- event_sourcing/lib/src/event_store.dart:475
 - event_sourcing/lib/src/ingest/sender_succession.dart:1
 - event_sourcing/lib/src/sync/succession_restore.dart:15
 - event_sourcing/lib/src/sync/succession_restore.dart:265
@@ -2262,7 +2262,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:490
+- event_sourcing/lib/src/event_store.dart:495
 - event_sourcing/lib/src/ingest/ingest_errors.dart:177
 - event_sourcing/lib/src/sync/succession_restore.dart:116
 - event_sourcing/lib/src/sync/succession_restore.dart:18
@@ -2313,8 +2313,8 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:3039
-- event_sourcing/lib/src/event_store.dart:3080
+- event_sourcing/lib/src/event_store.dart:3044
+- event_sourcing/lib/src/event_store.dart:3085
 
 Tests:
 
@@ -2337,8 +2337,8 @@ Code:
 
 - event_sourcing/lib/src/entry_type_definition.dart:5
 - event_sourcing/lib/src/entry_type_registry.dart:6
-- event_sourcing/lib/src/event_store.dart:1862
-- event_sourcing/lib/src/event_store.dart:2506
+- event_sourcing/lib/src/event_store.dart:1867
+- event_sourcing/lib/src/event_store.dart:2511
 - event_sourcing/lib/src/event_store.dart:42
 
 Tests:
@@ -2350,8 +2350,8 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:1862
-- event_sourcing/lib/src/event_store.dart:2506
+- event_sourcing/lib/src/event_store.dart:1867
+- event_sourcing/lib/src/event_store.dart:2511
 - event_sourcing/lib/src/event_store.dart:46
 
 Tests:
@@ -2363,8 +2363,8 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/entry_type_definition.dart:12
-- event_sourcing/lib/src/event_store.dart:1862
-- event_sourcing/lib/src/event_store.dart:2506
+- event_sourcing/lib/src/event_store.dart:1867
+- event_sourcing/lib/src/event_store.dart:2511
 - event_sourcing/lib/src/event_store.dart:49
 
 Tests:
@@ -2376,8 +2376,8 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/entry_type_registry.dart:32
-- event_sourcing/lib/src/event_store.dart:1862
-- event_sourcing/lib/src/event_store.dart:2506
+- event_sourcing/lib/src/event_store.dart:1867
+- event_sourcing/lib/src/event_store.dart:2511
 
 Tests:
 
@@ -2393,10 +2393,10 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:4064
-- event_sourcing/lib/src/event_store.dart:4099
-- event_sourcing/lib/src/event_store.dart:4110
-- event_sourcing/lib/src/event_store.dart:4157
+- event_sourcing/lib/src/event_store.dart:4069
+- event_sourcing/lib/src/event_store.dart:4104
+- event_sourcing/lib/src/event_store.dart:4115
+- event_sourcing/lib/src/event_store.dart:4162
 - event_sourcing/lib/src/projections/view_read.dart:4
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1920
 - event_sourcing/lib/src/storage/sembast_backend.dart:2582
@@ -2414,9 +2414,9 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:4100
-- event_sourcing/lib/src/event_store.dart:4158
-- event_sourcing/lib/src/projections/view_read.dart:268
+- event_sourcing/lib/src/event_store.dart:4105
+- event_sourcing/lib/src/event_store.dart:4163
+- event_sourcing/lib/src/projections/view_read.dart:230
 - event_sourcing/lib/src/projections/view_read.dart:8
 
 Tests:
@@ -2429,8 +2429,8 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:4065
-- event_sourcing/lib/src/event_store.dart:4111
+- event_sourcing/lib/src/event_store.dart:4070
+- event_sourcing/lib/src/event_store.dart:4116
 - event_sourcing/lib/src/projections/view_read.dart:13
 
 Tests:
@@ -2442,9 +2442,9 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:4159
+- event_sourcing/lib/src/event_store.dart:4164
 - event_sourcing/lib/src/projections/view_read.dart:16
-- event_sourcing/lib/src/projections/view_read.dart:269
+- event_sourcing/lib/src/projections/view_read.dart:231
 
 Tests:
 
@@ -2480,7 +2480,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:1620
+- event_sourcing/lib/src/event_store.dart:1625
 - event_sourcing/lib/src/subscriptions/update.dart:48
 
 Tests:
@@ -2497,7 +2497,7 @@ Code:
 - event_sourcing/lib/src/permissions/current_view_rows.dart:6
 - event_sourcing/lib/src/permissions/permission_seed_applier.dart:17
 - event_sourcing/lib/src/permissions/table_backed_authorization_policy.dart:32
-- event_sourcing/lib/src/projections/view_read.dart:125
+- event_sourcing/lib/src/projections/view_read.dart:127
 - reaction/lib/src/server/action_route.dart:68
 - reaction/lib/src/server/authorization_watcher.dart:230
 - reaction/lib/src/server/permission_route.dart:31
@@ -2530,7 +2530,7 @@ Code:
 - event_sourcing/lib/src/permissions/bootstrap_role_assignments.dart:11
 - event_sourcing/lib/src/permissions/permission_seed_applier.dart:10
 - event_sourcing/lib/src/permissions/wait_for_current_views.dart:7
-- event_sourcing/lib/src/projections/view_read.dart:141
+- event_sourcing/lib/src/projections/view_read.dart:143
 
 Tests:
 
@@ -2544,13 +2544,13 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:4200
+- event_sourcing/lib/src/event_store.dart:4205
 - event_sourcing/lib/src/projections/view_read.dart:21
 
 Tests:
 
 - event_sourcing/test/event_store/converging_view_reads_test.dart:350 converging view reads viewProgress reports state, watermark, log head and last failure per registered view -- passed
-- event_sourcing/test/event_store/converging_view_reads_test.dart:389 converging view reads viewProgress of a copy far behind the log reads the events up to the first one its definition folds, not the whole backlog -- passed
+- event_sourcing/test/event_store/converging_view_reads_test.dart:389 converging view reads viewProgress of a copy far behind the log reads no event of the log: its state is the catch-up's own record -- passed
 - event_sourcing/test/event_store/storage_reader_conformance.dart:189 storage reader (postgres) the reads return what the store holds outside a transaction -- passed, skipped
 - event_sourcing/test/event_store/storage_reader_conformance.dart:189 storage reader (sembast (memory)) the reads return what the store holds outside a transaction -- passed
 
@@ -2563,6 +2563,19 @@ Code:
 Tests:
 
 - none
+
+**L**
+
+Code:
+
+- event_sourcing/lib/src/event_store.dart:4205
+- event_sourcing/lib/src/projections/view_read.dart:21
+
+Tests:
+
+- event_sourcing/test/event_store/converging_view_reads_test.dart:350 converging view reads viewProgress reports state, watermark, log head and last failure per registered view -- passed
+- event_sourcing/test/event_store/storage_reader_conformance.dart:189 storage reader (postgres) the reads return what the store holds outside a transaction -- passed, skipped
+- event_sourcing/test/event_store/storage_reader_conformance.dart:189 storage reader (sembast (memory)) the reads return what the store holds outside a transaction -- passed
 
 </details>
 
@@ -2719,7 +2732,7 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/actions/action_dispatcher.dart:395
-- event_sourcing/lib/src/event_store.dart:537
+- event_sourcing/lib/src/event_store.dart:542
 - event_sourcing/lib/src/sync/sync_cycle.dart:31
 
 Tests:
@@ -3353,9 +3366,9 @@ Code:
 
 - event_sourcing/lib/src/destinations/halt_purpose.dart:22
 - event_sourcing/lib/src/destinations/wedge_cause.dart:21
-- event_sourcing/lib/src/event_store.dart:1915
-- event_sourcing/lib/src/event_store.dart:3277
-- event_sourcing/lib/src/event_store.dart:910
+- event_sourcing/lib/src/event_store.dart:1920
+- event_sourcing/lib/src/event_store.dart:3282
+- event_sourcing/lib/src/event_store.dart:915
 - event_sourcing/lib/src/security/security_finding.dart:48
 - event_sourcing/lib/src/security/system_entry_types.dart:296
 - event_sourcing/lib/src/security/system_entry_types.dart:627
@@ -3715,7 +3728,7 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/destinations/default_destination_wedges_spec.dart:7
-- event_sourcing/lib/src/event_store.dart:902
+- event_sourcing/lib/src/event_store.dart:907
 
 Tests:
 
@@ -4237,8 +4250,8 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:1063
-- event_sourcing/lib/src/event_store.dart:1149
+- event_sourcing/lib/src/event_store.dart:1068
+- event_sourcing/lib/src/event_store.dart:1154
 - event_sourcing/lib/src/event_store.dart:277
 - event_sourcing/lib/src/event_store.dart:62
 
@@ -4535,9 +4548,9 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:2962
-- event_sourcing/lib/src/event_store.dart:3712
-- event_sourcing/lib/src/event_store.dart:481
+- event_sourcing/lib/src/event_store.dart:2967
+- event_sourcing/lib/src/event_store.dart:3717
+- event_sourcing/lib/src/event_store.dart:486
 
 Tests:
 
@@ -4558,8 +4571,8 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:2962
-- event_sourcing/lib/src/event_store.dart:3712
+- event_sourcing/lib/src/event_store.dart:2967
+- event_sourcing/lib/src/event_store.dart:3717
 
 Tests:
 
@@ -4580,7 +4593,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:3712
+- event_sourcing/lib/src/event_store.dart:3717
 
 Tests:
 
@@ -4601,7 +4614,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:481
+- event_sourcing/lib/src/event_store.dart:486
 - event_sourcing/lib/src/storage/stored_event.dart:119
 
 Tests:
@@ -4615,7 +4628,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:2862
+- event_sourcing/lib/src/event_store.dart:2867
 - event_sourcing/lib/src/storage/stored_event.dart:112
 - event_sourcing/lib/src/storage/stored_event.dart:415
 - event_sourcing/lib/src/storage/stored_event.dart:712
@@ -4823,8 +4836,8 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:2352
-- event_sourcing/lib/src/event_store.dart:2481
+- event_sourcing/lib/src/event_store.dart:2357
+- event_sourcing/lib/src/event_store.dart:2486
 - event_sourcing/lib/src/storage/record_characters.dart:15
 - event_sourcing/lib/src/storage/stored_event.dart:125
 
@@ -4865,8 +4878,8 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:2352
-- event_sourcing/lib/src/event_store.dart:2481
+- event_sourcing/lib/src/event_store.dart:2357
+- event_sourcing/lib/src/event_store.dart:2486
 
 Tests:
 
@@ -4897,8 +4910,8 @@ Code:
 
 - event_sourcing/lib/src/bootstrap.dart:1
 - event_sourcing/lib/src/event_store.dart:10
-- event_sourcing/lib/src/event_store.dart:727
-- event_sourcing/lib/src/event_store.dart:816
+- event_sourcing/lib/src/event_store.dart:732
+- event_sourcing/lib/src/event_store.dart:821
 
 Tests:
 
@@ -4912,7 +4925,7 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/event_store.dart:14
-- event_sourcing/lib/src/event_store.dart:727
+- event_sourcing/lib/src/event_store.dart:732
 - event_sourcing/lib/src/lifecycle/lib_version.dart:1
 - event_sourcing/lib/src/lifecycle/version_check.dart:1
 - event_sourcing/lib/src/security/system_entry_types.dart:12
@@ -4945,7 +4958,7 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/event_store.dart:18
-- event_sourcing/lib/src/event_store.dart:727
+- event_sourcing/lib/src/event_store.dart:732
 - event_sourcing/lib/src/lifecycle/lib_version.dart:1
 - event_sourcing/lib/src/lifecycle/version_check.dart:1
 - event_sourcing/lib/src/security/system_entry_types.dart:12
@@ -4977,7 +4990,7 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/event_store.dart:22
-- event_sourcing/lib/src/event_store.dart:727
+- event_sourcing/lib/src/event_store.dart:732
 - event_sourcing/lib/src/lifecycle/boot_errors.dart:1
 - event_sourcing/lib/src/lifecycle/lib_version.dart:1
 
@@ -5007,9 +5020,9 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/bootstrap.dart:5
-- event_sourcing/lib/src/event_store.dart:1059
+- event_sourcing/lib/src/event_store.dart:1064
 - event_sourcing/lib/src/event_store.dart:26
-- event_sourcing/lib/src/event_store.dart:727
+- event_sourcing/lib/src/event_store.dart:732
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1163
 - event_sourcing/lib/src/storage/web_locks.dart:125
 
@@ -5057,7 +5070,7 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/event_store.dart:37
-- event_sourcing/lib/src/event_store.dart:727
+- event_sourcing/lib/src/event_store.dart:732
 - event_sourcing/lib/src/lifecycle/boot_errors.dart:4
 - event_sourcing/lib/src/lifecycle/local_event.dart:1
 - event_sourcing/lib/src/lifecycle/version_check.dart:1
@@ -5107,7 +5120,7 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/bootstrap.dart:70
-- event_sourcing/lib/src/event_store.dart:730
+- event_sourcing/lib/src/event_store.dart:735
 - event_sourcing/lib/src/lifecycle/boot_progress.dart:1
 
 Tests:
@@ -5138,7 +5151,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:730
+- event_sourcing/lib/src/event_store.dart:735
 
 Tests:
 
@@ -5199,7 +5212,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:730
+- event_sourcing/lib/src/event_store.dart:735
 - event_sourcing/lib/src/lifecycle/boot_progress.dart:1
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:984
 - event_sourcing/lib/src/storage/sembast_backend.dart:318
@@ -5353,7 +5366,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:3348
+- event_sourcing/lib/src/event_store.dart:3353
 - reaction/lib/src/wire/action_submission_codec.dart:7
 
 Tests:
@@ -5926,8 +5939,8 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:2085
-- event_sourcing/lib/src/event_store.dart:2845
+- event_sourcing/lib/src/event_store.dart:2090
+- event_sourcing/lib/src/event_store.dart:2850
 - event_sourcing/lib/src/ingest/chain_checks.dart:73
 - event_sourcing/lib/src/security/security_finding.dart:505
 - event_sourcing/lib/src/verification/chain_walk.dart:177
@@ -5989,7 +6002,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:2085
+- event_sourcing/lib/src/event_store.dart:2090
 - event_sourcing/lib/src/security/security_finding.dart:479
 
 Tests:
@@ -6035,7 +6048,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:2089
+- event_sourcing/lib/src/event_store.dart:2094
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:3801
 - event_sourcing/lib/src/storage/sembast_backend.dart:1238
 - event_sourcing/lib/src/storage/storage_backend.dart:1642
@@ -6058,9 +6071,9 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:2093
-- event_sourcing/lib/src/event_store.dart:2771
-- event_sourcing/lib/src/projections/view_catch_up.dart:677
+- event_sourcing/lib/src/event_store.dart:2098
+- event_sourcing/lib/src/event_store.dart:2776
+- event_sourcing/lib/src/projections/view_catch_up.dart:694
 
 Tests:
 
@@ -6077,7 +6090,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:2910
+- event_sourcing/lib/src/event_store.dart:2915
 - event_sourcing/lib/src/sync/succession_restore.dart:162
 - event_sourcing/lib/src/sync/succession_restore.dart:348
 - event_sourcing/lib/src/sync/succession_restore.dart:561
@@ -6103,7 +6116,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:2085
+- event_sourcing/lib/src/event_store.dart:2090
 - event_sourcing/lib/src/security/security_finding.dart:161
 
 Tests:
@@ -6117,7 +6130,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:2951
+- event_sourcing/lib/src/event_store.dart:2956
 
 Tests:
 
@@ -6269,8 +6282,8 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:2818
-- event_sourcing/lib/src/event_store.dart:2852
+- event_sourcing/lib/src/event_store.dart:2823
+- event_sourcing/lib/src/event_store.dart:2857
 - event_sourcing/lib/src/sync/succession_restore.dart:292
 
 Tests:
@@ -6423,8 +6436,8 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:2018
-- event_sourcing/lib/src/event_store.dart:2774
+- event_sourcing/lib/src/event_store.dart:2023
+- event_sourcing/lib/src/event_store.dart:2779
 - event_sourcing/lib/src/security/security_finding.dart:14
 - event_sourcing/lib/src/sync/succession_restore.dart:289
 - event_sourcing/lib/src/sync/succession_restore.dart:725
@@ -6447,7 +6460,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:3477
+- event_sourcing/lib/src/event_store.dart:3482
 - event_sourcing/lib/src/security/security_finding.dart:283
 - event_sourcing/lib/src/sync/succession_restore.dart:727
 
@@ -6502,12 +6515,12 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:1945
-- event_sourcing/lib/src/event_store.dart:2630
-- event_sourcing/lib/src/event_store.dart:3008
-- event_sourcing/lib/src/event_store.dart:3151
-- event_sourcing/lib/src/event_store.dart:3433
-- event_sourcing/lib/src/projections/view_catch_up.dart:678
+- event_sourcing/lib/src/event_store.dart:1950
+- event_sourcing/lib/src/event_store.dart:2635
+- event_sourcing/lib/src/event_store.dart:3013
+- event_sourcing/lib/src/event_store.dart:3156
+- event_sourcing/lib/src/event_store.dart:3438
+- event_sourcing/lib/src/projections/view_catch_up.dart:695
 
 Tests:
 
@@ -6538,10 +6551,10 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:2146
+- event_sourcing/lib/src/event_store.dart:2151
 - event_sourcing/lib/src/projections/interpreter/projection_interpreter.dart:371
-- event_sourcing/lib/src/projections/view_catch_up.dart:570
-- event_sourcing/lib/src/projections/view_catch_up.dart:576
+- event_sourcing/lib/src/projections/view_catch_up.dart:585
+- event_sourcing/lib/src/projections/view_catch_up.dart:591
 
 Tests:
 
@@ -6555,8 +6568,8 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:2060
-- event_sourcing/lib/src/event_store.dart:2104
+- event_sourcing/lib/src/event_store.dart:2065
+- event_sourcing/lib/src/event_store.dart:2109
 - event_sourcing/lib/src/ingest/receiver_endpoint.dart:735
 - event_sourcing/lib/src/security/security_finding.dart:207
 - event_sourcing/lib/src/security/security_finding.dart:216
@@ -6653,8 +6666,8 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:407
-- event_sourcing/lib/src/event_store.dart:419
+- event_sourcing/lib/src/event_store.dart:412
+- event_sourcing/lib/src/event_store.dart:424
 - event_sourcing/lib/src/storage/storage_reader.dart:28
 
 Tests:
@@ -6690,8 +6703,8 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:2430
-- event_sourcing/lib/src/event_store.dart:3909
+- event_sourcing/lib/src/event_store.dart:2435
+- event_sourcing/lib/src/event_store.dart:3914
 
 Tests:
 
@@ -6724,7 +6737,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:517
+- event_sourcing/lib/src/event_store.dart:522
 - event_sourcing/lib/src/permissions/bootstrap_action_permissions.dart:89
 - event_sourcing/lib/src/permissions/table_backed_authorization_policy.dart:45
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:785
@@ -6753,7 +6766,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:820
+- event_sourcing/lib/src/event_store.dart:825
 
 Tests:
 
@@ -6854,7 +6867,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:3221
+- event_sourcing/lib/src/event_store.dart:3226
 - event_sourcing/lib/src/projections/interpreter/projection_interpreter.dart:28
 
 Tests:
@@ -6943,7 +6956,7 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/entry_type_registry.dart:91
-- event_sourcing/lib/src/event_store.dart:983
+- event_sourcing/lib/src/event_store.dart:988
 - event_sourcing/lib/src/storage/generation.dart:1
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:871
 - event_sourcing/lib/src/storage/postgres/postgres_generation_guard.dart:1
@@ -6980,7 +6993,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:983
+- event_sourcing/lib/src/event_store.dart:988
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:572
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:871
 - event_sourcing/lib/src/storage/postgres/postgres_generation_guard.dart:6
@@ -7026,7 +7039,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:1071
+- event_sourcing/lib/src/event_store.dart:1076
 - event_sourcing/lib/src/storage/generation.dart:5
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:950
 - event_sourcing/lib/src/storage/postgres/postgres_generation_guard.dart:13
@@ -7127,7 +7140,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:1286
+- event_sourcing/lib/src/event_store.dart:1291
 
 Tests:
 
@@ -7152,8 +7165,8 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:2694
-- event_sourcing/lib/src/event_store.dart:2734
+- event_sourcing/lib/src/event_store.dart:2699
+- event_sourcing/lib/src/event_store.dart:2739
 
 Tests:
 
@@ -7182,7 +7195,7 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/entry_type_registry.dart:90
-- event_sourcing/lib/src/event_store.dart:1213
+- event_sourcing/lib/src/event_store.dart:1218
 - event_sourcing/lib/src/projections/view_fingerprint.dart:1
 - event_sourcing/lib/src/projections/view_fingerprint.dart:30
 - event_sourcing/lib/src/promoters/promoter_registry.dart:183
@@ -7223,8 +7236,8 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:1065
-- event_sourcing/lib/src/event_store.dart:1213
+- event_sourcing/lib/src/event_store.dart:1070
+- event_sourcing/lib/src/event_store.dart:1218
 - event_sourcing/lib/src/event_store.dart:55
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1505
 
@@ -7238,7 +7251,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:1009
+- event_sourcing/lib/src/event_store.dart:1014
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1505
 - event_sourcing/lib/src/storage/postgres/postgres_generation_guard.dart:486
 
@@ -7251,8 +7264,8 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:1065
-- event_sourcing/lib/src/event_store.dart:1247
+- event_sourcing/lib/src/event_store.dart:1070
+- event_sourcing/lib/src/event_store.dart:1252
 - event_sourcing/lib/src/event_store.dart:59
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1505
 - event_sourcing/lib/src/storage/postgres/postgres_generation_guard.dart:524
@@ -7270,8 +7283,8 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/destinations/destination_registry.dart:1487
-- event_sourcing/lib/src/event_store.dart:2143
-- event_sourcing/lib/src/event_store.dart:3426
+- event_sourcing/lib/src/event_store.dart:2148
+- event_sourcing/lib/src/event_store.dart:3431
 - event_sourcing/lib/src/projections/interpreter/projection_interpreter.dart:170
 - event_sourcing/lib/src/projections/interpreter/projection_interpreter.dart:305
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1460
@@ -7324,7 +7337,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:3429
+- event_sourcing/lib/src/event_store.dart:3434
 - event_sourcing/lib/src/projections/interpreter/projection_interpreter.dart:176
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1505
 
@@ -7339,7 +7352,7 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/projections/view_catch_up.dart:1
-- event_sourcing/lib/src/projections/view_catch_up.dart:281
+- event_sourcing/lib/src/projections/view_catch_up.dart:295
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1505
 
 Tests:
@@ -7351,8 +7364,8 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:1341
-- event_sourcing/lib/src/projections/view_catch_up.dart:292
+- event_sourcing/lib/src/event_store.dart:1346
+- event_sourcing/lib/src/projections/view_catch_up.dart:306
 - event_sourcing/lib/src/projections/view_catch_up.dart:5
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1505
 
@@ -7364,8 +7377,8 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:1342
-- event_sourcing/lib/src/projections/view_catch_up.dart:293
+- event_sourcing/lib/src/event_store.dart:1347
+- event_sourcing/lib/src/projections/view_catch_up.dart:307
 - event_sourcing/lib/src/projections/view_catch_up.dart:8
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1505
 
@@ -7449,7 +7462,7 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/projections/view_catch_up.dart:25
-- event_sourcing/lib/src/projections/view_catch_up.dart:506
+- event_sourcing/lib/src/projections/view_catch_up.dart:521
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1505
 
 Tests:
@@ -7473,13 +7486,13 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/projections/view_catch_up.dart:29
-- event_sourcing/lib/src/projections/view_catch_up.dart:341
-- event_sourcing/lib/src/projections/view_catch_up.dart:353
-- event_sourcing/lib/src/projections/view_catch_up.dart:358
-- event_sourcing/lib/src/projections/view_catch_up.dart:399
-- event_sourcing/lib/src/projections/view_catch_up.dart:435
-- event_sourcing/lib/src/projections/view_catch_up.dart:642
-- event_sourcing/lib/src/projections/view_catch_up.dart:768
+- event_sourcing/lib/src/projections/view_catch_up.dart:355
+- event_sourcing/lib/src/projections/view_catch_up.dart:367
+- event_sourcing/lib/src/projections/view_catch_up.dart:372
+- event_sourcing/lib/src/projections/view_catch_up.dart:413
+- event_sourcing/lib/src/projections/view_catch_up.dart:450
+- event_sourcing/lib/src/projections/view_catch_up.dart:657
+- event_sourcing/lib/src/projections/view_catch_up.dart:788
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1505
 
 Tests:
@@ -7517,7 +7530,7 @@ Code:
 
 - event_sourcing/lib/src/projections/rebuild.dart:19
 - event_sourcing/lib/src/projections/view_catch_up.dart:42
-- event_sourcing/lib/src/projections/view_catch_up.dart:453
+- event_sourcing/lib/src/projections/view_catch_up.dart:468
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1505
 
 Tests:
@@ -7547,7 +7560,7 @@ Code:
 
 - event_sourcing/lib/src/permissions/wait_for_current_views.dart:12
 - event_sourcing/lib/src/projections/rebuild.dart:15
-- event_sourcing/lib/src/projections/view_read.dart:142
+- event_sourcing/lib/src/projections/view_read.dart:144
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1505
 
 Tests:
@@ -7566,8 +7579,8 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/projections/view_catch_up.dart:108
-- event_sourcing/lib/src/projections/view_catch_up.dart:400
-- event_sourcing/lib/src/projections/view_catch_up.dart:643
+- event_sourcing/lib/src/projections/view_catch_up.dart:414
+- event_sourcing/lib/src/projections/view_catch_up.dart:658
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1505
 
 Tests:
@@ -7604,12 +7617,12 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/projections/view_catch_up.dart:33
-- event_sourcing/lib/src/projections/view_catch_up.dart:473
-- event_sourcing/lib/src/projections/view_catch_up.dart:545
-- event_sourcing/lib/src/projections/view_catch_up.dart:557
-- event_sourcing/lib/src/projections/view_catch_up.dart:592
-- event_sourcing/lib/src/projections/view_catch_up.dart:665
-- event_sourcing/lib/src/projections/view_catch_up.dart:676
+- event_sourcing/lib/src/projections/view_catch_up.dart:488
+- event_sourcing/lib/src/projections/view_catch_up.dart:560
+- event_sourcing/lib/src/projections/view_catch_up.dart:572
+- event_sourcing/lib/src/projections/view_catch_up.dart:607
+- event_sourcing/lib/src/projections/view_catch_up.dart:681
+- event_sourcing/lib/src/projections/view_catch_up.dart:693
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1505
 
 Tests:
@@ -8295,8 +8308,8 @@ Tests:
 Code:
 
 - event_sourcing/lib/event_sourcing.dart:514
-- event_sourcing/lib/src/event_store.dart:2447
-- event_sourcing/lib/src/event_store.dart:487
+- event_sourcing/lib/src/event_store.dart:2452
+- event_sourcing/lib/src/event_store.dart:492
 - event_sourcing/lib/src/security/security_context_store.dart:42
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:22
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2312
@@ -8842,7 +8855,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:478
+- event_sourcing/lib/src/event_store.dart:483
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1531
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1550
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:9
@@ -8970,7 +8983,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:2646
+- event_sourcing/lib/src/event_store.dart:2651
 - event_sourcing/lib/src/storage/event_hash.dart:1
 
 Tests:
@@ -9123,7 +9136,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:3616
+- event_sourcing/lib/src/event_store.dart:3621
 
 Tests:
 
@@ -9135,7 +9148,7 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/core/errors/event_store_exception.dart:84
-- event_sourcing/lib/src/event_store.dart:2010
+- event_sourcing/lib/src/event_store.dart:2015
 - event_sourcing/lib/src/verification/chain_walk.dart:218
 
 Tests:
@@ -9247,7 +9260,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:2010
+- event_sourcing/lib/src/event_store.dart:2015
 - event_sourcing/lib/src/verification/chain_walk.dart:218
 
 Tests:
@@ -9295,7 +9308,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:2021
+- event_sourcing/lib/src/event_store.dart:2026
 - event_sourcing/lib/src/sync/succession_restore.dart:306
 
 Tests:
@@ -9427,7 +9440,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:2901
+- event_sourcing/lib/src/event_store.dart:2906
 
 Tests:
 
@@ -9598,7 +9611,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:2927
+- event_sourcing/lib/src/event_store.dart:2932
 - event_sourcing/lib/src/ingest/ingest_result.dart:1
 
 Tests:
@@ -9613,8 +9626,8 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:2690
-- event_sourcing/lib/src/event_store.dart:2766
+- event_sourcing/lib/src/event_store.dart:2695
+- event_sourcing/lib/src/event_store.dart:2771
 - event_sourcing/lib/src/ingest/receiver_endpoint.dart:586
 - event_sourcing/lib/src/projections/interpreter/projection_interpreter.dart:179
 
@@ -9676,7 +9689,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:3022
+- event_sourcing/lib/src/event_store.dart:3027
 
 Tests:
 
@@ -10021,7 +10034,7 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/projections/interpreter/projection_interpreter.dart:512
-- event_sourcing/lib/src/projections/view_read.dart:270
+- event_sourcing/lib/src/projections/view_read.dart:232
 - event_sourcing/lib/src/storage/sembast_backend.dart:1324
 - event_sourcing/lib/src/storage/sembast_backend.dart:1334
 - event_sourcing/lib/src/storage/storage_backend.dart:1606
@@ -10042,8 +10055,8 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:2332
-- event_sourcing/lib/src/event_store.dart:2865
+- event_sourcing/lib/src/event_store.dart:2337
+- event_sourcing/lib/src/event_store.dart:2870
 - event_sourcing/lib/src/projections/projection_registry.dart:43
 
 Tests:
@@ -10468,7 +10481,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:3716
+- event_sourcing/lib/src/event_store.dart:3721
 - provenance/lib/src/batch_context.dart:1
 - provenance/lib/src/provenance_delivery.dart:1
 - provenance/lib/src/provenance_entry.dart:1
@@ -11517,8 +11530,8 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:1942
-- event_sourcing/lib/src/event_store.dart:484
+- event_sourcing/lib/src/event_store.dart:1947
+- event_sourcing/lib/src/event_store.dart:489
 
 Tests:
 
@@ -11576,7 +11589,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:1338
+- event_sourcing/lib/src/event_store.dart:1343
 - event_sourcing/lib/src/storage/storage_description.dart:152
 
 Tests:
@@ -11590,7 +11603,7 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/bootstrap.dart:72
-- event_sourcing/lib/src/event_store.dart:734
+- event_sourcing/lib/src/event_store.dart:739
 
 Tests:
 
@@ -11605,10 +11618,10 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/destinations/destination_registry.dart:1584
-- event_sourcing/lib/src/event_store.dart:3490
-- event_sourcing/lib/src/event_store.dart:3528
-- event_sourcing/lib/src/event_store.dart:3557
-- event_sourcing/lib/src/event_store.dart:823
+- event_sourcing/lib/src/event_store.dart:3495
+- event_sourcing/lib/src/event_store.dart:3533
+- event_sourcing/lib/src/event_store.dart:3562
+- event_sourcing/lib/src/event_store.dart:828
 
 Tests:
 
@@ -11625,7 +11638,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:1742
+- event_sourcing/lib/src/event_store.dart:1747
 - event_sourcing/lib/src/storage/sembast_backend.dart:2559
 - event_sourcing/lib/src/storage/storage_backend.dart:400
 - event_sourcing/lib/src/subscriptions/subscription_engine.dart:1
@@ -11667,8 +11680,8 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:1445
-- event_sourcing/lib/src/event_store.dart:1631
+- event_sourcing/lib/src/event_store.dart:1450
+- event_sourcing/lib/src/event_store.dart:1636
 - event_sourcing/lib/src/subscriptions/subscription_engine.dart:7
 - event_sourcing/lib/src/subscriptions/update.dart:8
 
@@ -11699,7 +11712,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/event_store.dart:1439
+- event_sourcing/lib/src/event_store.dart:1444
 - event_sourcing/lib/src/storage/sembast_backend.dart:311
 
 Tests:

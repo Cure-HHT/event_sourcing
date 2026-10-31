@@ -255,6 +255,11 @@ class ViewCatchUpDriver {
 
   final Map<String, ViewCopyProgress> _progressByCopyId = {};
 
+  /// Per copy id, whether this driver's last attempt on the copy committed
+  /// with it at the log's head. Absent until the first attempt on the copy
+  /// since [start], so a replacement copy starts absent.
+  final Map<String, bool> _atHeadByCopyId = {};
+
   /// Per copy id, the log position through which the copy folds event by
   /// event, each fold in a savepoint of its own, rather than through a
   /// buffer: set when a batched flush met a rejected row write, dropped
@@ -274,6 +279,15 @@ class ViewCatchUpDriver {
   /// the backoff it is retrying under, if it is behind -- or null when no
   /// catch-up transaction on it has failed.
   ViewCopyProgress? progressOf(String copyId) => _progressByCopyId[copyId];
+
+  /// Whether this driver's last attempt on the copy [copyId] committed with
+  /// the copy at the log's head (EVS-DEV-converging-view-reads/J): false
+  /// before the first attempt since [start], after an attempt that left
+  /// events to fold, and after an attempt that failed. An attempt that
+  /// finds the copy's lock held by another instance leaves the answer as it
+  /// was. Reads no storage: the answer is the driver's own record of the
+  /// work it has done.
+  bool atHead(String copyId) => _atHeadByCopyId[copyId] ?? false;
 
   /// Schedules the driver's loop to begin on the event loop's task queue,
   /// after every microtask already pending -- in particular, after the
@@ -401,6 +415,7 @@ class ViewCatchUpDriver {
   void _pruneStaleProgress(List<ViewCopy> copies) {
     final liveCopyIds = {for (final copy in copies) copy.copyId};
     _perEventThrough.removeWhere((copyId, _) => !liveCopyIds.contains(copyId));
+    _atHeadByCopyId.removeWhere((copyId, _) => !liveCopyIds.contains(copyId));
     if (_progressByCopyId.isEmpty) return;
     final unmarkedFingerprints = {
       for (final copy in copies)
@@ -657,6 +672,7 @@ class ViewCatchUpDriver {
       for (final staleKey in {lockKey, target.fingerprint}) {
         if (staleKey != result.copyId) _progressByCopyId.remove(staleKey);
       }
+      _atHeadByCopyId[result.copyId] = result.reachedTip;
       if (result.reachedTip) onCaughtUp?.call(target.viewName);
       return result.steps == 0
           ? _Outcome.idle
@@ -671,6 +687,7 @@ class ViewCatchUpDriver {
       if (through == null || through < signal.throughSequence) {
         _perEventThrough[signal.copyId] = signal.throughSequence;
       }
+      _atHeadByCopyId[signal.copyId] = false;
       return _Outcome.progressed;
     } on _CatchUpFoldFailureSignal catch (signal) {
       // Implements: EVS-DEV-view-convergence/Z
@@ -689,11 +706,14 @@ class ViewCatchUpDriver {
           reason: signal.reason,
         );
       } catch (e, st) {
+        _atHeadByCopyId[lockKey] = false;
         _onFailure(lockKey, e, st);
         return _Outcome.failed;
       }
+      _atHeadByCopyId[lockKey] = false;
       return _Outcome.progressed;
     } catch (e, st) {
+      _atHeadByCopyId[lockKey] = false;
       _onFailure(lockKey, e, st);
       return _Outcome.failed;
     } finally {

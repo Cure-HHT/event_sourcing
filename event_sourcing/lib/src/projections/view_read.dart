@@ -18,9 +18,10 @@
 //   for keys the scan does not find touched by an unfolded event or
 //   finding past the watermark, which is what the fold step already wrote
 //   under the instance's registered definitions (EVS-DEV-view-convergence/K).
-// Implements: EVS-DEV-converging-view-reads/J
-// ViewCopyStatus lets a caller read, per registered view, its state and
-//   its copy's progress (watermark, log head, last failure).
+// Implements: EVS-DEV-converging-view-reads/J+L
+// ViewCopyStatus lets a caller read, per registered view, whether the
+//   instance's last catch-up transaction on its copy ended at the log's
+//   head, and its copy's progress (watermark, log head, last failure).
 import 'package:event_sourcing/src/projections/integrity_marks.dart'
     show IntegrityMarks;
 import 'package:event_sourcing/src/projections/projection_spec.dart';
@@ -89,8 +90,9 @@ class ViewRowRead {
   final ViewRow row;
 }
 
-/// A registered view's convergence state and its copy's progress
-/// (EVS-DEV-converging-view-reads/J).
+/// A registered view's convergence state, as the instance's catch-up last
+/// found its copy, and its copy's progress
+/// (EVS-DEV-converging-view-reads/J+L).
 class ViewCopyStatus {
   const ViewCopyStatus({
     required this.viewName,
@@ -220,46 +222,6 @@ class ViewCurrencyScan {
   /// Rationale, "a backend that cannot cheaply tell which aggregates lie
   /// past the watermark may report every requested key pending").
   final bool allUnsettled;
-}
-
-/// The first page [copyFoldsPastWatermark] reads, doubling on each page
-/// that holds no event the copy folds, up to [_kFoldsPastWatermarkMaxPage].
-const int _kFoldsPastWatermarkFirstPage = 16;
-const int _kFoldsPastWatermarkMaxPage = 500;
-
-/// Whether the log past [copy]'s watermark, inside [txn], holds an event
-/// [spec]'s definition folds (EVS-DEV-view-convergence Terms): the same
-/// test as [scanViewCurrency]'s state, decided at the first such event.
-/// A copy far behind the log is converging after the first page, so the
-/// cost of asking does not grow with how far behind it is; only a copy
-/// with no folding event past its watermark is read to the log's head.
-@internal
-Future<bool> copyFoldsPastWatermark({
-  required Transaction txn,
-  required StorageBackend backend,
-  required ProjectionSpec spec,
-  required ViewCopy copy,
-}) async {
-  var after = copy.watermark;
-  var pageSize = _kFoldsPastWatermarkFirstPage;
-  while (true) {
-    final page = await backend.findAllEventsInTxn(
-      txn,
-      afterSequence: after,
-      limit: pageSize,
-    );
-    for (final e in page) {
-      if (spec.interest.matches(e)) return true;
-      if (await isMarkRefreshingEvent(txn, backend, e)) return true;
-    }
-    if (page.length < pageSize) return false;
-    after = page.last.sequenceNumber;
-    if (pageSize < _kFoldsPastWatermarkMaxPage) {
-      pageSize = pageSize * 2 > _kFoldsPastWatermarkMaxPage
-          ? _kFoldsPastWatermarkMaxPage
-          : pageSize * 2;
-    }
-  }
 }
 
 /// Scans the log past [copy]'s watermark, inside [txn], for the events

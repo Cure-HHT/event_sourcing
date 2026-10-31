@@ -233,7 +233,7 @@ void runStorageReaderScenarios({
         expect(byKey.rows.keys, <String>['agg-1']);
         expect(byKey.rows['agg-1']!.dataOrNull!['n'], 1);
 
-        // Verifies: EVS-DEV-converging-view-reads/J
+        // Verifies: EVS-DEV-converging-view-reads/J+L
         final progress = await reader.viewProgress();
         final viewStatus = progress.singleWhere((p) => p.viewName == _kView);
         expect(viewStatus.state, ViewConvergenceState.current);

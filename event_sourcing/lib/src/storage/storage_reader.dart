@@ -120,8 +120,10 @@ abstract interface class StorageReader {
     int? offset,
   });
 
-  /// For each view the instance registers, its state and its copy's
-  /// progress (EVS-DEV-converging-view-reads/J).
+  /// For each view the instance registers, its state as the instance's
+  /// catch-up last found its copy, and its copy's progress
+  /// (EVS-DEV-converging-view-reads/J+L). Reads no event past any copy's
+  /// watermark, so asking costs nothing that grows with the log.
   Future<List<ViewCopyStatus>> viewProgress();
 
   /// The head of [destinationId]'s queue, or null.
