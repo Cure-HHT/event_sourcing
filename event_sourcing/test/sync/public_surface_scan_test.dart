@@ -236,6 +236,7 @@ const _seamKinds = <String, String>{
   'onCatchUpTransactionBegin': 'observe',
   'onCatchUpStep': 'interleave',
   'catchUpClock': 'input substitution',
+  'candidateWindow': 'input substitution',
   'afterViewStateReadBeforeRows': 'interleave',
   'failFoldSavepointWithSerializationFailure': 'failure injection',
   'failCatchUpFoldFindingAppend': 'failure injection',

@@ -38,6 +38,7 @@ import 'package:event_sourcing/src/storage/storage_backend.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
 import 'package:event_sourcing/src/storage/transaction.dart';
 import 'package:event_sourcing/src/storage/view_copy.dart';
+import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:meta/meta.dart' show internal;
 
 /// Whether a view's copy is current for the instance in a transaction, or
@@ -234,6 +235,12 @@ class ViewCurrencyScan {
 @internal
 const int kCandidateWindow = 5000;
 
+/// [kCandidateWindow], or the window a test installed through the
+/// `candidateWindow` test seam.
+@internal
+int effectiveCandidateWindow() =>
+    DeliveryTestHooks.current?.candidateWindow ?? kCandidateWindow;
+
 /// The filters of a candidate read ([StorageBackend.findCandidateEventsInTxn]):
 /// each null filter restricts nothing.
 @internal
@@ -309,10 +316,11 @@ Future<void> forEachCandidateInTxn(
   required Future<bool> Function(StoredEvent event) visit,
 }) async {
   const pageSize = 500;
+  final window = effectiveCandidateWindow();
   var windowStart = after;
   while (windowStart < through) {
-    final windowEnd = windowStart + kCandidateWindow < through
-        ? windowStart + kCandidateWindow
+    final windowEnd = windowStart + window < through
+        ? windowStart + window
         : through;
     var cursor = windowStart;
     while (true) {

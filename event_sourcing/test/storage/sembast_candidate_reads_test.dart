@@ -50,9 +50,25 @@ Future<Database> _database() {
   );
 }
 
-Future<EventStore> _openStore(StorageBackend backend) => EventStore.openForTest(
-  storage: backend,
+ProjectionRegistry _registry(List<ProjectionSpec> specs) {
+  final registry = ProjectionRegistry();
+  specs.forEach(registry.register);
+  return registry;
+}
+
+Future<EventStore> _openStore(StorageBackend backend) => _openWith(
+  backend,
   entryTypes: candidateReadEntryTypes(),
+  projections: const <ProjectionSpec>[],
+);
+
+Future<EventStore> _openWith(
+  StorageBackend backend, {
+  required EntryTypeRegistry entryTypes,
+  required List<ProjectionSpec> projections,
+}) => EventStore.openForTest(
+  storage: backend,
+  entryTypes: entryTypes,
   source: const Source(
     hopId: 'candidate-hop',
     identifier: 'candidate-install',
@@ -61,7 +77,7 @@ Future<EventStore> _openStore(StorageBackend backend) => EventStore.openForTest(
   securityContexts: SembastSecurityContextStore(
     backend: backend as SembastBackend,
   ),
-  projections: ProjectionRegistry(),
+  projections: _registry(projections),
 );
 
 void main() {
@@ -69,6 +85,13 @@ void main() {
     runCandidateReadConformance(
       openBackend: () async => SembastBackend(database: await _database()),
       openStore: _openStore,
+    );
+  });
+
+  group('SembastBackend candidate windows', () {
+    runCandidateWindowBoundaryConformance(
+      openBackend: () async => SembastBackend(database: await _database()),
+      openStore: _openWith,
     );
   });
 

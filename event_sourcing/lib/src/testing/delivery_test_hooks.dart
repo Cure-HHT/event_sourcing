@@ -130,6 +130,7 @@ class DeliveryTestHooks {
     this.onCatchUpTransactionBegin,
     this.onCatchUpStep,
     this.catchUpClock,
+    this.candidateWindow,
     this.afterViewStateReadBeforeRows,
     this.failFoldSavepointWithSerializationFailure,
     this.failCatchUpFoldFindingAppend,
@@ -434,6 +435,11 @@ class DeliveryTestHooks {
   /// EVS-DEV-view-convergence/W) has passed. Production reads
   /// `DateTime.now()`.
   final DateTime Function()? catchUpClock;
+
+  /// Replaces the number of log positions one candidate read of a
+  /// catch-up or a currency scan covers (`kCandidateWindow`), so a test
+  /// crosses a window boundary on a short log. Production reads 5000.
+  final int? candidateWindow;
 
   /// Awaited by a consumer-facing view read, inside its storage
   /// transaction, after it reads its copy's convergence state and before

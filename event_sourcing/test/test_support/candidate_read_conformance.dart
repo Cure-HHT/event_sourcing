@@ -7,6 +7,7 @@
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing/src/event_store.dart'
     show PublishCollector, recordFindingInTxnForTest;
+import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:test/test.dart';
 
 import 'declarations.dart';
@@ -230,6 +231,118 @@ void runCandidateReadConformance({
     expect(
       await backend.transaction(backend.readLogHeadInTxn),
       log.last.sequenceNumber,
+    );
+  });
+}
+
+const _kNote = 'window_note';
+const _kSync = 'window_sync';
+const _kWindowView = 'window_notes';
+
+const _kWindowSpec = AggregateProjectionSpec(
+  viewName: _kWindowView,
+  interest: SubscriptionFilter(entryTypes: <String>{_kNote}),
+  tombstoneEventTypes: <String>{},
+);
+
+EntryTypeRegistry _windowEntryTypes() => EntryTypeRegistry()
+  ..register(
+    const EntryTypeDefinition(
+      id: _kNote,
+      registeredVersion: EntryTypeVersion(1, 0),
+      name: _kNote,
+      declarations: <EventTypeDeclaration>[EligibleVersion('noted')],
+    ),
+  )
+  ..register(
+    const EntryTypeDefinition(
+      id: _kSync,
+      registeredVersion: EntryTypeVersion(1, 0),
+      name: _kSync,
+      declarations: <EventTypeDeclaration>[EligibleVersion('synced')],
+    ),
+  );
+
+/// Opens a store over a backend with [entryTypes] and [projections].
+typedef WindowStoreOpener =
+    Future<EventStore> Function(
+      StorageBackend backend, {
+      required EntryTypeRegistry entryTypes,
+      required List<ProjectionSpec> projections,
+    });
+
+/// Registers the window-boundary test: a catch-up whose candidates sit at
+/// the last position of one candidate window and the first of the next
+/// folds both, reaches the log's head and records the copy at it.
+/// [openBackend] supplies a fresh, empty backend.
+void runCandidateWindowBoundaryConformance({
+  required Future<StorageBackend> Function() openBackend,
+  required WindowStoreOpener openStore,
+}) {
+  // Verifies: EVS-DEV-view-convergence/J
+  test('a catch-up folds candidates on both sides of a window boundary and '
+      'reaches the head', () async {
+    final backend = await openBackend();
+    final seeder = await openStore(
+      backend,
+      entryTypes: _windowEntryTypes(),
+      projections: const <ProjectionSpec>[],
+    );
+    Future<int> head() => backend.transaction(backend.readLogHeadInTxn);
+    Future<StoredEvent> append(String entryType, String id) async =>
+        (await seeder.append(
+          entryType: entryType,
+          aggregateId: id,
+          aggregateType: entryType,
+          eventType: entryType == _kNote ? 'noted' : 'synced',
+          data: <String, Object?>{'id': id},
+          initiator: const UserInitiator('window-user'),
+        ))!;
+
+    // The window is sized past the seeder's own boot events, so the first
+    // window's last position is free for a note.
+    final window = await head() + 3;
+    var n = 0;
+    while (await head() < window - 1) {
+      await append(_kSync, 'site-${n++}');
+    }
+    final last = await append(_kNote, 'note-last');
+    final first = await append(_kNote, 'note-first');
+    expect(last.sequenceNumber, window);
+    expect(first.sequenceNumber, window + 1);
+    while (await head() < 2 * window + 5) {
+      await append(_kSync, 'site-${n++}');
+    }
+    await seeder.close();
+
+    await runWithDeliveryTestHooks(
+      DeliveryTestHooks(
+        candidateWindow: window,
+        // Frozen: the step bound never ends the transaction, so the windows
+        // are the ones counted from position 0.
+        catchUpClock: () => DateTime.utc(2026, 10, 31),
+      ),
+      () async {
+        final store = await openStore(
+          backend,
+          entryTypes: _windowEntryTypes(),
+          projections: const <ProjectionSpec>[_kWindowSpec],
+        );
+        await store.reader.viewsCaughtUp(timeout: const Duration(seconds: 20));
+        final progress = (await store.reader.viewProgress()).singleWhere(
+          (status) => status.viewName == _kWindowView,
+        );
+        expect(progress.state, ViewConvergenceState.current);
+        expect(progress.watermark, await head());
+        final rows = await store.reader.readViewRowsByKeys(_kWindowView, {
+          'note-last',
+          'note-first',
+        });
+        expect(rows.state, ViewConvergenceState.current);
+        expect(rows.rows['note-last'], isA<SettledRow>());
+        expect(rows.rows['note-first'], isA<SettledRow>());
+        await store.close();
+      },
     );
   });
 }

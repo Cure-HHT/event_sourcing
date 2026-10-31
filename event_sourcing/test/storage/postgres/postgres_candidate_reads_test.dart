@@ -98,6 +98,34 @@ void main() {
     );
   });
 
+  group('PostgresBackend candidate windows', () {
+    if (db == null) return;
+    runCandidateWindowBoundaryConformance(
+      openBackend: () async {
+        final backend = await PostgresBackend.open(
+          url: db.runtimeUrl,
+          schema: db.schema,
+          sslMode: SslMode.disable,
+        );
+        backends.add(backend);
+        return backend;
+      },
+      openStore: (backend, {required entryTypes, required projections}) {
+        final registry = ProjectionRegistry();
+        projections.forEach(registry.register);
+        return EventStore.open(
+          storage: ApplicationSuppliedStorage(
+            backend,
+            PostgresSecurityContextStore(backend: backend as PostgresBackend),
+          ),
+          entryTypes: entryTypes,
+          source: _kSource,
+          projections: registry,
+        );
+      },
+    );
+  });
+
   // The candidate read's indexes keep a filtered read of a long log from
   // scanning it; the measured bounds stand on that.
   test('the candidate read of an event-type or entry-type filter over a '

@@ -56,7 +56,7 @@ import 'package:event_sourcing/src/projections/projection_registry.dart';
 import 'package:event_sourcing/src/projections/projection_spec.dart';
 import 'package:event_sourcing/src/projections/view_fingerprint.dart';
 import 'package:event_sourcing/src/projections/view_read.dart'
-    show candidateFilterInTxn, kCandidateWindow, kEveryEventCandidate;
+    show candidateFilterInTxn, effectiveCandidateWindow, kEveryEventCandidate;
 import 'package:event_sourcing/src/promoters/promoter_registry.dart';
 import 'package:event_sourcing/src/security/security_finding.dart'
     show FindingKind, FindingRole, securityFindingId;
@@ -566,6 +566,7 @@ class ViewCatchUpDriver {
         final filter = head > watermark
             ? await candidateFilterInTxn(txn, _backend, spec)
             : kEveryEventCandidate;
+        final window = effectiveCandidateWindow();
         var windowEnd = watermark;
         var windowExhausted = true;
         var chunk = const <StoredEvent>[];
@@ -613,9 +614,7 @@ class ViewCatchUpDriver {
               reachedTip = true;
               break;
             }
-            windowEnd = watermark + kCandidateWindow < head
-                ? watermark + kCandidateWindow
-                : head;
+            windowEnd = watermark + window < head ? watermark + window : head;
             windowExhausted = false;
             continue;
           }

@@ -5,6 +5,8 @@
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing/src/event_store.dart'
     show recordFindingInTxnForTest;
+import 'package:event_sourcing/src/projections/view_catch_up.dart'
+    show debugReleaseViewCopyLock, debugTryHoldViewCopyLock;
 import 'package:event_sourcing/src/projections/view_read.dart'
     show candidateFilterOf, isMarkRefreshingEvent, isSecurityFindingEvent;
 import 'package:event_sourcing/src/security/system_entry_types.dart';
@@ -486,5 +488,114 @@ void main() {
       ),
       isTrue,
     );
+  });
+
+  group("an append's currency check", () {
+    /// A store registering [_kSpec] whose copy's watermark is set back to
+    /// its first note, leaving what [seedTail] appended past it, and whose
+    /// catch-up finds the copy's lock held, so only the store's own
+    /// appends move the watermark.
+    Future<
+      ({
+        _CountingBackend backend,
+        EventStore store,
+        String copyId,
+        Object lockHandle,
+        int watermark,
+      })
+    >
+    behindCopy(Future<void> Function(EventStore store) seedTail) async {
+      final backend = await _openBackend();
+      final store = await _open(backend);
+      final first = await _note(store, 0);
+      await seedTail(store);
+      await store.reader.viewsCaughtUp(timeout: const Duration(seconds: 20));
+      final copyId = store.copyIdOf(_kView);
+      final lockHandle = backend.drainExclusionKey(store.databaseId);
+      var held = false;
+      for (var i = 0; i < 500 && !held; i++) {
+        held = debugTryHoldViewCopyLock(lockHandle, copyId);
+        if (!held) await pumpEventQueue();
+      }
+      expect(held, isTrue);
+      await backend.transaction(
+        (txn) => backend.setViewCopyWatermarkInTxn(
+          txn,
+          copyId,
+          first.sequenceNumber,
+        ),
+      );
+      return (
+        backend: backend,
+        store: store,
+        copyId: copyId,
+        lockHandle: lockHandle,
+        watermark: first.sequenceNumber,
+      );
+    }
+
+    Future<Map<String, dynamic>?> row(
+      SembastBackend backend,
+      String copyId,
+      String key,
+    ) => backend.transaction(
+      (txn) => backend.readViewRowInTxn(txn, copyId, key),
+    );
+
+    // Verifies: EVS-DEV-view-convergence/E
+    test('a copy whose tail past its watermark holds no candidate is current: '
+        'the append folds inline, reading none of the tail', () async {
+      final b = await behindCopy((store) async {
+        for (var n = 0; n < 50; n++) {
+          await _sync(store, n);
+        }
+      });
+      expect(
+        await b.backend.transaction(b.backend.readLogHeadInTxn),
+        b.watermark + 50,
+        reason: 'the copy is behind by the tail',
+      );
+      b.backend.counting = true;
+      final appended = await _note(b.store, 1);
+      b.backend.counting = false;
+
+      expect((await _copyOf(b.backend)).watermark, appended.sequenceNumber);
+      expect(await row(b.backend, b.copyId, appended.aggregateId), isNotNull);
+      expect(
+        b.backend.positionsRead,
+        isEmpty,
+        reason: 'the currency check read only candidates, and there were none',
+      );
+      debugReleaseViewCopyLock(b.lockHandle, b.copyId);
+      await b.store.close();
+    });
+
+    // Verifies: EVS-DEV-view-convergence/F
+    test('a copy with a candidate past its watermark is not current: the '
+        'append leaves it unchanged', () async {
+      late StoredEvent peerNote;
+      final b = await behindCopy((store) async {
+        for (var n = 0; n < 20; n++) {
+          await _sync(store, n);
+        }
+        peerNote = await _note(store, 3);
+        for (var n = 20; n < 40; n++) {
+          await _sync(store, n);
+        }
+      });
+      b.backend.counting = true;
+      final appended = await _note(b.store, 5);
+      b.backend.counting = false;
+
+      expect((await _copyOf(b.backend)).watermark, b.watermark);
+      expect(await row(b.backend, b.copyId, appended.aggregateId), isNull);
+      expect(
+        b.backend.positionsRead,
+        [peerNote.sequenceNumber],
+        reason: 'the check stopped at the first candidate it read',
+      );
+      debugReleaseViewCopyLock(b.lockHandle, b.copyId);
+      await b.store.close();
+    });
   });
 }
