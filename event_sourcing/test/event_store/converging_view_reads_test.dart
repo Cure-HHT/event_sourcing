@@ -387,7 +387,7 @@ void main() {
 
     // Verifies: EVS-DEV-converging-view-reads/J
     test('viewProgress of a copy far behind the log reads no event of the '
-        'log: its state is the catch-up\'s own record', () async {
+        "log: its state is the catch-up's own record", () async {
       final backend = await _openCountingBackend();
       await runWithDeliveryTestHooks(
         const DeliveryTestHooks(onCatchUpStep: _pauseCatchUp),
@@ -415,7 +415,7 @@ void main() {
             backend.eventsRead,
             0,
             reason:
-                'progress reports the catch-up driver\'s record of its last '
+                "progress reports the catch-up driver's record of its last "
                 'attempt, so it reads no event past any watermark',
           );
           await store.close();
