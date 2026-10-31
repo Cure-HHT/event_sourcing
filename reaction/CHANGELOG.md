@@ -2,6 +2,8 @@
 
 ## 0.1.0-dev (unreleased)
 
+- A subscription connection that closes while a send is pending drops the
+  send instead of raising an unhandled error from the closed sink.
 - A subscription the server denies surfaces a typed `SubscriptionDenied`
   on its stream, naming the subscribed view and the
   `SubscriptionDenyReason` (both now exported), instead of a

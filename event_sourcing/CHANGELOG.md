@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.7.1
+
+Data: data format 3.0, unchanged; nothing to migrate.
+
+### Reaction
+
+- A subscription connection that closes while a send is pending drops the
+  send: nothing is written to the closed sink, no error escapes the
+  connection's write chain, and a connection that closed while
+  authenticating is not registered.
+- A permission-change notification or forced logout aimed at a channel
+  whose sink already closed skips that channel and reaches the rest.
+
 ## 0.7.0
 
 Data: data format 3.0, unchanged; the stored event format is the same. A
