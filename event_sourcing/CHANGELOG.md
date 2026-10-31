@@ -4,8 +4,10 @@
 
 Data: data format 3.0, unchanged; the stored event format is the same. A
 database written by 0.6.3 needs two things before this build serves it: a
-Postgres database is re-provisioned at schema version 9, and every view
-copy is rebuilt once, because every stored fingerprint changes.
+Postgres database is re-provisioned at schema version 9, and the copies of
+views whose interest names entry types or event types are rebuilt once,
+because their stored fingerprints change. Unfiltered and
+aggregate-type-only views keep their copies.
 
 ### Views
 
@@ -25,20 +27,25 @@ copy is rebuilt once, because every stored fingerprint changes.
 
 ### Entry types
 
-- Every event type an application entry type appends is declared.
+- An application entry type declares every event type it carries.
   `EntryTypeDefinition.declarationFor` returns null for an undeclared
   event type, and appending one throws `UndeclaredEventTypeError`.
 - `EntryTypeDefinition.patch` is recorded in the registry audit; it is
   never stamped on an event and never fingerprinted.
 - The declaration lists for action denials, role-permission grants and
-  user-role scopes are exported.
+  user-role scopes are exported. `ActionDispatcher`, `PermissionSeedApplier`
+  and `bootstrapRoleAssignments` throw `ArgumentError` when the registered
+  `action_denial`, `role_permission_grant` or `user_role_scope` definition
+  lacks any of the matching declarations, naming the entry type and the
+  missing event types.
 
 ### Ingest
 
-- Ingesting an event of an undeclared event type for an application entry
-  type is refused with `IngestUndeclaredEventType`, and the store records
-  an `undeclared_event_type` security finding, unless it was opened with
-  `recordUndeclaredIngestFindings: false`.
+- Ingesting an event of an undeclared event type for a registered
+  application entry type is refused with `IngestUndeclaredEventType`, and
+  the store records an `undeclared_event_type` security finding, unless it
+  was opened with `recordUndeclaredIngestFindings: false`. `EventStore.open`
+  and `bootstrapEventStore` take that parameter.
 
 ### Verification
 

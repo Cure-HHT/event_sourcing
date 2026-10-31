@@ -106,9 +106,9 @@ class IngestEntryTypeVersionAhead implements Exception {
 /// Thrown by every ingest entry point, before the record is written, when
 /// an incoming event is of an application (not reserved) entry type the
 /// receiver registers whose event type that entry type does not declare: a
-/// build that declares the event type appended it. The receiver refuses the event, and a delivery
-/// carrying it is refused whole. Operator action: upgrade the receiver to
-/// a build that declares [eventType].
+/// build that declares the event type appended it. The receiver refuses the
+/// event, and a delivery carrying it is refused whole. Operator action:
+/// upgrade the receiver to a build that declares [eventType].
 // Implements: EVS-DEV-version-compatibility/D
 // the ingest refusal of an event whose event type its registered entry type
 //   does not declare, naming the event, its entry type and its event type.

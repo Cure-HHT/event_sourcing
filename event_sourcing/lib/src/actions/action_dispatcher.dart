@@ -42,7 +42,13 @@ class ActionDispatcher {
     required this.authorization,
     required this.events,
     required this.idempotency,
-  });
+  }) {
+    requireLibraryDeclarations(
+      events.entryTypes,
+      'action_denial',
+      kActionDenialDeclarations,
+    );
+  }
 
   final ActionRegistry registry;
   final AuthorizationPolicy authorization;

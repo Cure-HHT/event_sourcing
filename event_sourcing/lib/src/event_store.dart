@@ -108,6 +108,7 @@ import 'package:event_sourcing/src/ingest/delivery_envelope.dart';
 import 'package:event_sourcing/src/ingest/ingest_errors.dart';
 import 'package:event_sourcing/src/ingest/ingest_result.dart';
 import 'package:event_sourcing/src/ingest/sender_succession.dart';
+import 'package:event_sourcing/src/library_declarations_check.dart';
 import 'package:event_sourcing/src/lifecycle/boot_errors.dart';
 import 'package:event_sourcing/src/lifecycle/boot_progress.dart';
 import 'package:event_sourcing/src/lifecycle/lib_version.dart';
@@ -597,9 +598,9 @@ class EventStore {
   final GenerationRegistration _registration;
 
   /// Whether an ingest refusal of an event whose event type its registered
-  /// application entry type does not declare is recorded as an `undeclared_event_type`
-  /// finding ([EventStore.open]'s `recordUndeclaredIngestFindings`). The
-  /// refusal is thrown either way.
+  /// application entry type does not declare is recorded as an
+  /// `undeclared_event_type` finding ([EventStore.open]'s
+  /// `recordUndeclaredIngestFindings`). The refusal is thrown either way.
   final bool _recordUndeclaredIngestFindings;
 
   /// Sealed registry of promoter specs, threaded in from [EventStore.open] (or

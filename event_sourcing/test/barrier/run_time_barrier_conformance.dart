@@ -47,6 +47,13 @@ const EntryTypeDefinition barrierNoteType = EntryTypeDefinition(
   declarations: <EventTypeDeclaration>[EligibleVersion('written')],
 );
 
+const EntryTypeDefinition _barrierDenialType = EntryTypeDefinition(
+  id: 'action_denial',
+  registeredVersion: EntryTypeVersion(1, 0),
+  name: 'Action denial',
+  declarations: kActionDenialDeclarations,
+);
+
 const String _notesView = 'barrier_notes';
 
 /// The member names no handed-out object may carry: each would write the
@@ -198,7 +205,10 @@ Future<_Opened> _bootstrap(StorageDescription storage) async {
   final bundle = await bootstrapEventStore(
     storage: storage,
     source: barrierSource,
-    entryTypes: const <EntryTypeDefinition>[barrierNoteType],
+    entryTypes: const <EntryTypeDefinition>[
+      barrierNoteType,
+      _barrierDenialType,
+    ],
     destinations: <Destination>[
       FakeDestination(
         id: 'barrier-dest',

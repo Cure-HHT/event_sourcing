@@ -22,6 +22,7 @@
 //   in the first place.
 
 import 'package:event_sourcing/event_sourcing.dart';
+import 'package:event_sourcing/src/library_declarations_check.dart';
 import 'package:event_sourcing/src/permissions/user_role_scopes_spec.dart'
     show kRoleAssignedEventType;
 import 'package:event_sourcing/src/permissions/wait_for_current_views.dart';
@@ -71,6 +72,11 @@ Future<RoleAssignmentSeedResult> bootstrapRoleAssignments({
   ),
   Duration timeout = const Duration(seconds: 30),
 }) async {
+  requireLibraryDeclarations(
+    eventStore.entryTypes,
+    'user_role_scope',
+    kUserRoleScopeDeclarations,
+  );
   // 1. Compute the aggregate-id -> entry map implied by the seed.
   final inSeed = <String, RoleAssignmentSeedEntry>{
     for (final e in seed.entries)
