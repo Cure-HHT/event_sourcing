@@ -300,6 +300,41 @@ void main() {
       );
     });
 
+    // Verifies: EVS-DEV-view-convergence/A
+    test('a view including system events covers the reserved entry types it '
+        'can admit', () {
+      final promoters = PromoterRegistry();
+      EntryTypeRegistry registry(int minor) => EntryTypeRegistry()
+        ..register(
+          _declaring(kDestinationWedgedEntryType, EntryTypeVersion(1, minor), [
+            'wedged',
+          ]),
+        );
+      const systemOnly = AggregateProjectionSpec(
+        viewName: 'toy_view',
+        interest: SubscriptionFilter(entryTypes: {}, includeSystemEvents: true),
+        tombstoneEventTypes: {'toy_deleted'},
+      );
+      const otherEvents = AggregateProjectionSpec(
+        viewName: 'toy_view',
+        interest: SubscriptionFilter(
+          entryTypes: {},
+          eventTypes: {'something_else'},
+          includeSystemEvents: true,
+        ),
+        tombstoneEventTypes: {'toy_deleted'},
+      );
+
+      expect(
+        viewFingerprint(systemOnly, registry(0), promoters),
+        isNot(viewFingerprint(systemOnly, registry(1), promoters)),
+      );
+      expect(
+        viewFingerprint(otherEvents, registry(0), promoters),
+        viewFingerprint(otherEvents, registry(1), promoters),
+      );
+    });
+
     test('differs for includeSystemEvents', () {
       final entryTypes = EntryTypeRegistry();
       final promoters = PromoterRegistry();

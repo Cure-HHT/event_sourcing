@@ -69,7 +69,8 @@ String viewFingerprint(
 
 // The ids of the entry types that carry the events [spec] folds: the ones its
 // interest names; else the registered ones declaring an event type it names;
-// else every registered one; and always the reserved ones every copy folds.
+// else every registered one; the reserved ones its system events admit; and
+// always the reserved ones every copy folds.
 Set<String> _coveredEntryTypeIds(
   ProjectionSpec spec,
   EntryTypeRegistry entryTypes,
@@ -86,6 +87,19 @@ Set<String> _coveredEntryTypeIds(
     };
   } else {
     ids = {for (final def in entryTypes.all()) def.id};
+  }
+  if (interest.includeSystemEvents) {
+    // A filter that includes system events admits a reserved entry type
+    // whatever its allow-list names, narrowed by the event types it names.
+    final eventTypes = interest.eventTypes;
+    for (final id in kReservedSystemEntryTypeIds) {
+      final def = _definitionOf(id, entryTypes);
+      if (def == null) continue;
+      if (eventTypes == null ||
+          eventTypes.any((e) => def.declarationFor(e) != null)) {
+        ids.add(id);
+      }
+    }
   }
   return ids..addAll(_reservedFoldedEntryTypeIds);
 }
