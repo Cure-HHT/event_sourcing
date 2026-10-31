@@ -524,7 +524,10 @@ export 'src/sync/declared_configuration.dart'
     show configurationFingerprint, declaredConfiguration;
 export 'src/sync/sync_policy.dart' show SyncPolicy;
 export 'src/verification/chain_verification_verdict.dart'
-    show ChainVerificationFinding, ChainVerificationVerdict;
+    show
+        ChainVerificationFinding,
+        ChainVerificationVerdict,
+        ChainWalkInterrupted;
 
 // Versions — entry-type versions and the library's data-format version.
 export 'src/versions.dart' show DataFormatVersion, EntryTypeVersion;

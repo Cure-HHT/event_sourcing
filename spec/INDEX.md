@@ -41,7 +41,7 @@
 | EVS-DEV-authz-watcher                      | Mid-session permission-change signalling                     | reaction-remote.md                      | 533309a9 |
 | EVS-DEV-bootstrap-action-permissions       | YAML-seeded role/permission bootstrap                        | prd-permissions-as-events.md            | c76af2cd |
 | EVS-DEV-causal-parents                     | Causal parents within an aggregate                           | causal-history.md                       | 44d4dd4c |
-| EVS-DEV-chain-verification                 | Storage and origin chain verification                        | causal-history.md                       | 201d5630 |
+| EVS-DEV-chain-verification                 | Storage and origin chain verification                        | causal-history.md                       | 8e5e6e3c |
 | EVS-DEV-containment-resolver               | Containment-chain walk via TableProjections                  | scoped-permissions.md                   | aa0359a8 |
 | EVS-DEV-converging-view-reads              | Reads of a converging view                                   | dev-converging-view-reads.md            | faec8b08 |
 | EVS-DEV-delivery-channel                   | Delivery channel sender mechanics                            | delivery-continuity.md                  | 29357550 |

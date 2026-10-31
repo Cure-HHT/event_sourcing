@@ -104,3 +104,41 @@ final class ChainVerificationVerdict {
       'ChainVerificationVerdict($from..$to, findings: $findings, '
       'unresolvedPredecessors: $unresolvedPredecessors)';
 }
+
+/// The failure of a chain verification that a read failure interrupted
+/// after it began.
+///
+/// [verifiedThrough] is the highest local sequence number whose checks
+/// completed, or null when no event's did. A verification started with
+/// its lower bound at `verifiedThrough + 1` checks the rest of the log,
+/// the link from `verifiedThrough` into its first event included.
+/// [findings] lists what the verification had reported until the failure;
+/// an open event store has recorded them as it records a verdict's.
+// Implements: EVS-DEV-chain-verification/U
+// the interruption names the highest local sequence number whose checks
+//   completed.
+@immutable
+class ChainWalkInterrupted implements Exception {
+  /// An interruption of a verification by [cause], after it verified
+  /// through [verifiedThrough] and reported [findings].
+  const ChainWalkInterrupted({
+    required this.verifiedThrough,
+    required this.cause,
+    required this.findings,
+  });
+
+  /// The highest local sequence number whose checks completed, or null
+  /// when none did.
+  final int? verifiedThrough;
+
+  /// The read failure that interrupted the verification.
+  final Object cause;
+
+  /// The findings the verification had reported until the failure.
+  final List<ChainVerificationFinding> findings;
+
+  @override
+  String toString() =>
+      'ChainWalkInterrupted(verifiedThrough: $verifiedThrough, '
+      'cause: $cause)';
+}

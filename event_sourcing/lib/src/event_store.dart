@@ -2041,7 +2041,10 @@ class EventStore {
   /// the same verdict and records nothing.
   ///
   /// Throws [ArgumentError], before reading any event, for a negative bound
-  /// or a lower bound above the upper.
+  /// or a lower bound above the upper. Throws [ChainWalkInterrupted] when a
+  /// read fails after the verification began; the findings it had reported
+  /// are recorded first, and a verification with its lower bound at
+  /// [ChainWalkInterrupted.verifiedThrough] plus one checks the rest.
   // Implements: EVS-PRD-hash-chain-integrity/C+F
   // any holder of the log verifies its storage chain and every origin-chain
   //   link it can resolve, from the log alone, the first event of a range
@@ -2066,14 +2069,30 @@ class EventStore {
     Future<void> Function()? afterPage,
   }) async {
     refuseCallFromBootProgressObserver('EventStore.verifyChains');
-    final verdict = await verifyChainsOver(
-      _backend,
-      from: from,
-      to: to,
-      pageSize: pageSize,
-      afterPage: afterPage,
-    );
-    for (final finding in verdict.findings) {
+    final ChainVerificationVerdict verdict;
+    try {
+      verdict = await verifyChainsOver(
+        _backend,
+        from: from,
+        to: to,
+        pageSize: pageSize,
+        afterPage: afterPage,
+      );
+    } on ChainWalkInterrupted catch (interrupted) {
+      // Implements: EVS-DEV-chain-verification/V
+      // the findings reported before the interruption are recorded before it
+      //   is rethrown.
+      await _recordWalkFindings(interrupted.findings);
+      rethrow;
+    }
+    await _recordWalkFindings(verdict.findings);
+    return verdict;
+  }
+
+  Future<void> _recordWalkFindings(
+    List<ChainVerificationFinding> findings,
+  ) async {
+    for (final finding in findings) {
       await _runInTxnWithPublish<void>((txn, collector) async {
         await _recordFindingInTxn(
           txn,
@@ -2085,7 +2104,6 @@ class EventStore {
         );
       });
     }
-    return verdict;
   }
 
   /// [evidence] with its `record` key, when it holds a record (an
