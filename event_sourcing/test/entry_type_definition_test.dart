@@ -48,23 +48,35 @@ void main() {
       expect(bare.declarationFor('anything'), isNull);
     });
 
-    test('a definition carries patch 0 unless it states one', () {
-      const bare = EntryTypeDefinition(
-        id: 'bare',
-        registeredVersion: EntryTypeVersion(1, 0),
-        name: 'Bare',
-      );
-      expect(bare.patch, 0);
-      expect(noted.patch, 0);
-      const patched = EntryTypeDefinition(
-        id: 'patched',
-        registeredVersion: EntryTypeVersion(2, 1),
-        name: 'Patched',
-        patch: 4,
-      );
-      expect(patched.patch, 4);
-      expect(patched.registeredVersion, const EntryTypeVersion(2, 1));
-    });
+    test(
+      'a definition carries patch 0 unless it states one, and no negative patch',
+      () {
+        const bare = EntryTypeDefinition(
+          id: 'bare',
+          registeredVersion: EntryTypeVersion(1, 0),
+          name: 'Bare',
+        );
+        expect(bare.patch, 0);
+        expect(noted.patch, 0);
+        const patched = EntryTypeDefinition(
+          id: 'patched',
+          registeredVersion: EntryTypeVersion(2, 1),
+          name: 'Patched',
+          patch: 4,
+        );
+        expect(patched.patch, 4);
+        expect(patched.registeredVersion, const EntryTypeVersion(2, 1));
+        expect(
+          () => EntryTypeDefinition(
+            id: 'negative',
+            registeredVersion: const EntryTypeVersion(1, 0),
+            name: 'Negative',
+            patch: -1,
+          ),
+          throwsA(isA<AssertionError>()),
+        );
+      },
+    );
 
     // Verifies: EVS-DEV-causal-parents/C
     test('a declared event type yields its declared kind and eligibility', () {

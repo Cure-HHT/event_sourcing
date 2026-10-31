@@ -2352,7 +2352,7 @@ class EventStore {
         'not registered in EntryTypeRegistry',
       );
     }
-    // Implements: EVS-DEV-causal-parents/F
+    // Implements: EVS-DEV-causal-parents/T
     // every append is stamped from its entry type's declaration for its event
     //   type, so an event type the entry type does not declare is refused,
     //   before the sequence number is reserved; a receiver of the same build
@@ -2764,7 +2764,13 @@ class EventStore {
   /// role [role] about the refused event, unless this database holds it as
   /// authored already or this store was opened with
   /// `recordUndeclaredIngestFindings: false`. Every ingest entry point and
-  /// the restore call it where they catch the refusal.
+  /// the restore call it where they catch the refusal, and surface the
+  /// refusal after it returns: a failure of the finding's own transaction
+  /// is logged as a warning and does not replace the refusal.
+  // Implements: EVS-DEV-security-findings/F+V
+  // the finding commits in a transaction of its own after the refusal rolled
+  //   back, and its evidence is exactly the refused event's identifier,
+  //   entry type, event type and originating database.
   // Implements: EVS-DEV-security-findings/E+Q
   // the finding's evidence is fixed by the refused event, so a redelivery of
   //   it computes the same identity and appends nothing; it is recorded
@@ -2774,6 +2780,29 @@ class EventStore {
     FindingRole role,
   ) async {
     if (!_recordUndeclaredIngestFindings) return;
+    try {
+      await _appendUndeclaredEventTypeFinding(refusal, role);
+    } on Object catch (e, st) {
+      libraryLog(
+        'event_store',
+        'the undeclared_event_type finding about event ${refusal.eventId} '
+            'could not be recorded; the event is refused regardless',
+        level: LibraryLogLevel.warning,
+        error: e,
+        stackTrace: st,
+      );
+    }
+  }
+
+  Future<void> _appendUndeclaredEventTypeFinding(
+    IngestUndeclaredEventType refusal,
+    FindingRole role,
+  ) async {
+    if (DeliveryTestHooks.current?.failUndeclaredEventTypeFindingAppend
+            ?.call() ??
+        false) {
+      throw const InjectedFailure('undeclared_event_type_finding_append');
+    }
     await _runInTxnWithPublish<void>((txn, collector) async {
       final held = await _backend.findEventByIdInTxn(txn, refusal.eventId);
       await _recordFindingInTxn(

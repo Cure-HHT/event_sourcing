@@ -38,6 +38,12 @@ import 'package:event_sourcing/src/projections/primitives/row_data.dart';
 import 'package:event_sourcing/src/projections/primitives/row_key.dart';
 import 'package:event_sourcing/src/projections/projection_spec.dart';
 
+/// The event type of a role assignment.
+const String kRoleAssignedEventType = 'role_assigned';
+
+/// The event type of a role unassignment.
+const String kRoleUnassignedEventType = 'role_unassigned';
+
 /// The event types of the `user_role_scope` entry type, which the role
 /// assignment bootstrap appends and [userRoleScopesSpec] folds, each an
 /// eligible version: the declarations an application's definition of
@@ -45,12 +51,12 @@ import 'package:event_sourcing/src/projections/projection_spec.dart';
 const List<EventTypeDeclaration> kUserRoleScopeDeclarations =
     <EventTypeDeclaration>[
       EventTypeDeclaration(
-        eventType: 'role_assigned',
+        eventType: kRoleAssignedEventType,
         kind: CausalKind.version,
         eligible: true,
       ),
       EventTypeDeclaration(
-        eventType: 'role_unassigned',
+        eventType: kRoleUnassignedEventType,
         kind: CausalKind.version,
         eligible: true,
       ),
@@ -59,11 +65,11 @@ const List<EventTypeDeclaration> kUserRoleScopeDeclarations =
 const userRoleScopesSpec = TableProjectionSpec(
   viewName: 'user_role_scopes',
   interest: SubscriptionFilter(
-    eventTypes: {'role_assigned', 'role_unassigned'},
+    eventTypes: {kRoleAssignedEventType, kRoleUnassignedEventType},
     aggregateTypes: {'user_role_scope'},
   ),
-  insertEventTypes: {'role_assigned'},
-  removeEventTypes: {'role_unassigned'},
+  insertEventTypes: {kRoleAssignedEventType},
+  removeEventTypes: {kRoleUnassignedEventType},
   rowKey: AggregateIdKey(),
   rowData: WholePayload(),
 );

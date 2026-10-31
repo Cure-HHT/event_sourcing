@@ -133,6 +133,7 @@ class DeliveryTestHooks {
     this.afterViewStateReadBeforeRows,
     this.failFoldSavepointWithSerializationFailure,
     this.failCatchUpFoldFindingAppend,
+    this.failUndeclaredEventTypeFindingAppend,
   });
 
   /// Observes every line the library logs. An exception it throws is
@@ -457,6 +458,14 @@ class DeliveryTestHooks {
   /// stays before the event, and no pass-over happens, until a later attempt
   /// succeeds.
   final bool Function()? failCatchUpFoldFindingAppend;
+
+  /// Consulted before an ingest entry point or the restore appends, in its
+  /// own transaction, the `undeclared_event_type` finding about an event it
+  /// refused. Returning true makes that append throw [InjectedFailure]
+  /// instead, standing in for a storage failure of the finding's own
+  /// append: the failure is logged and the refusal still reaches the
+  /// caller.
+  final bool Function()? failUndeclaredEventTypeFindingAppend;
 
   /// Read once by `SyncCycle.start`. When true, the started cycle holds its
   /// event store's trigger slot as any cycle does, but a wake runs no pass

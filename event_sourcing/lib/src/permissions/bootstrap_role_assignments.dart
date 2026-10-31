@@ -22,6 +22,8 @@
 //   in the first place.
 
 import 'package:event_sourcing/event_sourcing.dart';
+import 'package:event_sourcing/src/permissions/user_role_scopes_spec.dart'
+    show kRoleAssignedEventType;
 import 'package:event_sourcing/src/permissions/wait_for_current_views.dart';
 import 'package:meta/meta.dart';
 
@@ -123,7 +125,7 @@ Future<RoleAssignmentSeedResult> bootstrapRoleAssignments({
       entryType: 'user_role_scope',
       aggregateType: 'user_role_scope',
       aggregateId: aggId,
-      eventType: 'role_assigned',
+      eventType: kRoleAssignedEventType,
       data: RoleAssignedPayload(
         userId: entry.userId,
         role: entry.role,

@@ -20,17 +20,11 @@ const List<EventTypeDeclaration> _noteDeclarations = <EventTypeDeclaration>[
   ),
 ];
 
-/// The event types of a button press, each an eligible version: the action
-/// bar records a press as finalized, and a press may be recorded as
-/// pressed.
+/// The event type of a button press, an eligible version: the action bar
+/// records a press as finalized.
 const List<EventTypeDeclaration> _buttonDeclarations = <EventTypeDeclaration>[
   EventTypeDeclaration(
     eventType: 'finalized',
-    kind: CausalKind.version,
-    eligible: true,
-  ),
-  EventTypeDeclaration(
-    eventType: 'pressed',
     kind: CausalKind.version,
     eligible: true,
   ),

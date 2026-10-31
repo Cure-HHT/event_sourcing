@@ -16,38 +16,46 @@ import 'package:event_sourcing/src/event_draft.dart';
 const String _aggregateType = 'action_attempt';
 const String _entryType = 'action_denial';
 
+/// The event type of each denial stage.
+const String _kUnknownAction = 'unknown_action';
+const String _kParseDenied = 'parse_denied';
+const String _kValidationDenied = 'validation_denied';
+const String _kAuthorizationDenied = 'authorization_denied';
+const String _kIdempotencyMismatch = 'idempotency_mismatch';
+const String _kExecutionFailed = 'execution_failed';
+
 /// The event types the dispatcher appends under the `action_denial` entry
 /// type, one per denial stage, each an eligible version: the declarations
 /// an application's definition of `action_denial` carries.
 const List<EventTypeDeclaration> kActionDenialDeclarations =
     <EventTypeDeclaration>[
       EventTypeDeclaration(
-        eventType: 'unknown_action',
+        eventType: _kUnknownAction,
         kind: CausalKind.version,
         eligible: true,
       ),
       EventTypeDeclaration(
-        eventType: 'parse_denied',
+        eventType: _kParseDenied,
         kind: CausalKind.version,
         eligible: true,
       ),
       EventTypeDeclaration(
-        eventType: 'validation_denied',
+        eventType: _kValidationDenied,
         kind: CausalKind.version,
         eligible: true,
       ),
       EventTypeDeclaration(
-        eventType: 'authorization_denied',
+        eventType: _kAuthorizationDenied,
         kind: CausalKind.version,
         eligible: true,
       ),
       EventTypeDeclaration(
-        eventType: 'idempotency_mismatch',
+        eventType: _kIdempotencyMismatch,
         kind: CausalKind.version,
         eligible: true,
       ),
       EventTypeDeclaration(
-        eventType: 'execution_failed',
+        eventType: _kExecutionFailed,
         kind: CausalKind.version,
         eligible: true,
       ),
@@ -88,7 +96,7 @@ EventDraft denialUnknownAction({
   aggregateId: invocationId,
   aggregateType: _aggregateType,
   entryType: _entryType,
-  eventType: 'unknown_action',
+  eventType: _kUnknownAction,
   data: <String, dynamic>{'requested_name': requestedName},
   metadata: actionInvocationMetadata,
 );
@@ -103,7 +111,7 @@ EventDraft denialParseDenied({
   aggregateId: invocationId,
   aggregateType: _aggregateType,
   entryType: _entryType,
-  eventType: 'parse_denied',
+  eventType: _kParseDenied,
   data: <String, dynamic>{
     'action_name': actionName,
     'error_class': error.runtimeType.toString(),
@@ -123,7 +131,7 @@ EventDraft denialValidationDenied({
   aggregateId: invocationId,
   aggregateType: _aggregateType,
   entryType: _entryType,
-  eventType: 'validation_denied',
+  eventType: _kValidationDenied,
   data: <String, dynamic>{
     'action_name': actionName,
     'error_class': error.runtimeType.toString(),
@@ -161,7 +169,7 @@ EventDraft denialAuthorizationDenied({
   aggregateId: invocationId,
   aggregateType: _aggregateType,
   entryType: _entryType,
-  eventType: 'authorization_denied',
+  eventType: _kAuthorizationDenied,
   data: <String, dynamic>{
     'action_name': actionName,
     'permission_denied': permission.name,
@@ -195,7 +203,7 @@ EventDraft denialIdempotencyMismatch({
   aggregateId: invocationId,
   aggregateType: _aggregateType,
   entryType: _entryType,
-  eventType: 'idempotency_mismatch',
+  eventType: _kIdempotencyMismatch,
   data: <String, dynamic>{
     'action_name': actionName,
     'idempotency_key': idempotencyKey,
@@ -215,7 +223,7 @@ EventDraft denialExecutionFailed({
   aggregateId: invocationId,
   aggregateType: _aggregateType,
   entryType: _entryType,
-  eventType: 'execution_failed',
+  eventType: _kExecutionFailed,
   data: <String, dynamic>{
     'action_name': actionName,
     'error_class': error.runtimeType.toString(),

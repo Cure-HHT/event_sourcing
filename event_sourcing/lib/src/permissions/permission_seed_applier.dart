@@ -21,6 +21,8 @@
 //   in the first place.
 
 import 'package:event_sourcing/event_sourcing.dart';
+import 'package:event_sourcing/src/permissions/role_permission_grants_spec.dart'
+    show kPermissionGrantedEventType;
 import 'package:event_sourcing/src/permissions/wait_for_current_views.dart';
 import 'package:meta/meta.dart';
 
@@ -112,7 +114,7 @@ class PermissionSeedApplier {
         entryType: 'role_permission_grant',
         aggregateType: 'role_permission_grant',
         aggregateId: id,
-        eventType: 'permission_granted',
+        eventType: kPermissionGrantedEventType,
         data: PermissionGrantedPayload(
           role: role,
           permissionName: permName,

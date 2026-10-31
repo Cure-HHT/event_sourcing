@@ -37,6 +37,12 @@ import 'package:event_sourcing/src/projections/primitives/row_data.dart';
 import 'package:event_sourcing/src/projections/primitives/row_key.dart';
 import 'package:event_sourcing/src/projections/projection_spec.dart';
 
+/// The event type of a role-permission grant.
+const String kPermissionGrantedEventType = 'permission_granted';
+
+/// The event type of a role-permission revocation.
+const String kPermissionRevokedEventType = 'permission_revoked';
+
 /// The event types of the `role_permission_grant` entry type, which the
 /// permission seed applier appends and [rolePermissionGrantsSpec] folds,
 /// each an eligible version: the declarations an application's definition
@@ -44,12 +50,12 @@ import 'package:event_sourcing/src/projections/projection_spec.dart';
 const List<EventTypeDeclaration> kRolePermissionGrantDeclarations =
     <EventTypeDeclaration>[
       EventTypeDeclaration(
-        eventType: 'permission_granted',
+        eventType: kPermissionGrantedEventType,
         kind: CausalKind.version,
         eligible: true,
       ),
       EventTypeDeclaration(
-        eventType: 'permission_revoked',
+        eventType: kPermissionRevokedEventType,
         kind: CausalKind.version,
         eligible: true,
       ),
@@ -58,11 +64,11 @@ const List<EventTypeDeclaration> kRolePermissionGrantDeclarations =
 const rolePermissionGrantsSpec = TableProjectionSpec(
   viewName: 'role_permission_grants',
   interest: SubscriptionFilter(
-    eventTypes: {'permission_granted', 'permission_revoked'},
+    eventTypes: {kPermissionGrantedEventType, kPermissionRevokedEventType},
     aggregateTypes: {'role_permission_grant'},
   ),
-  insertEventTypes: {'permission_granted'},
-  removeEventTypes: {'permission_revoked'},
+  insertEventTypes: {kPermissionGrantedEventType},
+  removeEventTypes: {kPermissionRevokedEventType},
   rowKey: AggregateIdKey(),
   rowData: WholePayload(),
 );

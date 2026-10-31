@@ -165,7 +165,7 @@ A. Every event record SHALL carry a `causal` object with exactly these keys: `ki
 
 B. The library SHALL treat a record that carries no `causal` object of that shape as malformed: every ingest entry point and restore SHALL store no event for it, and every append and read SHALL refuse it, naming the field.
 
-C. The library SHALL let an entry-type definition declare, for each event type, its kind and its eligibility, and SHALL stamp an event type the definition does not declare as an eligible version.
+C. An entry-type definition SHALL declare every event type that events of its entry type carry.
 
 D. The library SHALL refuse an entry-type definition that declares one event type twice.
 
@@ -199,9 +199,11 @@ R. <RETIRED> Ingest compares no declarations: every holder reads the kind and el
 
 S. <RETIRED> Ingest checks an event's parents only as the chain verification does, by assertion K of this requirement.
 
+T. The library SHALL append no event of an event type that its entry type's definition does not declare.
+
 ### Rationale
 
-**Why a causal record on every event, and why record kind and eligibility on it (assertions A to G)?** A version names the version it follows, which records under the event's hash what history its author held when it wrote; later structural conflict detection builds on that record (`spec/roadmap/multi-source-editing.md`). The library stamps it inside the append transaction from the log, so the application cannot make it claim a history it did not hold. Kind and eligibility are recorded on the event as well as declared, so a verifier holding another database's events needs no registry (`EVS-PRD-hash-chain-integrity`), and the record stays the truth whichever build wrote it. Reserved events are ineligible annotations, so the library's own records never enter an aggregate's causal structure.
+**Why a causal record on every event, and why record kind and eligibility on it (assertions A to G)?** A version names the version it follows, which records under the event's hash what history its author held when it wrote; later structural conflict detection builds on that record (`spec/roadmap/multi-source-editing.md`). The library stamps it inside the append transaction from the log, so the application cannot make it claim a history it did not hold. A declaration states an event type's kind and its eligibility, and an entry type's declarations name every event type it carries, so the library appends no event whose stamp it would have to invent (assertions C and T); ingest refuses an event of an application entry type whose event type the receiver does not declare (`EVS-DEV-version-compatibility/D`). Kind and eligibility are recorded on the event as well as declared, so a verifier holding another database's events needs no registry (`EVS-PRD-hash-chain-integrity`), and the record stays the truth whichever build wrote it. Reserved events are ineligible annotations, so the library's own records never enter an aggregate's causal structure.
 
 **Why is the stamping rule the latest eligible version in the appender's log (assertion H)?** While an aggregate has one writer of versions, the version it follows is the latest one its writer holds. Reading the appender's log order, not origin positions, covers the events the appender holds without having authored them: a successor's first edit of its predecessor's entry names the predecessor's last version it restored. Where the holder holds two branches of a fork, the rule names the latest in log order, which a restore fixes by storing the branches in the order its receiver accepted them, and decides nothing between them: the aggregate carries the outstanding-finding mark, and detecting the conflict from the parents is roadmap work (`spec/roadmap/multi-source-editing.md`). An ineligible event, such as a draft, is local working state and never a parent. An annotation with no eligible version held is a root annotation with no parents. Annotations are skipped when parents are chosen, so a score recorded between two versions does not become the later version's parent. The rule reads the log, served by the storage backend's own index, which no check compares: on Postgres an index over the eligible versions of each aggregate, and on Sembast a per-aggregate record of the latest eligible version, written in the transaction that stores the event, so an append reads it without scanning the log.
 
@@ -213,6 +215,8 @@ S. <RETIRED> Ingest checks an event's parents only as the chain verification doe
 
 ### Changelog
 
+- 2026-10-31 | 44d4dd4c | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-10-31 | - | - | Michael Lewis (<michael@anspar.org>) | C: an entry-type definition declares every event type its entry type carries, replacing the eligible-version default for an undeclared event type. Add T: the library appends no event of an event type its entry type does not declare
 - 2026-10-30 | e2eee9c4 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: sync changelog hash
 - 2026-10-30 | - | - | Michael Lewis (<michael@anspar.org>) | Rationale: ingest checks only that the receiver's build declares an event's event type, and compares no kind or eligibility. No assertion changes
 - 2026-09-28 | e2eee9c4 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: sync changelog hash
@@ -238,4 +242,4 @@ S. <RETIRED> Ingest checks an event's parents only as the chain verification doe
 - 2026-09-25 | 64844bd2 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-24 | - | - | Michael Lewis (<michael@anspar.org>) | Add A-P: the causal record on every event, with kind, eligibility, parents and the skip events a reconciliation closes; per-event-type declarations of kind and eligibility, reserved event types ineligible annotations; the stamping rule for versions, annotations, ineligible events on a conflicted aggregate and reconciliations, ignoring uncovered recovered events; parent validity and exactness checks in the chain verification, and reconciliation checks; declarations refused at open when they differ within one major and at ingest when they differ from the receiver's, and listed as notes by the walk; the withheld-parent record by queue membership, and the ingest refusal of a contradicting one; the per-aggregate causal working copy, serialized with the skip and checked against the log
 
-*End* *Causal parents within an aggregate* | **Hash**: e2eee9c4
+*End* *Causal parents within an aggregate* | **Hash**: 44d4dd4c

@@ -239,6 +239,7 @@ const _seamKinds = <String, String>{
   'afterViewStateReadBeforeRows': 'interleave',
   'failFoldSavepointWithSerializationFailure': 'failure injection',
   'failCatchUpFoldFindingAppend': 'failure injection',
+  'failUndeclaredEventTypeFindingAppend': 'failure injection',
 };
 
 const _seamKindNames = <String>{

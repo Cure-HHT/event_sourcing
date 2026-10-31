@@ -83,7 +83,7 @@ class EntryTypeDefinition {
     required this.name,
     this.patch = 0,
     this.declarations = const <EventTypeDeclaration>[],
-  });
+  }) : assert(patch >= 0, 'patch must be >= 0');
 
   /// Matches `event.entry_type` for every event of this entry type.
   final String id;

@@ -5,8 +5,10 @@
 // was opened not to record them. The registry audit records each entry
 // type's patch.
 import 'package:event_sourcing/event_sourcing.dart';
+import 'package:event_sourcing/src/logging.dart';
 import 'package:event_sourcing/src/security/system_entry_types.dart'
     show kIngestAuditEntryType;
+import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 import 'package:uuid/uuid.dart';
@@ -112,7 +114,42 @@ Future<List<StoredEvent>> _findingsOfKind(
     .toList();
 
 void main() {
-  // Verifies: EVS-DEV-causal-parents/F
+  // Verifies: EVS-DEV-version-compatibility/D
+  test(
+    'a finding write that fails is logged and the refusal still reaches the caller',
+    () async {
+      final ds = await _bootstrap();
+      final store = ds.eventStore;
+      final record = _peerRecord(eventType: 'archived');
+      final warnings = <LibraryLogRecord>[];
+      await runWithDeliveryTestHooks(
+        DeliveryTestHooks(
+          failUndeclaredEventTypeFindingAppend: () => true,
+          onLog: (line) {
+            if (line.level == LibraryLogLevel.warning) warnings.add(line);
+          },
+        ),
+        () async {
+          await expectLater(
+            ingestEventForTest(store, StoredEvent.fromMap(record, 0)),
+            throwsA(isA<IngestUndeclaredEventType>()),
+          );
+          final answer = (await deliverTo(store, [record])).response;
+          expect(
+            (answer as ReceiverRefusal).reason,
+            IngestUndeclaredEventType.refusalReason,
+          );
+        },
+      );
+      expect(warnings, hasLength(2));
+      expect(warnings.first.message, contains(record['event_id']! as String));
+      expect(warnings.first.error, isA<InjectedFailure>());
+      expect(await _findingsOfKind(store, 'undeclared_event_type'), isEmpty);
+      await store.close();
+    },
+  );
+
+  // Verifies: EVS-DEV-causal-parents/T
   test(
     'append of an undeclared event type throws UndeclaredEventTypeError and writes nothing',
     () async {
@@ -154,6 +191,7 @@ void main() {
   );
 
   // Verifies: EVS-DEV-version-compatibility/D
+  // Verifies: EVS-DEV-security-findings/V
   test(
     'ingest of an undeclared event type throws IngestUndeclaredEventType and records one undeclared_event_type finding',
     () async {
@@ -262,18 +300,16 @@ void main() {
     },
   );
 
-  // Verifies: EVS-DEV-causal-parents/E
+  // Verifies: EVS-DEV-causal-parents/F
   test(
-    'every reserved system entry type declares every event type the library appends',
+    'the library appends the registry audit, its version record, destination '
+    'audits, a delivery audit, a finding, a redaction and a retention sweep '
+    'each stamped from its reserved declaration',
     () async {
-      // Every reserved shape's event types are declared by its entry type
-      // (test/security/reserved_event_shapes_test.dart); this drives the
-      // library's own appends on a fresh store: the registry audit at
-      // bootstrap, a destination's registration, start and end dates and
-      // deletion, a delivery's accepted audit, a security finding, a
-      // redaction and a retention sweep. Any of them appending an event type
-      // its reserved entry type does not declare throws
-      // UndeclaredEventTypeError.
+      // Each append below is refused with UndeclaredEventTypeError if its
+      // reserved entry type does not declare its event type; the static
+      // check of every reserved shape against its declarations is
+      // test/security/reserved_event_shapes_test.dart.
       final ds = await _bootstrap();
       final store = ds.eventStore;
       await ds.destinations.addDestination(
@@ -321,15 +357,20 @@ void main() {
         reason: 'test',
         redactedBy: const UserInitiator('admin'),
       );
-      await store.applyRetentionPolicy();
+      await store.applyRetentionPolicy(
+        policy: const SecurityRetentionPolicy(
+          fullRetention: Duration.zero,
+          truncatedRetention: Duration.zero,
+        ),
+      );
 
-      final appendedTypes = <String>{
-        for (final e in await store.reader.findAllEvents()) e.entryType,
-      };
+      final events = await store.reader.findAllEvents();
       expect(
-        appendedTypes,
+        <String>{for (final e in events) e.entryType},
         containsAll(<String>[
+          kLibVersionInitializedEntryType,
           kEntryTypeRegistryInitializedEntryType,
+          kRetentionPolicyAppliedEntryType,
           kDestinationRegisteredEntryType,
           kDestinationStartDateSetEntryType,
           kDestinationEndDateSetEntryType,
@@ -339,6 +380,13 @@ void main() {
           kSecurityContextRedactedEntryType,
         ]),
       );
+      for (final e in events.where((e) => isReservedEntryType(e.entryType))) {
+        final declaration = kSystemEntryTypes
+            .singleWhere((d) => d.id == e.entryType)
+            .declarationFor(e.eventType)!;
+        expect(e.causal!.kind, declaration.kind, reason: e.entryType);
+        expect(e.causal!.eligible, declaration.eligible, reason: e.entryType);
+      }
       await store.close();
     },
   );
