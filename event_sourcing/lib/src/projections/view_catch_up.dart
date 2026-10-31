@@ -55,6 +55,8 @@ import 'package:event_sourcing/src/projections/interpreter/view_row_access.dart'
 import 'package:event_sourcing/src/projections/projection_registry.dart';
 import 'package:event_sourcing/src/projections/projection_spec.dart';
 import 'package:event_sourcing/src/projections/view_fingerprint.dart';
+import 'package:event_sourcing/src/projections/view_read.dart'
+    show candidateFilterInTxn, kCandidateWindow, kEveryEventCandidate;
 import 'package:event_sourcing/src/promoters/promoter_registry.dart';
 import 'package:event_sourcing/src/security/security_finding.dart'
     show FindingKind, FindingRole, securityFindingId;
@@ -550,38 +552,72 @@ class ViewCatchUpDriver {
       var steps = 0;
       var reachedTip = false;
       try {
+        // Implements: EVS-DEV-view-convergence/J
+        // the transaction reads, window by window from the watermark, only
+        //   the candidate events of the copy's definition -- a superset of
+        //   the events it folds (candidateFilterInTxn), read unfiltered
+        //   while any security finding is held -- so every event it moves
+        //   the watermark past unread is one the definition does not fold.
+        //   The log's head is read once: a window whose candidates are all
+        //   folded moves the watermark to the window's end, the last window
+        //   ending at that head, which is the only way the transaction
+        //   reaches the tip.
+        final head = await _backend.readLogHeadInTxn(txn);
+        final filter = head > watermark
+            ? await candidateFilterInTxn(txn, _backend, spec)
+            : kEveryEventCandidate;
+        var windowEnd = watermark;
+        var windowExhausted = true;
+        var chunk = const <StoredEvent>[];
+        var index = 0;
+
         Future<List<StoredEvent>> readChunk() async {
-          final chunk = await _backend.findAllEventsInTxn(
+          // Every event read before is folded or passed over by now, so
+          // the read resumes at the watermark.
+          final read = await _backend.findCandidateEventsInTxn(
             txn,
             afterSequence: watermark,
+            throughSequence: windowEnd,
             limit: kCatchUpReadChunk,
+            entryTypes: filter.entryTypes,
+            eventTypes: filter.eventTypes,
+            aggregateTypes: filter.aggregateTypes,
           );
           if (rows != null && spec is AggregateProjectionSpec) {
             await rows.prefetch(<String>{
-              for (final e in chunk)
+              for (final e in read)
                 if (spec.interest.matches(e)) e.aggregateId,
             });
           }
-          return chunk;
+          return read;
         }
 
-        var chunk = await readChunk();
-        var index = 0;
         // Implements: EVS-DEV-view-convergence/O
-        // a do-while: the first step always runs, whatever the clock reads.
+        // a do-while that ends only once a step has run: the first step
+        //   always runs, whatever the clock reads.
         do {
-          if (index >= chunk.length) {
-            if (chunk.length < kCatchUpReadChunk) {
-              reachedTip = true;
-              break;
-            }
+          if (index >= chunk.length && !windowExhausted) {
             await rows?.flush();
             chunk = await readChunk();
             index = 0;
-            if (chunk.isEmpty) {
+            windowExhausted = chunk.length < kCatchUpReadChunk;
+          }
+          if (index >= chunk.length) {
+            // Every candidate of the window is folded: the rest of it is
+            // events the definition does not fold, passed over at once.
+            if (windowEnd > watermark) {
+              watermark = windowEnd;
+              steps++;
+            }
+            if (watermark >= head) {
               reachedTip = true;
               break;
             }
+            windowEnd = watermark + kCandidateWindow < head
+                ? watermark + kCandidateWindow
+                : head;
+            windowExhausted = false;
+            continue;
           }
           final event = chunk[index];
           index++;
@@ -675,7 +711,8 @@ class ViewCatchUpDriver {
           }
           watermark = event.sequenceNumber;
           steps++;
-        } while (_effectiveClock().difference(start) < kCatchUpStepBound);
+        } while (steps == 0 ||
+            _effectiveClock().difference(start) < kCatchUpStepBound);
         await rows?.flush();
       } on RowWriteRejected {
         // Only a batched flush reaches here: the event-by-event fold above

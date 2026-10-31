@@ -22,6 +22,7 @@
 // ViewCopyStatus lets a caller read, per registered view, whether the
 //   instance's last catch-up transaction on its copy ended at the log's
 //   head, and its copy's progress (watermark, log head, last failure).
+import 'package:event_sourcing/src/destinations/subscription_filter.dart';
 import 'package:event_sourcing/src/projections/integrity_marks.dart'
     show IntegrityMarks;
 import 'package:event_sourcing/src/projections/projection_spec.dart';
@@ -29,6 +30,8 @@ import 'package:event_sourcing/src/security/system_entry_types.dart'
     show
         kDestinationSenderSucceededEntryType,
         kDestinationSenderSucceededEventType,
+        kEveryCopyFoldsEntryTypes,
+        kReservedSystemEntryTypeIds,
         kSecurityFindingEntryType,
         kSecurityFindingRecordedEventType;
 import 'package:event_sourcing/src/storage/storage_backend.dart';
@@ -224,9 +227,119 @@ class ViewCurrencyScan {
   final bool allUnsettled;
 }
 
+/// The positions one candidate read covers: a catch-up or a currency scan
+/// asks the backend for the candidate events of one window of this many
+/// log positions at a time, so the work one read does is bounded by the
+/// window however few of its events are candidates.
+@internal
+const int kCandidateWindow = 5000;
+
+/// The filters of a candidate read ([StorageBackend.findCandidateEventsInTxn]):
+/// each null filter restricts nothing.
+@internal
+typedef CandidateFilter = ({
+  Set<String>? entryTypes,
+  Set<String>? eventTypes,
+  Set<String>? aggregateTypes,
+});
+
+/// The candidate filter that restricts nothing: every event is a candidate.
+@internal
+const CandidateFilter kEveryEventCandidate = (
+  entryTypes: null,
+  eventTypes: null,
+  aggregateTypes: null,
+);
+
+/// The candidate filter of a view whose interest is [interest]: a superset
+/// of the events [SubscriptionFilter.matches] admits, clause by clause.
+/// The entry-type clause admits the reserved system entry types beside the
+/// named ones when the interest includes system events, since `matches`
+/// lets those past the entry-type allow-list; the event-type and
+/// aggregate-type clauses apply to every event, as in `matches`; the
+/// interest's predicate is left to the fold, which applies `matches`
+/// itself. The backend adds the events every copy folds whatever its
+/// interest ([kEveryCopyFoldsEntryTypes]).
+@internal
+CandidateFilter candidateFilterOf(SubscriptionFilter interest) {
+  final named = interest.entryTypes;
+  return (
+    entryTypes: named == null
+        ? null
+        : (interest.includeSystemEvents
+              ? <String>{...named, ...kReservedSystemEntryTypeIds}
+              : named),
+    eventTypes: interest.eventTypes,
+    aggregateTypes: interest.aggregateTypes,
+  );
+}
+
+/// The candidate filter of [spec]'s copy inside [txn]: every event while
+/// the database holds a security finding, since a held finding can make an
+/// event of any type change other aggregates' marks
+/// ([IntegrityMarks.changesOtherMarks]) and no column names such an event;
+/// otherwise the filter of [spec]'s interest ([candidateFilterOf]). With
+/// no finding held, the events [spec]'s definition folds are exactly those
+/// its interest matches and those of [kEveryCopyFoldsEntryTypes], so the
+/// candidates are a superset of them.
+// Implements: EVS-DEV-view-convergence/J
+// the candidates a catch-up or a currency scan reads past a copy's
+//   watermark are a superset of the events its definition folds, so what
+//   it passes over unread is only events the definition does not fold.
+@internal
+Future<CandidateFilter> candidateFilterInTxn(
+  Transaction txn,
+  StorageBackend backend,
+  ProjectionSpec spec,
+) async => await backend.holdsSecurityFindingInTxn(txn)
+    ? kEveryEventCandidate
+    : candidateFilterOf(spec.interest);
+
+/// Calls [visit] inside [txn], in log order, for each candidate event of
+/// [filter] after position [after] and at or before [through], reading
+/// one window of [kCandidateWindow] positions at a time, until [visit]
+/// returns false or the candidates are exhausted.
+@internal
+Future<void> forEachCandidateInTxn(
+  Transaction txn,
+  StorageBackend backend, {
+  required int after,
+  required int through,
+  required CandidateFilter filter,
+  required Future<bool> Function(StoredEvent event) visit,
+}) async {
+  const pageSize = 500;
+  var windowStart = after;
+  while (windowStart < through) {
+    final windowEnd = windowStart + kCandidateWindow < through
+        ? windowStart + kCandidateWindow
+        : through;
+    var cursor = windowStart;
+    while (true) {
+      final page = await backend.findCandidateEventsInTxn(
+        txn,
+        afterSequence: cursor,
+        throughSequence: windowEnd,
+        limit: pageSize,
+        entryTypes: filter.entryTypes,
+        eventTypes: filter.eventTypes,
+        aggregateTypes: filter.aggregateTypes,
+      );
+      for (final e in page) {
+        if (!await visit(e)) return;
+      }
+      if (page.length < pageSize) break;
+      cursor = page.last.sequenceNumber;
+    }
+    windowStart = windowEnd;
+  }
+}
+
 /// Scans the log past [copy]'s watermark, inside [txn], for the events
 /// [spec]'s definition folds (EVS-DEV-view-convergence Terms): an event
-/// [spec]'s interest matches, or one [isMarkRefreshingEvent] names.
+/// [spec]'s interest matches, or one [isMarkRefreshingEvent] names. Reads
+/// the log's head, then only the candidate events past the watermark
+/// ([candidateFilterInTxn]).
 // Implements: EVS-DEV-converging-view-reads/B
 // Implements: EVS-DEV-converging-view-reads/D
 // Implements: EVS-PRD-materializer/G
@@ -237,36 +350,35 @@ Future<ViewCurrencyScan> scanViewCurrency({
   required ProjectionSpec spec,
   required ViewCopy copy,
 }) async {
-  var after = copy.watermark;
-  const chunkSize = 500;
+  final head = await backend.readLogHeadInTxn(txn);
   var anyFolding = false;
   var allUnsettled = false;
   final unsettled = <String>{};
-  while (true) {
-    final chunk = await backend.findAllEventsInTxn(
+  if (head > copy.watermark) {
+    await forEachCandidateInTxn(
       txn,
-      afterSequence: after,
-      limit: chunkSize,
+      backend,
+      after: copy.watermark,
+      through: head,
+      filter: await candidateFilterInTxn(txn, backend, spec),
+      visit: (e) async {
+        if (spec.interest.matches(e)) {
+          anyFolding = true;
+          unsettled.add(e.aggregateId);
+        }
+        if (await isMarkRefreshingEvent(txn, backend, e)) {
+          anyFolding = true;
+          allUnsettled = true;
+        }
+        return true;
+      },
     );
-    if (chunk.isEmpty) break;
-    for (final e in chunk) {
-      if (spec.interest.matches(e)) {
-        anyFolding = true;
-        unsettled.add(e.aggregateId);
-      }
-      if (await isMarkRefreshingEvent(txn, backend, e)) {
-        anyFolding = true;
-        allUnsettled = true;
-      }
-    }
-    after = chunk.last.sequenceNumber;
-    if (chunk.length < chunkSize) break;
   }
   return ViewCurrencyScan(
     state: anyFolding
         ? ViewConvergenceState.converging
         : ViewConvergenceState.current,
-    logHead: after,
+    logHead: head > copy.watermark ? head : copy.watermark,
     unsettledAggregateIds: unsettled,
     allUnsettled: allUnsettled,
   );
