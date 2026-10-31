@@ -329,6 +329,7 @@ void main() {
     });
 
     // Verifies: EVS-DEV-chain-verification/V
+    // Verifies: EVS-DEV-chain-verification/W
     test('findings reported before the interruption stay recorded', () async {
       await breakStorageLink(1);
       backend.failFromPageRead(3);

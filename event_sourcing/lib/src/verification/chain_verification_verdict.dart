@@ -105,8 +105,8 @@ final class ChainVerificationVerdict {
       'unresolvedPredecessors: $unresolvedPredecessors)';
 }
 
-/// The failure of a chain verification that a read failure interrupted
-/// after it began.
+/// The failure of a chain verification that a failure, a read failure for
+/// one, interrupted after it began.
 ///
 /// [verifiedThrough] is the highest local sequence number whose checks
 /// completed, or null when no event's did. A verification started with
@@ -114,9 +114,14 @@ final class ChainVerificationVerdict {
 /// the link from `verifiedThrough` into its first event included.
 /// [findings] lists what the verification had reported until the failure;
 /// an open event store has recorded them as it records a verdict's.
-// Implements: EVS-DEV-chain-verification/U
+///
+/// A resumed verification may report again a finding of the event that was
+/// being checked when the failure came, or a fork already reported, which
+/// recording dedupes. A caller must not merge the two lists of findings by
+/// concatenation.
+// Implements: EVS-DEV-chain-verification/U+W
 // the interruption names the highest local sequence number whose checks
-//   completed.
+//   completed and carries the findings reported until then.
 @immutable
 class ChainWalkInterrupted implements Exception {
   /// An interruption of a verification by [cause], after it verified

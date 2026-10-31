@@ -88,9 +88,11 @@ S. The chain verification operation SHALL hold no transaction that an append wai
 
 T. On the Postgres backend, the library's append throughput and its ingest throughput SHALL each be at least half the throughput that the baseline build its throughput test pins (the library as it stood on its main branch before the data-format major step) reaches on the same workload and host.
 
-U. A chain verification interrupted by a read failure SHALL fail naming the highest local sequence number whose checks completed.
+U. A chain verification interrupted by a failure SHALL fail naming the highest local sequence number whose checks completed.
 
-V. The chain verification operation of an open event store SHALL record each finding it had reported when a read failure interrupted it.
+V. An open event store SHALL record each finding carried by the interruption of its chain verification.
+
+W. A chain verification interrupted by a failure SHALL fail carrying each finding it had reported.
 
 ### Rationale
 
@@ -116,7 +118,7 @@ V. The chain verification operation of an open event store SHALL record each fin
 
 **Why record the walk's findings, and hold nothing appends wait for (assertions R and S)?** A verdict returned to a caller is lost with the caller; recorded as findings, the anomalies the walk meets are facts of the holder's log, each once, whoever runs the walk and however often. The walk only reads, and appends never wait for it: on Postgres it reads in one read-only snapshot, and readers never block writers; on Sembast it reads through the database outside any transaction, and only transactions take the lock appends wait for. Its upper bound is fixed when it starts, so events appended meanwhile are left to the next walk. Its findings are appended in short transactions of their own; a crash repeats nothing, because a detector records a finding once. A verifier that holds only the log computes the same verdict and appends nothing. A full walk of a large log is slow, so the library does not schedule it: a caller runs it, over a range from its last verified position or over the whole log, where a deployment chooses in a maintenance window. Walking in resumable chunks is recorded in `spec/roadmap/security-findings.md`.
 
-**Why report how far an interrupted walk verified (assertions U and V)?** A verification of a whole log can fail part-way, for instance when the connection to the database drops. Without a position, the next verification starts again from the first event and meets the same failure at the same cost. The failure names the highest local sequence number whose checks completed and carries the findings reported until then, so a caller verifies the rest with a range starting just above that number. Assertion D already makes that range check the link from the event before it into its first event, so a break exactly at the seam is found. An open event store records the findings the interrupted walk had reported, as it records those of a verdict, so an anomaly met before the failure is not lost with it.
+**Why report how far an interrupted walk verified (assertions U, V and W)?** A verification of a whole log can fail part-way, for instance when the connection to the database drops. Without a position, the next verification starts again from the first event and meets the same failure at the same cost. The interruption names the highest local sequence number whose checks completed and carries the findings reported until then, so a caller verifies the rest with a range starting just above that number. Assertion D already makes that range check the link from the event before it into its first event, so a break exactly at the seam is found. An open event store records the findings the interruption carries, as it records those of a verdict, and does so before the interruption reaches the caller, so an anomaly met before the failure is not lost with it. A resumed verification can report again a finding of the event that was being checked when the failure came, or a fork already reported; recording keeps one finding of each identity, so a caller reads the two lists together by identity, not by concatenation.
 
 **Why a throughput bound (assertion T)?** The chains and the causal stamping add reads and writes to every append and every ingested event. Measured against the last release of the preceding major on the same workload and host, a fixed baseline the test pins, the bound keeps that cost proportionate and makes a regression fail the suite.
 
@@ -126,8 +128,9 @@ V. The chain verification operation of an open event store SHALL record each fin
 
 ### Changelog
 
+- 2026-10-31 | 09fb6e24 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-10-31 | 8e5e6e3c | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
-- 2026-10-31 | - | - | Michael Lewis (<michael@anspar.org>) | U and V: a verification interrupted by a read failure reports how far it verified and the findings it had reported, and an open event store records them.
+- 2026-10-31 | - | - | Michael Lewis (<michael@anspar.org>) | U, V and W: a verification interrupted by a failure reports how far it verified and the findings it had reported, and an open event store records them.
 - 2026-09-26 | 201d5630 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-26 | - | - | Michael Lewis (<michael@anspar.org>) | I: every verdict finding carries the evidence a security finding of its kind carries. T: the baseline is the build the throughput test pins, the library on its main branch before the data-format major step. No code or test references I or T
 - 2026-09-25 | 9d31a14d | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
@@ -156,7 +159,7 @@ V. The chain verification operation of an open event store SHALL record each fin
 - 2026-09-25 | 954cdf2b | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-24 | - | - | Michael Lewis (<michael@anspar.org>) | Add A-N: sealed hash, origin position and originating database read alike at every holder; the predecessor hash names the previous authored event; every stored event records its storage link in its last provenance entry; the chain verification operation over the storage chain and every origin chain, checking the first event of a range, reporting predecessor breaks, unrecorded forks (successors no skip lists by name) and skip record mismatches, listing pending recoveries, with its verdict; the predecessor check and the fork_unrecorded refusal at ingest; a second authored successor at the holding database reported as a fork of live sources; the chain index checked against the log
 
-*End* *Storage and origin chain verification* | **Hash**: 8e5e6e3c
+*End* *Storage and origin chain verification* | **Hash**: 09fb6e24
 
 ## EVS-DEV-causal-parents: Causal parents within an aggregate
 

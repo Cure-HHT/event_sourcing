@@ -175,7 +175,9 @@ abstract interface class StorageReader {
   /// sequence numbers [from] to [to], computed from the log alone and
   /// recording nothing: the reads hold no transaction an append waits for.
   /// Throws [ArgumentError], before reading any event, for a negative bound
-  /// or a lower bound above the upper.
+  /// or a lower bound above the upper. Throws `ChainWalkInterrupted`, which
+  /// carries the findings reported until then and records nothing, when a
+  /// failure interrupts the verification after it began.
   Future<ChainVerificationVerdict> verifyChains({int? from, int? to});
 
   /// The succession lineage of [databaseId], derived solely from the

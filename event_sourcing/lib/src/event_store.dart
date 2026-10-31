@@ -2080,9 +2080,20 @@ class EventStore {
       );
     } on ChainWalkInterrupted catch (interrupted) {
       // Implements: EVS-DEV-chain-verification/V
-      // the findings reported before the interruption are recorded before it
-      //   is rethrown.
-      await _recordWalkFindings(interrupted.findings);
+      // the findings the interruption carries are recorded before it is
+      //   rethrown; a failure to record them is logged and does not mask it.
+      try {
+        await _recordWalkFindings(interrupted.findings);
+      } on Object catch (e, st) {
+        libraryLog(
+          'chain_verification',
+          'recording the findings of an interrupted chain verification '
+              'failed',
+          level: LibraryLogLevel.warning,
+          error: e,
+          stackTrace: st,
+        );
+      }
       rethrow;
     }
     await _recordWalkFindings(verdict.findings);

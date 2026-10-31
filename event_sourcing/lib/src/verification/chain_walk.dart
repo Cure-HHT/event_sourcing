@@ -234,8 +234,8 @@ Future<ChainVerificationVerdict> walkChains(
   }
   final findings = <ChainVerificationFinding>[];
   int? verifiedThrough;
-  // Implements: EVS-DEV-chain-verification/U
-  // a read failure after the walk began fails it naming the highest local
+  // Implements: EVS-DEV-chain-verification/U+W
+  // a failure after the walk began fails it naming the highest local
   //   sequence number whose checks completed and carrying the findings
   //   reported until then.
   try {
