@@ -325,8 +325,10 @@ class EventStore {
     PromoterRegistry? promoters,
     Clock? clock,
     Uuid? uuid,
+    bool recordUndeclaredIngestFindings = true,
   }) : _backend = backend,
        _viewCopyIds = viewCopyIds,
+       _recordUndeclaredIngestFindings = recordUndeclaredIngestFindings,
        _interpreter = ProjectionInterpreter(
          projections: projections ?? ProjectionRegistry(),
          promoters: promoters ?? PromoterRegistry(),
@@ -594,6 +596,12 @@ class EventStore {
   /// guard, released by [close].
   final GenerationRegistration _registration;
 
+  /// Whether an ingest refusal of an event whose event type its registered
+  /// application entry type does not declare is recorded as an `undeclared_event_type`
+  /// finding ([EventStore.open]'s `recordUndeclaredIngestFindings`). The
+  /// refusal is thrown either way.
+  final bool _recordUndeclaredIngestFindings;
+
   /// Sealed registry of promoter specs, threaded in from [EventStore.open] (or
   /// supplied directly on the constructor). Used by `rebuildView` to apply
   /// promoter chains during replay.
@@ -737,6 +745,15 @@ class EventStore {
   /// listener subscribed elsewhere, say), a read a backend serves outside a
   /// transaction, and a transaction an application-supplied backend starts
   /// are not recognised.
+  ///
+  /// Undeclared event types. Ingest refuses an event of a registered
+  /// application entry type whose event type that entry type does not declare
+  /// ([IngestUndeclaredEventType]). With [recordUndeclaredIngestFindings]
+  /// true (the default) the refusal is also recorded, once per event, as an
+  /// `undeclared_event_type` security finding; a database that expects to
+  /// meet the event types of newer builds before it upgrades (a device
+  /// receiving from a server released first, say) opens with false, and
+  /// the refusal alone is thrown.
   // Implements: EVS-DEV-event-store-open/A+B+C+D+E+F
   // the sole production constructor; the whole boot, refusals first, runs
   //   in one storage transaction (see _runBoot).
@@ -756,6 +773,7 @@ class EventStore {
     Clock? clock,
     Uuid? uuid,
     void Function(BootProgress progress)? onBootProgress,
+    bool recordUndeclaredIngestFindings = true,
   }) async {
     refuseCallFromBootProgressObserver('EventStore.open');
     final progress = BootProgressReporter(onBootProgress);
@@ -790,6 +808,7 @@ class EventStore {
           promoters: effectivePromoters,
           clock: clock,
           uuid: uuid,
+          recordUndeclaredIngestFindings: recordUndeclaredIngestFindings,
         );
       } catch (_) {
         await opened.close();
@@ -820,8 +839,9 @@ class EventStore {
   /// so sequence numbers stay predictable, and at a first open it mints the
   /// database identity without a log record; a later [open] adopts that
   /// identity. The guarantee that the log records every version that opened
-  /// the database holds for [open] only. [onBootProgress] observes the boot
-  /// as it does for [open].
+  /// the database holds for [open] only. [onBootProgress] observes the boot,
+  /// and [recordUndeclaredIngestFindings] decides whether ingest records its
+  /// undeclared-event-type refusals, as they do for [open].
   ///
   /// The caller keeps [storage]: [close] does not close it, so several
   /// stores may run over one backend. In a build with assertions disabled
@@ -846,6 +866,7 @@ class EventStore {
     Clock? clock,
     Uuid? uuid,
     void Function(BootProgress progress)? onBootProgress,
+    bool recordUndeclaredIngestFindings = true,
   }) async {
     var assertionsEnabled = false;
     assert(() {
@@ -888,6 +909,7 @@ class EventStore {
         promoters: effectivePromoters,
         clock: clock,
         uuid: uuid,
+        recordUndeclaredIngestFindings: recordUndeclaredIngestFindings,
       );
       progress
         ..bootFinished()
@@ -2330,6 +2352,17 @@ class EventStore {
         'not registered in EntryTypeRegistry',
       );
     }
+    // Implements: EVS-DEV-causal-parents/F
+    // every append is stamped from its entry type's declaration for its event
+    //   type, so an event type the entry type does not declare is refused,
+    //   before the sequence number is reserved; a receiver of the same build
+    //   therefore never refuses an event it appended.
+    if (entryTypes.byId(entryType)!.declarationFor(eventType) == null) {
+      throw UndeclaredEventTypeError(
+        entryType: entryType,
+        eventType: eventType,
+      );
+    }
     if (aggregateType.isEmpty) {
       throw ArgumentError.value(
         aggregateType,
@@ -2565,7 +2598,7 @@ class EventStore {
       _backend,
       txn,
       aggregateId: aggregateId,
-      declaration: def.declarationFor(eventType),
+      declaration: def.declarationFor(eventType)!,
     );
     final provenance0 = _originatorEntry(
       hop: source.hopId,
@@ -2710,13 +2743,51 @@ class EventStore {
   Future<PerEventIngestOutcome> _ingestEvent(StoredEvent incoming) async {
     _refuseOtherDataFormatMajor(incoming.eventId, incoming.libFormatVersion);
     final record = Map<String, Object?>.from(incoming.toMap());
-    return _runInTxnWithPublish((txn, collector) {
-      return _ingestRecordInTxn(
+    try {
+      return await _runInTxnWithPublish((txn, collector) {
+        return _ingestRecordInTxn(
+          txn,
+          record,
+          parsed: incoming,
+          batchContext: null,
+          collector: collector,
+        );
+      });
+    } on IngestUndeclaredEventType catch (refusal) {
+      await _recordUndeclaredEventTypeFinding(refusal, FindingRole.ingest);
+      rethrow;
+    }
+  }
+
+  /// Records, in a write transaction of its own after the ingest that threw
+  /// [refusal] rolled back, the `undeclared_event_type` finding of detector
+  /// role [role] about the refused event, unless this database holds it as
+  /// authored already or this store was opened with
+  /// `recordUndeclaredIngestFindings: false`. Every ingest entry point and
+  /// the restore call it where they catch the refusal.
+  // Implements: EVS-DEV-security-findings/E+Q
+  // the finding's evidence is fixed by the refused event, so a redelivery of
+  //   it computes the same identity and appends nothing; it is recorded
+  //   under the role of the operation that refused the event.
+  Future<void> _recordUndeclaredEventTypeFinding(
+    IngestUndeclaredEventType refusal,
+    FindingRole role,
+  ) async {
+    if (!_recordUndeclaredIngestFindings) return;
+    await _runInTxnWithPublish<void>((txn, collector) async {
+      final held = await _backend.findEventByIdInTxn(txn, refusal.eventId);
+      await _recordFindingInTxn(
         txn,
-        record,
-        parsed: incoming,
-        batchContext: null,
-        collector: collector,
+        collector,
+        role: role,
+        kind: FindingKind.undeclaredEventType,
+        evidence: <String, Object?>{
+          'event_id': refusal.eventId,
+          'entry_type': refusal.entryType,
+          'event_type': refusal.eventType,
+          'origin_database_id': refusal.originDatabaseId,
+        },
+        aggregates: <String>[if (held != null) held.aggregateId],
       );
     });
   }
@@ -2848,8 +2919,8 @@ class EventStore {
       }
     }
     if (event != null) {
-      _refuseUnadmittedVersion(event);
-      unstorable = _unstorableReason(event, originator!);
+      _refuseUnadmittedVersion(event, originDatabaseId: originator!);
+      unstorable = _unstorableReason(event, originator);
     }
 
     final held = eventId == null
@@ -3227,15 +3298,27 @@ class EventStore {
 
   /// Throws, before the record is written, when [incoming]'s entry-type
   /// version is above the major this build registers for its entry type
-  /// ([IngestEntryTypeVersionAhead]), or below it with no promoter path for
-  /// a view it folds into ([IngestEntryTypeVersionUnpromotable]). An entry
+  /// ([IngestEntryTypeVersionAhead]), when that entry type is an application
+  /// entry type that does not declare its event type
+  /// ([IngestUndeclaredEventType], naming [originDatabaseId], the database
+  /// that originated it), or below it with no promoter path for a view it
+  /// folds into ([IngestEntryTypeVersionUnpromotable]). An entry
   /// type this build does not register is accepted at any version: it is
   /// stored as it is and folds under its own version.
   // Implements: EVS-DEV-version-compatibility/D
   // every ingest entry point refuses a higher entry-type major, and an
   //   event below the registered version that a view it folds into has no
   //   promoter path for, by name before any write.
-  void _refuseUnadmittedVersion(StoredEvent incoming) {
+  // Implements: EVS-DEV-version-compatibility/D
+  // every ingest entry point refuses, before any write, an event of a
+  //   registered application entry type whose event type that entry type
+  //   does not declare, as it refuses a higher major; an unregistered entry
+  //   type is accepted, and a reserved entry type in a shape the library
+  //   does not declare is kept in a finding (EVS-DEV-security-findings/O).
+  void _refuseUnadmittedVersion(
+    StoredEvent incoming, {
+    required String originDatabaseId,
+  }) {
     _refuseOtherDataFormatMajor(incoming.eventId, incoming.libFormatVersion);
     final def = entryTypes.byId(incoming.entryType);
     if (def == null) return;
@@ -3245,6 +3328,15 @@ class EventStore {
         entryType: incoming.entryType,
         wireVersion: incoming.entryTypeVersion,
         receiverVersion: def.registeredVersion,
+      );
+    }
+    if (!isReservedEntryType(incoming.entryType) &&
+        def.declarationFor(incoming.eventType) == null) {
+      throw IngestUndeclaredEventType(
+        eventId: incoming.eventId,
+        entryType: incoming.entryType,
+        eventType: incoming.eventType,
+        originDatabaseId: originDatabaseId,
       );
     }
     if (!(incoming.entryTypeVersion < def.registeredVersion)) return;
@@ -3712,7 +3804,14 @@ String _sealedHashOf(StoredEvent stored) {
 EventTypeDeclaration _reservedDeclaration(String entryType, String eventType) {
   for (final definition in kSystemEntryTypes) {
     if (definition.id == entryType) {
-      return definition.declarationFor(eventType);
+      final declaration = definition.declarationFor(eventType);
+      if (declaration == null) {
+        throw UndeclaredEventTypeError(
+          entryType: entryType,
+          eventType: eventType,
+        );
+      }
+      return declaration;
     }
   }
   throw StateError('$entryType is not a reserved system entry type');

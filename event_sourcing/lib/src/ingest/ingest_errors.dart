@@ -103,6 +103,44 @@ class IngestEntryTypeVersionAhead implements Exception {
       'wire: $wireVersion, receiver: $receiverVersion)';
 }
 
+/// Thrown by every ingest entry point, before the record is written, when
+/// an incoming event is of an application (not reserved) entry type the
+/// receiver registers whose event type that entry type does not declare: a
+/// build that declares the event type appended it. The receiver refuses the event, and a delivery
+/// carrying it is refused whole. Operator action: upgrade the receiver to
+/// a build that declares [eventType].
+// Implements: EVS-DEV-version-compatibility/D
+// the ingest refusal of an event whose event type its registered entry type
+//   does not declare, naming the event, its entry type and its event type.
+class IngestUndeclaredEventType implements Exception {
+  const IngestUndeclaredEventType({
+    required this.eventId,
+    required this.entryType,
+    required this.eventType,
+    required this.originDatabaseId,
+  });
+
+  /// The reason a receiver's `rejected` refusal names for this refusal.
+  static const String refusalReason = 'event_type_undeclared';
+
+  /// The refused event.
+  final String eventId;
+
+  /// The event's application entry type, which the receiver registers.
+  final String entryType;
+
+  /// The event's event type, which [entryType] does not declare.
+  final String eventType;
+
+  /// The database that originated the event.
+  final String originDatabaseId;
+
+  @override
+  String toString() =>
+      'IngestUndeclaredEventType(event_id: $eventId, entry_type: $entryType, '
+      'event_type: $eventType, origin_database_id: $originDatabaseId)';
+}
+
 /// Thrown by the receiver endpoint's delivery accept path when an incoming
 /// event is of a lower entry-type version than the receiver registers and
 /// the receiver's promoter steps for a view the event folds into do not

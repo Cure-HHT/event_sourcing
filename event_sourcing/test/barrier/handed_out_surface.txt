@@ -94,8 +94,8 @@ EventStore.databaseId: field String databaseId
 EventStore.entryTypes: field EntryTypeRegistry entryTypes
 EventStore.idempotencyStore: field IdempotencyStore? idempotencyStore
 EventStore.isLocallyOriginated: bool isLocallyOriginated(StoredEvent event)
-EventStore.open: static Future<EventStore> open({required StorageDescription storage, required EntryTypeRegistry entryTypes, required Source source, ProjectionRegistry? projections, PromoterRegistry? promoters, DateTime Function()? clock, Uuid? uuid, void Function(BootProgress)? onBootProgress})
-EventStore.openForTest: static Future<EventStore> openForTest({required StorageBackend storage, required EntryTypeRegistry entryTypes, required Source source, required MutableSecurityContextStore securityContexts, ProjectionRegistry? projections, PromoterRegistry? promoters, DateTime Function()? clock, Uuid? uuid, void Function(BootProgress)? onBootProgress})
+EventStore.open: static Future<EventStore> open({required StorageDescription storage, required EntryTypeRegistry entryTypes, required Source source, ProjectionRegistry? projections, PromoterRegistry? promoters, DateTime Function()? clock, Uuid? uuid, void Function(BootProgress)? onBootProgress, bool recordUndeclaredIngestFindings = true})
+EventStore.openForTest: static Future<EventStore> openForTest({required StorageBackend storage, required EntryTypeRegistry entryTypes, required Source source, required MutableSecurityContextStore securityContexts, ProjectionRegistry? projections, PromoterRegistry? promoters, DateTime Function()? clock, Uuid? uuid, void Function(BootProgress)? onBootProgress, bool recordUndeclaredIngestFindings = true})
 EventStore.projections: ProjectionRegistry get projections
 EventStore.promoters: PromoterRegistry get promoters
 EventStore.reader: field StorageReader reader

@@ -132,6 +132,7 @@ export 'src/actions/denial_events.dart'
         denialAuthorizationDenied,
         denialExecutionFailed,
         denialIdempotencyMismatch,
+        kActionDenialDeclarations,
         sanitizeErrorMessage;
 export 'src/actions/deny_all_authorization_policy.dart'
     show DenyAllAuthorizationPolicy;
@@ -215,7 +216,7 @@ export 'src/destinations/wire_payload.dart' show WirePayload;
 // Entry Type Registry — maps entry_type ids to EntryTypeDefinition metadata
 // consumed by the materializer and EventStore registry.
 export 'src/entry_type_definition.dart'
-    show EntryTypeDefinition, EventTypeDeclaration;
+    show EntryTypeDefinition, EventTypeDeclaration, UndeclaredEventTypeError;
 export 'src/entry_type_registry.dart' show EntryTypeRegistry;
 
 // EventDraft — input value type for Action.execute return value and
@@ -246,6 +247,7 @@ export 'src/ingest/ingest_errors.dart'
         IngestDecodeFailure,
         IngestEntryTypeVersionAhead,
         IngestEntryTypeVersionUnpromotable,
+        IngestUndeclaredEventType,
         SuccessionRestoreRefused;
 export 'src/ingest/ingest_result.dart'
     show IngestOutcome, PerEventIngestOutcome;
@@ -288,7 +290,7 @@ export 'src/permissions/role_assignment_aggregate_id.dart'
 export 'src/permissions/role_assignment_seed.dart'
     show RoleAssignmentSeed, RoleAssignmentSeedEntry;
 export 'src/permissions/role_permission_grants_spec.dart'
-    show rolePermissionGrantsSpec;
+    show kRolePermissionGrantDeclarations, rolePermissionGrantsSpec;
 export 'src/permissions/role_unassigned_payload.dart'
     show RoleUnassignedPayload;
 export 'src/permissions/scope_assignment.dart' show ScopeAssignment;
@@ -304,7 +306,8 @@ export 'src/permissions/seed_validator.dart'
     show SeedInvalid, SeedValid, SeedValidationResult, SeedValidator;
 export 'src/permissions/table_backed_authorization_policy.dart'
     show TableBackedAuthorizationPolicy;
-export 'src/permissions/user_role_scopes_spec.dart' show userRoleScopesSpec;
+export 'src/permissions/user_role_scopes_spec.dart'
+    show kUserRoleScopeDeclarations, userRoleScopesSpec;
 export 'src/permissions/yaml_seed_loader.dart' show YamlSeedLoader;
 
 // Projections — declarative view specs, the registry that holds them, and

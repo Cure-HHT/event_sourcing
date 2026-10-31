@@ -31,10 +31,30 @@
 // so unrelated events sharing the role_assigned/role_unassigned eventType
 // (should any ever exist) cannot pollute the view.
 
+import 'package:event_sourcing/src/causal_record.dart';
 import 'package:event_sourcing/src/destinations/subscription_filter.dart';
+import 'package:event_sourcing/src/entry_type_definition.dart';
 import 'package:event_sourcing/src/projections/primitives/row_data.dart';
 import 'package:event_sourcing/src/projections/primitives/row_key.dart';
 import 'package:event_sourcing/src/projections/projection_spec.dart';
+
+/// The event types of the `user_role_scope` entry type, which the role
+/// assignment bootstrap appends and [userRoleScopesSpec] folds, each an
+/// eligible version: the declarations an application's definition of
+/// `user_role_scope` carries.
+const List<EventTypeDeclaration> kUserRoleScopeDeclarations =
+    <EventTypeDeclaration>[
+      EventTypeDeclaration(
+        eventType: 'role_assigned',
+        kind: CausalKind.version,
+        eligible: true,
+      ),
+      EventTypeDeclaration(
+        eventType: 'role_unassigned',
+        kind: CausalKind.version,
+        eligible: true,
+      ),
+    ];
 
 const userRoleScopesSpec = TableProjectionSpec(
   viewName: 'user_role_scopes',

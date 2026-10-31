@@ -261,163 +261,175 @@ class _SuccessionRestore {
 
     await DeliveryTestHooks.current?.beforeRestoreTransaction?.call();
 
-    // Implements: EVS-DEV-sender-succession/C
-    // Implements: EVS-DEV-sender-succession/D
-    // every restored event, and the succession event that records the
-    //   restore, are stored in one transaction.
-    return _store._runInTxnWithPublish((txn, collector) async {
-      // Implements: EVS-DEV-sender-succession/H
-      // Implements: EVS-PRD-delivery-channel/R
-      // the log preconditions are checked again inside the storing
-      //   transaction, before any write, so an application or succession
-      //   event appended after the pre-pull check still refuses the
-      //   restore.
-      await _checkLogPreconditionsInTxn(txn);
-      // Implements: EVS-DEV-sender-succession/B
-      // every pulled channel's deliveries are checked for their link and
-      //   hash before anything is stored; a failed check is a
-      //   restore_unverified finding and never stops the store.
-      final receiverIdOf = <DeliveryChannel, String>{
-        for (final range in pulledRanges)
-          range.channel: range.receiverDatabaseId,
-      };
-      for (final range in pulledRanges) {
-        await _verifyRangeInTxn(txn, collector, range);
-      }
-      for (final occurrence in ordered) {
-        EventStore._refuseOtherDataFormatMajorOfRecord(occurrence.record);
-        // Implements: EVS-DEV-security-findings/Q
-        // (the restore records every finding this record handling detects
-        //   under the detector role restore, not ingest's)
-        // Implements: EVS-DEV-security-findings/O
-        // (a record the restore cannot store as an event is kept in full in
-        //   an event_malformed finding, under role restore, and no event is
-        //   stored for it)
-        // Implements: EVS-DEV-chain-verification/K
-        // (a stored event whose previous_event_hash is the sealed hash of a
-        //   held event that its originating database did not author, or of
-        //   an event of that database at an origin position not below its
-        //   own, is stored as received with a predecessor_break finding)
-        // Implements: EVS-DEV-chain-verification/L
-        // (a stored event at an origin position a held event of the same
-        //   originating database already occupies, or whose predecessor a
-        //   held event of that database already carries, is stored as
-        //   received with a position_reused or fork_unrecorded finding)
-        // Implements: EVS-PRD-hash-chain-integrity/J
-        // (every finding the restore records for a failed integrity check
-        //   is recorded once per anomaly and detector, in the storing
-        //   transaction)
-        final outcome = await _store._ingestRecordInTxn(
-          txn,
-          occurrence.record,
-          parsed: null,
-          batchContext: null,
-          collector: collector,
-          delivery: ProvenanceDelivery(
-            senderDatabaseId: occurrence.channel.senderDatabaseId,
-            destinationId: occurrence.channel.destinationId,
-            registrationId: occurrence.channel.registrationId,
-            generation: occurrence.channel.generation,
-            deliveryNumber: occurrence.deliveryNumber,
-          ),
-          role: FindingRole.restore,
-        );
-        // Implements: EVS-DEV-sender-succession/B
-        // every event stored is checked for its originator and its last
-        //   (receiver) provenance entry; a record the store keeps only in
-        //   an event_malformed finding is not an event this database holds,
-        //   so it is not checked again here. This runs once, on the
-        //   occurrence [chosen] to store: another occurrence sharing its
-        //   event_id and event_hash is a copy of the same served bytes (the
-        //   receiver serves one stored record at each occurrence), so
-        //   checking only the stored occurrence checks every distinct
-        //   record this database was served under that hash. An occurrence
-        //   of the same event_id under a different hash is a distinct
-        //   record, checked below instead.
-        if (outcome.outcome != IngestOutcome.keptInFinding) {
-          await _verifyStoredEventChecksInTxn(
-            txn,
-            collector,
-            occurrence,
-            receiverDatabaseId: receiverIdOf[occurrence.channel]!,
-          );
-        }
-      }
-      // Implements: EVS-DEV-sender-succession/B
+    // Implements: EVS-DEV-version-compatibility/D
+    // the restore refuses an event whose event type its registered entry
+    //   type does not declare, storing nothing, and records the refusal
+    //   under its own role, as every ingest entry point does.
+    try {
       // Implements: EVS-DEV-sender-succession/C
-      // Implements: EVS-DEV-security-findings/G
-      // every occurrence of an event_id served under a hash other than the
-      //   one chosen for storage is, once the chosen occurrence is stored
-      //   (or kept in its own finding) above, put through the same ingest
-      //   checks in this transaction: it is recorded as an identity_mismatch
-      //   finding carrying it in full, never silently dropped. When the
-      //   chosen occurrence was itself kept only in a finding (so nothing
-      //   is held under the event_id yet), an extra occurrence can be the
-      //   one that is stored as the event, and gets the same originator and
-      //   receiver-entry checks as any other stored event.
-      for (final occurrence in extraOccurrences) {
-        EventStore._refuseOtherDataFormatMajorOfRecord(occurrence.record);
-        final outcome = await _store._ingestRecordInTxn(
-          txn,
-          occurrence.record,
-          parsed: null,
-          batchContext: null,
-          collector: collector,
-          delivery: ProvenanceDelivery(
-            senderDatabaseId: occurrence.channel.senderDatabaseId,
-            destinationId: occurrence.channel.destinationId,
-            registrationId: occurrence.channel.registrationId,
-            generation: occurrence.channel.generation,
-            deliveryNumber: occurrence.deliveryNumber,
-          ),
-          role: FindingRole.restore,
-        );
-        if (outcome.outcome != IngestOutcome.keptInFinding) {
-          await _verifyStoredEventChecksInTxn(
-            txn,
-            collector,
-            occurrence,
-            receiverDatabaseId: receiverIdOf[occurrence.channel]!,
-          );
+      // Implements: EVS-DEV-sender-succession/D
+      // every restored event, and the succession event that records the
+      //   restore, are stored in one transaction.
+      return await _store._runInTxnWithPublish((txn, collector) async {
+        // Implements: EVS-DEV-sender-succession/H
+        // Implements: EVS-PRD-delivery-channel/R
+        // the log preconditions are checked again inside the storing
+        //   transaction, before any write, so an application or succession
+        //   event appended after the pre-pull check still refuses the
+        //   restore.
+        await _checkLogPreconditionsInTxn(txn);
+        // Implements: EVS-DEV-sender-succession/B
+        // every pulled channel's deliveries are checked for their link and
+        //   hash before anything is stored; a failed check is a
+        //   restore_unverified finding and never stops the store.
+        final receiverIdOf = <DeliveryChannel, String>{
+          for (final range in pulledRanges)
+            range.channel: range.receiverDatabaseId,
+        };
+        for (final range in pulledRanges) {
+          await _verifyRangeInTxn(txn, collector, range);
         }
-      }
-      if (DeliveryTestHooks.current?.failRestoreStore?.call() ?? false) {
-        throw const InjectedFailure('restore store');
-      }
-      final successionData = SenderSuccessionData(
-        id: destinationId,
-        registrationId: registrationId,
-        databaseId: _store.databaseId,
-        predecessorDatabaseId: predecessorDatabaseId,
-        predecessorChannels: <SenderSuccessionChannel>[
-          for (final listed in restoredChannels)
-            SenderSuccessionChannel(
-              channel: listed.channel,
-              deliveryNumber: listed.record.deliveryNumber,
-              deliveryHash: listed.record.deliveryHash!,
+        for (final occurrence in ordered) {
+          EventStore._refuseOtherDataFormatMajorOfRecord(occurrence.record);
+          // Implements: EVS-DEV-security-findings/Q
+          // (the restore records every finding this record handling detects
+          //   under the detector role restore, not ingest's)
+          // Implements: EVS-DEV-security-findings/O
+          // (a record the restore cannot store as an event is kept in full in
+          //   an event_malformed finding, under role restore, and no event is
+          //   stored for it)
+          // Implements: EVS-DEV-chain-verification/K
+          // (a stored event whose previous_event_hash is the sealed hash of a
+          //   held event that its originating database did not author, or of
+          //   an event of that database at an origin position not below its
+          //   own, is stored as received with a predecessor_break finding)
+          // Implements: EVS-DEV-chain-verification/L
+          // (a stored event at an origin position a held event of the same
+          //   originating database already occupies, or whose predecessor a
+          //   held event of that database already carries, is stored as
+          //   received with a position_reused or fork_unrecorded finding)
+          // Implements: EVS-PRD-hash-chain-integrity/J
+          // (every finding the restore records for a failed integrity check
+          //   is recorded once per anomaly and detector, in the storing
+          //   transaction)
+          final outcome = await _store._ingestRecordInTxn(
+            txn,
+            occurrence.record,
+            parsed: null,
+            batchContext: null,
+            collector: collector,
+            delivery: ProvenanceDelivery(
+              senderDatabaseId: occurrence.channel.senderDatabaseId,
+              destinationId: occurrence.channel.destinationId,
+              registrationId: occurrence.channel.registrationId,
+              generation: occurrence.channel.generation,
+              deliveryNumber: occurrence.deliveryNumber,
             ),
-        ],
+            role: FindingRole.restore,
+          );
+          // Implements: EVS-DEV-sender-succession/B
+          // every event stored is checked for its originator and its last
+          //   (receiver) provenance entry; a record the store keeps only in
+          //   an event_malformed finding is not an event this database holds,
+          //   so it is not checked again here. This runs once, on the
+          //   occurrence [chosen] to store: another occurrence sharing its
+          //   event_id and event_hash is a copy of the same served bytes (the
+          //   receiver serves one stored record at each occurrence), so
+          //   checking only the stored occurrence checks every distinct
+          //   record this database was served under that hash. An occurrence
+          //   of the same event_id under a different hash is a distinct
+          //   record, checked below instead.
+          if (outcome.outcome != IngestOutcome.keptInFinding) {
+            await _verifyStoredEventChecksInTxn(
+              txn,
+              collector,
+              occurrence,
+              receiverDatabaseId: receiverIdOf[occurrence.channel]!,
+            );
+          }
+        }
+        // Implements: EVS-DEV-sender-succession/B
+        // Implements: EVS-DEV-sender-succession/C
+        // Implements: EVS-DEV-security-findings/G
+        // every occurrence of an event_id served under a hash other than the
+        //   one chosen for storage is, once the chosen occurrence is stored
+        //   (or kept in its own finding) above, put through the same ingest
+        //   checks in this transaction: it is recorded as an identity_mismatch
+        //   finding carrying it in full, never silently dropped. When the
+        //   chosen occurrence was itself kept only in a finding (so nothing
+        //   is held under the event_id yet), an extra occurrence can be the
+        //   one that is stored as the event, and gets the same originator and
+        //   receiver-entry checks as any other stored event.
+        for (final occurrence in extraOccurrences) {
+          EventStore._refuseOtherDataFormatMajorOfRecord(occurrence.record);
+          final outcome = await _store._ingestRecordInTxn(
+            txn,
+            occurrence.record,
+            parsed: null,
+            batchContext: null,
+            collector: collector,
+            delivery: ProvenanceDelivery(
+              senderDatabaseId: occurrence.channel.senderDatabaseId,
+              destinationId: occurrence.channel.destinationId,
+              registrationId: occurrence.channel.registrationId,
+              generation: occurrence.channel.generation,
+              deliveryNumber: occurrence.deliveryNumber,
+            ),
+            role: FindingRole.restore,
+          );
+          if (outcome.outcome != IngestOutcome.keptInFinding) {
+            await _verifyStoredEventChecksInTxn(
+              txn,
+              collector,
+              occurrence,
+              receiverDatabaseId: receiverIdOf[occurrence.channel]!,
+            );
+          }
+        }
+        if (DeliveryTestHooks.current?.failRestoreStore?.call() ?? false) {
+          throw const InjectedFailure('restore store');
+        }
+        final successionData = SenderSuccessionData(
+          id: destinationId,
+          registrationId: registrationId,
+          databaseId: _store.databaseId,
+          predecessorDatabaseId: predecessorDatabaseId,
+          predecessorChannels: <SenderSuccessionChannel>[
+            for (final listed in restoredChannels)
+              SenderSuccessionChannel(
+                channel: listed.channel,
+                deliveryNumber: listed.record.deliveryNumber,
+                deliveryHash: listed.record.deliveryHash!,
+              ),
+          ],
+        );
+        // Implements: EVS-DEV-view-convergence/E
+        // the succession event is a record the library appends in the
+        //   transaction of a restore, an always-stored event; a fold
+        //   failure into one copy is passed over and recorded, not thrown
+        //   to the restore's caller.
+        final event = await _store._appendReservedInTxn(
+          txn,
+          collector,
+          entryType: kDestinationSenderSucceededEntryType,
+          aggregateId: _store.source.identifier,
+          aggregateType: kDestinationAuditAggregateType,
+          eventType: kDestinationSenderSucceededEventType,
+          data: successionData.toJson(),
+          initiator: initiator,
+          mode: ApplyEventMode.alwaysStored,
+        );
+        // Never null: a reserved-entry-type append inside an open transaction
+        // always yields the appended event.
+        return event!;
+      });
+    } on IngestUndeclaredEventType catch (refusal) {
+      await _store._recordUndeclaredEventTypeFinding(
+        refusal,
+        FindingRole.restore,
       );
-      // Implements: EVS-DEV-view-convergence/E
-      // the succession event is a record the library appends in the
-      //   transaction of a restore, an always-stored event; a fold
-      //   failure into one copy is passed over and recorded, not thrown
-      //   to the restore's caller.
-      final event = await _store._appendReservedInTxn(
-        txn,
-        collector,
-        entryType: kDestinationSenderSucceededEntryType,
-        aggregateId: _store.source.identifier,
-        aggregateType: kDestinationAuditAggregateType,
-        eventType: kDestinationSenderSucceededEventType,
-        data: successionData.toJson(),
-        initiator: initiator,
-        mode: ApplyEventMode.alwaysStored,
-      );
-      // Never null: a reserved-entry-type append inside an open transaction
-      // always yields the appended event.
-      return event!;
-    });
+      rethrow;
+    }
   }
 
   Future<ChannelListing> _pullChannelListing(

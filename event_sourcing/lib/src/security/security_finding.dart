@@ -156,6 +156,13 @@ final class FindingKind {
   /// event.
   static const foldFailed = FindingKind._('fold_failed', isKnown: true);
 
+  /// An ingest entry point or the restore refuses an event of a registered
+  /// entry type whose event type that entry type does not declare.
+  static const undeclaredEventType = FindingKind._(
+    'undeclared_event_type',
+    isKnown: true,
+  );
+
   /// Every kind this build records, in the order the requirement lists
   /// them.
   // Implements: EVS-DEV-security-findings/H
@@ -179,6 +186,7 @@ final class FindingKind {
     parentInvalid,
     parentsNotStamped,
     foldFailed,
+    undeclaredEventType,
   ];
 
   /// The string recorded as the finding's `kind`.
@@ -285,6 +293,12 @@ const Set<String> _deliveryRecordKeys = <String>{
 //   checks and fields some kinds name, so every release of one data-format
 //   major spells the evidence of one anomaly alike.
 final Map<String, List<_Key>> _evidenceByKind = <String, List<_Key>>{
+  FindingKind.undeclaredEventType.wire: <_Key>[
+    _k('event_id'),
+    _k('entry_type'),
+    _k('event_type'),
+    _k('origin_database_id'),
+  ],
   FindingKind.forkUnrecorded.wire: <_Key>[
     _k('database_id'),
     _k('previous_event_hash'),

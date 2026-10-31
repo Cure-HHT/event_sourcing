@@ -9,10 +9,49 @@ import 'package:event_sourcing/src/actions/authorization_decision.dart'
     show DenyReason;
 import 'package:event_sourcing/src/actions/permission.dart';
 import 'package:event_sourcing/src/actions/scope_value.dart';
+import 'package:event_sourcing/src/causal_record.dart';
+import 'package:event_sourcing/src/entry_type_definition.dart';
 import 'package:event_sourcing/src/event_draft.dart';
 
 const String _aggregateType = 'action_attempt';
 const String _entryType = 'action_denial';
+
+/// The event types the dispatcher appends under the `action_denial` entry
+/// type, one per denial stage, each an eligible version: the declarations
+/// an application's definition of `action_denial` carries.
+const List<EventTypeDeclaration> kActionDenialDeclarations =
+    <EventTypeDeclaration>[
+      EventTypeDeclaration(
+        eventType: 'unknown_action',
+        kind: CausalKind.version,
+        eligible: true,
+      ),
+      EventTypeDeclaration(
+        eventType: 'parse_denied',
+        kind: CausalKind.version,
+        eligible: true,
+      ),
+      EventTypeDeclaration(
+        eventType: 'validation_denied',
+        kind: CausalKind.version,
+        eligible: true,
+      ),
+      EventTypeDeclaration(
+        eventType: 'authorization_denied',
+        kind: CausalKind.version,
+        eligible: true,
+      ),
+      EventTypeDeclaration(
+        eventType: 'idempotency_mismatch',
+        kind: CausalKind.version,
+        eligible: true,
+      ),
+      EventTypeDeclaration(
+        eventType: 'execution_failed',
+        kind: CausalKind.version,
+        eligible: true,
+      ),
+    ];
 
 /// Strip stack-trace lines, file paths, and absolute path hints from an
 /// error message before persisting it to the unified event log. Pure

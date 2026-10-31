@@ -578,6 +578,19 @@ final class ReceiverEndpoint {
         reason: IngestEntryTypeVersionUnpromotable.refusalReason,
         refusedEventId: e.eventId,
       );
+    } on IngestUndeclaredEventType catch (e) {
+      // Implements: EVS-DEV-version-compatibility/D
+      // a delivery carrying an event whose event type its registered entry
+      //   type does not declare is refused whole, naming the event; the
+      //   refusal is recorded once the delivery's transaction rolled back.
+      await _store._recordUndeclaredEventTypeFinding(e, FindingRole.ingest);
+      return _refusal(
+        channel,
+        readRecord,
+        RefusalKind.rejected,
+        reason: IngestUndeclaredEventType.refusalReason,
+        refusedEventId: e.eventId,
+      );
     }
   }
 

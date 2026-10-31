@@ -8,7 +8,8 @@
 //   EventStore.append stamps onto every appended event's entryTypeVersion
 //   field.
 // Implements: EVS-DEV-version-compatibility/A
-// an entry type's version is an EntryTypeVersion, a major and a minor.
+// an entry type's version is an EntryTypeVersion, a major and a minor; the
+//   definition's patch is not part of it.
 // Implements: EVS-DEV-append-stamps-registered-version/C
 // registeredVersion
 //   is owned by this definition and the EntryTypeRegistry; it does not
@@ -80,6 +81,7 @@ class EntryTypeDefinition {
     required this.id,
     required this.registeredVersion,
     required this.name,
+    this.patch = 0,
     this.declarations = const <EventTypeDeclaration>[],
   });
 
@@ -94,29 +96,53 @@ class EntryTypeDefinition {
   /// Display name used by operational tooling.
   final String name;
 
-  /// The kind and eligibility this entry type declares per event type. An
-  /// event type declared here at most once; one not declared here is an
-  /// eligible version ([declarationFor]).
+  /// The third part of this entry type's version, after the major and
+  /// minor of [registeredVersion]: raised by a change that makes no stored
+  /// event replay differently, such as adding an event type. The registry
+  /// audit records it; no event carries it, and no view's definition
+  /// depends on it.
+  final int patch;
+
+  /// The kind and eligibility this entry type declares for every event
+  /// type it carries, each event type at most once. The library appends no
+  /// event of an event type not declared here, and ingest refuses one.
   final List<EventTypeDeclaration> declarations;
 
-  /// The declaration for [eventType]: the one in [declarations], or an
-  /// eligible version when [declarations] holds none for it.
+  /// The declaration for [eventType] in [declarations], or null when this
+  /// entry type does not declare it.
   // Implements: EVS-DEV-causal-parents/C
   // an entry-type definition declares, per event type, its kind and its
-  //   eligibility; an event type it does not declare is an eligible version.
-  EventTypeDeclaration declarationFor(String eventType) {
+  //   eligibility.
+  EventTypeDeclaration? declarationFor(String eventType) {
     for (final declaration in declarations) {
       if (declaration.eventType == eventType) return declaration;
     }
-    return EventTypeDeclaration(
-      eventType: eventType,
-      kind: CausalKind.version,
-      eligible: true,
-    );
+    return null;
   }
 
   @override
   String toString() =>
       'EntryTypeDefinition('
-      'id: $id, registeredVersion: $registeredVersion, name: $name)';
+      'id: $id, registeredVersion: $registeredVersion, patch: $patch, '
+      'name: $name)';
+}
+
+/// Thrown by an append, before any write, of an event whose event type
+/// its entry type does not declare ([EntryTypeDefinition.declarations]):
+/// a programming error in the caller, or a definition that omits an event
+/// type the application appends.
+class UndeclaredEventTypeError extends Error {
+  UndeclaredEventTypeError({required this.entryType, required this.eventType});
+
+  /// The entry type of the refused append.
+  final String entryType;
+
+  /// The event type [entryType] does not declare.
+  final String eventType;
+
+  @override
+  String toString() =>
+      'UndeclaredEventTypeError: entry type "$entryType" does not declare '
+      'event type "$eventType"; add an EventTypeDeclaration for it to the '
+      "entry type's definition";
 }
