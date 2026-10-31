@@ -101,7 +101,7 @@ Set<String> _coveredEntryTypeIds(
       }
     }
   }
-  return ids..addAll(_reservedFoldedEntryTypeIds);
+  return ids..addAll(kEveryCopyFoldsEntryTypes);
 }
 
 // The application's registry may or may not hold a reserved entry type;
@@ -114,11 +114,6 @@ EntryTypeDefinition? _definitionOf(String id, EntryTypeRegistry entryTypes) {
   }
   return null;
 }
-
-const _reservedFoldedEntryTypeIds = {
-  kSecurityFindingEntryType,
-  kDestinationSenderSucceededEntryType,
-};
 
 List<String>? _sortedOrNull(Set<String>? values) =>
     values == null ? null : (values.toList()..sort());

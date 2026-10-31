@@ -14,7 +14,8 @@
 //   version 7 adds `view_rows.source_aggregate_id` with its partial index
 //   and raises the minimum to itself; version 8 adds
 //   `fifo_entries.resends_delivery_number`, rewrites the guard to hold it
-//   immutable, and raises the minimum to itself.
+//   immutable, and raises the minimum to itself; version 9 adds the index
+//   on the events' entry type and position and keeps the minimum.
 // Implements: EVS-DEV-chain-verification/A
 // the chain lookups on Postgres: columns of the events table holding the
 //   originating database, sealed hash and origin position each stored copy
@@ -42,7 +43,7 @@ import 'package:meta/meta.dart' show internal;
 /// and keeps [postgresMinCompatibleSchemaVersion]; a data-format major is
 /// provisioned only after every instance of the old major has stopped,
 /// which the incompatible-generation guard enforces.
-const int postgresSchemaVersion = 8;
+const int postgresSchemaVersion = 9;
 
 /// The minimum compatible schema version this build records when it
 /// provisions: the last migration step's `minCompatibleVersion`. A build
@@ -158,6 +159,13 @@ const List<PostgresMigrationStep> postgresMigrations = <PostgresMigrationStep>[
       _fifoEntriesGuardFunction,
     ],
   ),
+  // An index only adds: a build before this step reads and writes the
+  // events table as it did, so the step keeps the minimum.
+  PostgresMigrationStep(
+    toVersion: 9,
+    minCompatibleVersion: 8,
+    ddl: <String>[_eventsEntryTypeSeqIdx],
+  ),
 ];
 
 /// The tables the library creates. A schema that holds any of them but
@@ -226,6 +234,14 @@ CREATE INDEX IF NOT EXISTS events_client_ts_idx
 const String _eventsTypeSeqIdx = '''
 CREATE INDEX IF NOT EXISTS events_type_seq_idx
   ON events (event_type, sequence_number)
+''';
+
+// The candidate read of a catch-up or a currency scan filters the events
+// past a copy's watermark by entry type, as the event-type index above
+// serves its event-type filter.
+const String _eventsEntryTypeSeqIdx = '''
+CREATE INDEX IF NOT EXISTS events_entry_type_seq_idx
+  ON events (entry_type, sequence_number)
 ''';
 
 // --- Chain lookups --------------------------------------------------------
