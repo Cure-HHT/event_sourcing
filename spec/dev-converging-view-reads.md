@@ -57,7 +57,8 @@ L. The library SHALL let a caller read the progress of the instance's copy of ea
 
 ## Changelog
 
-- 2026-10-31 | - | - | Michael Lewis (<michael@anspar.org>) | Amend J: the state a caller reads is whether the instance's last catch-up transaction on the copy ended at the log's head. Split the copy's progress out of J into L, with progress and "at the log's head" defined in Terms. Rationale: why the state is the catch-up's own record
+- 2026-10-30 | bddc55dc | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-10-30 | - | - | Michael Lewis (<michael@anspar.org>) | Amend J: the state a caller reads is whether the instance's last catch-up transaction on the copy ended at the log's head. Split the copy's progress out of J into L, with progress and "at the log's head" defined in Terms. Rationale: why the state is the catch-up's own record
 - 2026-10-02 | 0bf00f14 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-25 | e95c070e | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-26 | - | - | Michael Lewis (<michael@anspar.org>) | Terms: a copy is current when no event past its watermark is one its definition folds, so another build's events outside the definition never make a view converging. Retire F (periodic redelivery of settled rows) and K (await with a deadline; callers read the state with J). Rationale: the cost of another build's appends is one short catch-up, symmetric between the builds. No code or test references these assertions
@@ -72,4 +73,4 @@ L. The library SHALL let a caller read the progress of the instance's copy of ea
 - 2026-09-25 | 316a834c | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-24 | - | - | Michael Lewis (<michael@anspar.org>) | Add A-N: a converging view serves only settled rows and reports its state with every read; the library's own decisions refuse or wait, with a deadline, while a view they read converges
 
-*End* *Reads of a converging view* | **Hash**: 0bf00f14
+*End* *Reads of a converging view* | **Hash**: bddc55dc
