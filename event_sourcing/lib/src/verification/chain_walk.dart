@@ -213,7 +213,8 @@ Future<List<String>> recordedAggregatesInTxn(
 /// stored at a higher local sequence number is neither walked nor counted
 /// as held.
 ///
-/// Throws [ChainWalkInterrupted] when a read fails after the walk began.
+/// Throws [ChainWalkInterrupted] when any failure interrupts the walk after
+/// it began.
 // Implements: EVS-DEV-chain-verification/S
 // the upper bound of the range is fixed when the walk starts; nothing
 //   stored after it is walked or read as held.
