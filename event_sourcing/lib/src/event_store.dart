@@ -4287,6 +4287,9 @@ final class _StorageReader implements StorageReader {
       timer.cancel();
     }
     final pending = _store._viewsNotCaughtUp();
+    // The signal can complete between the deadline firing and this line:
+    // every view is there, so the wait succeeded.
+    if (pending.isEmpty) return;
     final progress = await viewProgress();
     throw ViewConvergenceTimeout([
       for (final status in progress)
