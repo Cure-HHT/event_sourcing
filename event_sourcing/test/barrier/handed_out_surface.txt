@@ -185,6 +185,7 @@ StorageReader.successionLineageOf: Future<SuccessionLineage> successionLineageOf
 StorageReader.transaction: Future<T> transaction<T>(Future<T> Function(Transaction) body)
 StorageReader.verifyChains: Future<ChainVerificationVerdict> verifyChains({int? from, int? to})
 StorageReader.viewProgress: Future<List<ViewCopyStatus>> viewProgress()
+StorageReader.viewsCaughtUp: Future<void> viewsCaughtUp({required Duration timeout})
 StorageReader.wedgedFifos: Future<List<WedgedFifoSummary>> wedgedFifos()
 StoredEvent.aggregateId: field String aggregateId
 StoredEvent.aggregateType: field String aggregateType
@@ -285,4 +286,5 @@ _StorageReader.successionLineageOf: Future<SuccessionLineage> successionLineageO
 _StorageReader.transaction: Future<T> transaction<T>(Future<T> Function(Transaction) body)
 _StorageReader.verifyChains: Future<ChainVerificationVerdict> verifyChains({int? from, int? to})
 _StorageReader.viewProgress: Future<List<ViewCopyStatus>> viewProgress()
+_StorageReader.viewsCaughtUp: Future<void> viewsCaughtUp({required Duration timeout})
 _StorageReader.wedgedFifos: Future<List<WedgedFifoSummary>> wedgedFifos()

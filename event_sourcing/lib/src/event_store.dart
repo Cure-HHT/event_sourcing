@@ -406,6 +406,14 @@ class EventStore {
   /// (EVS-DEV-converging-view-reads/J).
   bool _catchUpAtHead(String copyId) => _catchUp.atHead(copyId);
 
+  /// Completes once every registered view's current copy has had a
+  /// catch-up transaction commit at the log's head since this store
+  /// opened; completes with a [StateError] when the store closes first.
+  Future<void> get _catchUpCaughtUp => _catchUp.caughtUp;
+
+  /// The registered views [_catchUpCaughtUp] still waits for.
+  Set<String> _viewsNotCaughtUp() => _catchUp.viewsNotCaughtUp();
+
   /// The security contexts stored beside this store's events, for reading:
   /// an object of its own that declares no writing member. The event
   /// store's own operations (append, redaction, retention) write them.
@@ -4257,6 +4265,34 @@ final class _StorageReader implements StorageReader {
     }
     return statuses;
   });
+
+  // Implements: EVS-DEV-converging-view-reads/J+L
+  // waits on the catch-up driver's own record of the copies it has left at
+  //   the log's head, and on the deadline names each view not yet there
+  //   with its copy's progress, as viewProgress reports it.
+  @override
+  Future<void> viewsCaughtUp({required Duration timeout}) async {
+    final caughtUp = _store._catchUpCaughtUp;
+    final deadline = Completer<bool>();
+    final timer = libraryTimer(timeout, () {
+      if (!deadline.isCompleted) deadline.complete(false);
+    });
+    try {
+      final reached = await Future.any<bool>([
+        caughtUp.then((_) => true),
+        deadline.future,
+      ]);
+      if (reached) return;
+    } finally {
+      timer.cancel();
+    }
+    final pending = _store._viewsNotCaughtUp();
+    final progress = await viewProgress();
+    throw ViewConvergenceTimeout([
+      for (final status in progress)
+        if (pending.contains(status.viewName)) status,
+    ]);
+  }
 
   @override
   Future<FifoEntry?> readFifoHead(String destinationId) =>

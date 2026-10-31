@@ -260,6 +260,17 @@ class ViewCatchUpDriver {
   /// since [start], so a replacement copy starts absent.
   final Map<String, bool> _atHeadByCopyId = {};
 
+  /// The copy ids an attempt of this driver has committed at the log's head
+  /// at least once since [start]: unlike [_atHeadByCopyId], an entry stays
+  /// when a later attempt leaves the copy behind again.
+  final Set<String> _reachedHeadCopyIds = {};
+
+  /// Completes once every registered view's current copy is in
+  /// [_reachedHeadCopyIds], or with a [StateError] from [stop] first.
+  /// Ignored at construction so a [stop] nobody awaited reports no
+  /// unhandled error; a later await still receives it.
+  final Completer<void> _caughtUp = Completer<void>()..future.ignore();
+
   /// Per copy id, the log position through which the copy folds event by
   /// event, each fold in a savepoint of its own, rather than through a
   /// buffer: set when a batched flush met a rejected row write, dropped
@@ -289,6 +300,30 @@ class ViewCatchUpDriver {
   /// work it has done.
   bool atHead(String copyId) => _atHeadByCopyId[copyId] ?? false;
 
+  /// Completes once every view this driver keeps current has had a
+  /// catch-up transaction on its current copy -- the copy the instance
+  /// registers for the view now, not one a rebuild has since replaced --
+  /// commit at the log's head since [start]; then stays completed. Completes
+  /// with a [StateError] when [stop] is called first.
+  // Implements: EVS-DEV-converging-view-reads/J
+  // the signal is the driver's own record of the copies it has left at the
+  //   log's head, held across attempts once set.
+  Future<void> get caughtUp => _caughtUp.future;
+
+  /// The names of the views whose current copy no attempt of this driver
+  /// has committed at the log's head since [start]: the views [caughtUp]
+  /// still waits for.
+  Set<String> viewsNotCaughtUp() => {
+    for (final target in _targets)
+      if (!_reachedHeadCopyIds.contains(_viewCopyIds[target.viewName]))
+        target.viewName,
+  };
+
+  void _completeCaughtUpIfReached() {
+    if (_caughtUp.isCompleted) return;
+    if (viewsNotCaughtUp().isEmpty) _caughtUp.complete();
+  }
+
   /// Schedules the driver's loop to begin on the event loop's task queue,
   /// after every microtask already pending -- in particular, after the
   /// continuation of the `await` that called `EventStore.open` -- has run.
@@ -307,6 +342,14 @@ class ViewCatchUpDriver {
   // Implements: EVS-DEV-view-convergence/I
   Future<void> stop() async {
     _stopping = true;
+    if (!_caughtUp.isCompleted) {
+      _caughtUp.completeError(
+        StateError(
+          'EventStore closed before every registered view reached the '
+          "log's head.",
+        ),
+      );
+    }
     _cancelWait?.call();
     final txn = _currentTransaction;
     if (txn != null) {
@@ -349,9 +392,12 @@ class ViewCatchUpDriver {
         continue;
       }
       var progressed = false;
+      // A store registering no view has nothing to wait for.
+      _completeCaughtUpIfReached();
       for (final target in _targets) {
         if (_stopping) return;
         final outcome = await _attemptView(target, copies);
+        _completeCaughtUpIfReached();
         // Implements: EVS-DEV-view-convergence/Q
         // a failure other than a fold failure backs off; it is not
         //   progress, so it must not skip the idle wait below -- a copy
@@ -416,6 +462,7 @@ class ViewCatchUpDriver {
     final liveCopyIds = {for (final copy in copies) copy.copyId};
     _perEventThrough.removeWhere((copyId, _) => !liveCopyIds.contains(copyId));
     _atHeadByCopyId.removeWhere((copyId, _) => !liveCopyIds.contains(copyId));
+    _reachedHeadCopyIds.removeWhere((copyId) => !liveCopyIds.contains(copyId));
     if (_progressByCopyId.isEmpty) return;
     final unmarkedFingerprints = {
       for (final copy in copies)
@@ -673,6 +720,7 @@ class ViewCatchUpDriver {
         if (staleKey != result.copyId) _progressByCopyId.remove(staleKey);
       }
       _atHeadByCopyId[result.copyId] = result.reachedTip;
+      if (result.reachedTip) _reachedHeadCopyIds.add(result.copyId);
       if (result.reachedTip) onCaughtUp?.call(target.viewName);
       return result.steps == 0
           ? _Outcome.idle
