@@ -21,6 +21,8 @@ import 'package:event_sourcing/src/event_store.dart'
 import 'package:event_sourcing/src/projections/interpreter/projection_interpreter.dart';
 import 'package:test/test.dart';
 
+import 'declarations.dart';
+
 const _kNote = 'equivalence_note';
 const _kItem = 'equivalence_item';
 const _kNoteView = 'equivalence_notes';
@@ -62,6 +64,10 @@ EntryTypeRegistry _entryTypes(EntryTypeVersion noteVersion) {
         id: _kNote,
         registeredVersion: noteVersion,
         name: _kNote,
+        declarations: <EventTypeDeclaration>[
+          const EligibleVersion('deleted'),
+          const EligibleVersion('edited'),
+        ],
       ),
     )
     ..register(
@@ -69,6 +75,10 @@ EntryTypeRegistry _entryTypes(EntryTypeVersion noteVersion) {
         id: _kItem,
         registeredVersion: EntryTypeVersion(1, 0),
         name: _kItem,
+        declarations: <EventTypeDeclaration>[
+          EligibleVersion('added'),
+          EligibleVersion('removed'),
+        ],
       ),
     );
 }

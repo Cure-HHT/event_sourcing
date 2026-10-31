@@ -67,6 +67,9 @@ class EventStoreBundle {
 /// finished: the registry audit and the destination registration run after
 /// it and can still fail, so a readiness endpoint turns ready when this
 /// function returns.
+///
+/// [recordUndeclaredIngestFindings] is passed to [EventStore.open], which
+/// documents it.
 // Implements: EVS-DEV-event-store-open/G
 // bootstrapEventStore passes its boot-progress observer to EventStore.open.
 // Implements: EVS-PRD-storage-barrier/I
@@ -80,6 +83,7 @@ Future<EventStoreBundle> bootstrapEventStore({
   required List<Destination> destinations,
   ProjectionRegistry? projections,
   void Function(BootProgress progress)? onBootProgress,
+  bool recordUndeclaredIngestFindings = true,
 }) async {
   final typeRegistry = EntryTypeRegistry();
   for (final definition in entryTypes) {
@@ -92,6 +96,7 @@ Future<EventStoreBundle> bootstrapEventStore({
     source: source,
     projections: projections,
     onBootProgress: onBootProgress,
+    recordUndeclaredIngestFindings: recordUndeclaredIngestFindings,
   );
   try {
     return await _completeBootstrap(
@@ -117,24 +122,28 @@ Future<EventStoreBundle> _completeBootstrap(
   final destinationRegistry = DestinationRegistry(eventStore: eventStore);
   const bootstrapInitiator = AutomationInitiator(service: 'lib-bootstrap');
 
-  // Emit an event recording the registry's full id->registered_version map
-  // and every entry type's per-event-type declarations, after EventStore
-  // construction and before destination registration. dedupeByContent:
-  // same-state reboots no-op; a schema change (an added entry type, a raised
-  // major or minor, or a changed declaration) emits a new event. Each install uses
-  // source.identifier as its aggregate, so there is a single per-installation
-  // hash-chained system aggregate spanning bootstrap, destination registry,
-  // and retention/redaction audits. No delivery cycle can hold the store's
+  // Emit an event recording the registry's full id->registered_version map,
+  // every entry type's patch and its per-event-type declarations, after
+  // EventStore construction and before destination registration.
+  // dedupeByContent: same-state reboots no-op; a schema change (an added
+  // entry type, a raised major, minor or patch, or a changed declaration)
+  // emits a new event. Each install uses source.identifier as its
+  // aggregate, so there is a single per-installation hash-chained system
+  // aggregate spanning bootstrap, destination registry, and
+  // retention/redaction audits. No delivery cycle can hold the store's
   // trigger slot yet (its registry is built here), so the audit wakes none.
   // Implements: EVS-DEV-version-compatibility/K
   // the registry audit records every registered entry type's major and minor
   //   as `M.m`, and the kind and eligibility it declares for each event
-  //   type; a changed set, major, minor or declaration changes the content,
+  //   type, and its patch under `patches`; a changed set, major, minor,
+  //   patch or declaration changes the content,
   //   so a new audit is appended, and an unchanged registry dedupes to none.
   final registryStateMap = <String, String>{};
   final declarationsMap = <String, Object?>{};
+  final patchesMap = <String, int>{};
   for (final definition in typeRegistry.all()) {
     registryStateMap[definition.id] = definition.registeredVersion.toString();
+    patchesMap[definition.id] = definition.patch;
     declarationsMap[definition.id] = <String, Object?>{
       for (final declaration in definition.declarations)
         declaration.eventType: declaration.toJson(),
@@ -153,6 +162,7 @@ Future<EventStoreBundle> _completeBootstrap(
       data: <String, Object?>{
         'registry': registryStateMap,
         'declarations': declarationsMap,
+        'patches': patchesMap,
       },
       initiator: bootstrapInitiator,
       dedupeByContent: true,

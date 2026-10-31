@@ -13,6 +13,7 @@ import 'package:event_sourcing/postgres.dart';
 import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:test/test.dart';
 
+import '../../test_support/declarations.dart';
 import 'test_postgres_url.dart';
 
 const _kType = 'redelivery_note';
@@ -37,6 +38,7 @@ Future<EventStore> _openStore(PostgresBackend backend) {
         id: _kType,
         registeredVersion: EntryTypeVersion(1, 0),
         name: _kType,
+        declarations: <EventTypeDeclaration>[EligibleVersion('finalized')],
       ),
     );
   final registry = ProjectionRegistry()..register(_kSpec);

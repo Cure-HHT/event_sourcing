@@ -3,7 +3,6 @@ import 'package:event_sourcing_demo/app_state.dart';
 import 'package:event_sourcing_demo/demo_destination.dart';
 import 'package:event_sourcing_demo/demo_knobs.dart';
 import 'package:event_sourcing_demo/demo_sync_policy.dart';
-import 'package:event_sourcing_demo/demo_types.dart';
 import 'package:event_sourcing_demo/downstream_bridge.dart';
 import 'package:event_sourcing_demo/native_demo_destination.dart';
 import 'package:event_sourcing_demo/storage_watch.dart';
@@ -14,6 +13,8 @@ import 'package:event_sourcing_demo/widgets/wedges_panel.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart' hide Finder;
+
+import 'test_support/test_entry_types.dart';
 
 class _Pane {
   _Pane(this.backend, this.datastore, this.state);
@@ -50,7 +51,7 @@ Future<_Pane> _mkPane(
       SembastSecurityContextStore(backend: backend),
     ),
     source: Source(hopId: hop, identifier: identifier, softwareVersion: 'test'),
-    entryTypes: allDemoEntryTypes,
+    entryTypes: testDemoEntryTypes,
     destinations: destinations,
   );
   for (final d in destinations) {

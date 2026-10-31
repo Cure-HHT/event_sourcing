@@ -212,6 +212,9 @@ Future<List<String>> recordedAggregatesInTxn(
 /// Every read is bounded by the upper bound it fixes first: an event
 /// stored at a higher local sequence number is neither walked nor counted
 /// as held.
+///
+/// Throws [ChainWalkInterrupted] when any failure interrupts the walk after
+/// it began.
 // Implements: EVS-DEV-chain-verification/S
 // the upper bound of the range is fixed when the walk starts; nothing
 //   stored after it is walked or read as held.
@@ -230,54 +233,74 @@ Future<ChainVerificationVerdict> walkChains(
   if (pageSize < 1) {
     throw ArgumentError.value(pageSize, 'pageSize', 'must be at least 1');
   }
-  final holder = await source.databaseId();
-  final highest = await source.highestSequence();
-  // Implements: EVS-DEV-chain-verification/J
-  // an omitted lower bound, or 0, is the database's first stored event.
-  final first = (from == null || from == 0) ? 1 : from;
-  final last = (to == null || to > highest) ? highest : to;
-  final walk = _Walk(source, holder: holder, last: last);
+  final findings = <ChainVerificationFinding>[];
+  int? verifiedThrough;
+  // Implements: EVS-DEV-chain-verification/U+W
+  // a failure after the walk began fails it naming the highest local
+  //   sequence number whose checks completed and carrying the findings
+  //   reported until then.
+  try {
+    final holder = await source.databaseId();
+    final highest = await source.highestSequence();
+    // Implements: EVS-DEV-chain-verification/J
+    // an omitted lower bound, or 0, is the database's first stored event.
+    final first = (from == null || from == 0) ? 1 : from;
+    final last = (to == null || to > highest) ? highest : to;
+    final walk = _Walk(source, holder: holder, last: last, findings: findings);
 
-  // Implements: EVS-DEV-chain-verification/D
-  // the event before the range is read from outside it, so the first event
-  //   of the range is checked like every other.
-  var previous = first > 1 && first <= last ? await walk.at(first - 1) : null;
-  var next = first;
-  var cursor = first - 1;
-  while (cursor < last) {
-    final page = await source.page(after: cursor, limit: pageSize);
-    final inRange = <StoredEvent>[
-      for (final e in page)
-        if (e.sequenceNumber <= last) e,
-    ];
-    for (final event in inRange) {
-      walk.missing(next, event.sequenceNumber);
-      await walk.check(
-        event,
-        preceding: previous?.sequenceNumber == event.sequenceNumber - 1
-            ? previous
-            : null,
-      );
-      previous = event;
-      next = event.sequenceNumber + 1;
-      cursor = event.sequenceNumber;
+    // Implements: EVS-DEV-chain-verification/D
+    // the event before the range is read from outside it, so the first event
+    //   of the range is checked like every other.
+    var previous = first > 1 && first <= last ? await walk.at(first - 1) : null;
+    var next = first;
+    var cursor = first - 1;
+    while (cursor < last) {
+      final page = await source.page(after: cursor, limit: pageSize);
+      final inRange = <StoredEvent>[
+        for (final e in page)
+          if (e.sequenceNumber <= last) e,
+      ];
+      for (final event in inRange) {
+        walk.missing(next, event.sequenceNumber);
+        await walk.check(
+          event,
+          preceding: previous?.sequenceNumber == event.sequenceNumber - 1
+              ? previous
+              : null,
+        );
+        verifiedThrough = event.sequenceNumber;
+        previous = event;
+        next = event.sequenceNumber + 1;
+        cursor = event.sequenceNumber;
+      }
+      if (inRange.isNotEmpty && afterPage != null) await afterPage();
+      if (inRange.length < page.length || page.length < pageSize) break;
     }
-    if (inRange.isNotEmpty && afterPage != null) await afterPage();
-    if (inRange.length < page.length || page.length < pageSize) break;
+    walk.missing(next, last + 1);
+    return ChainVerificationVerdict(
+      from: first,
+      to: last,
+      findings: List<ChainVerificationFinding>.unmodifiable(findings),
+      unresolvedPredecessors: walk.unresolvedPredecessors,
+    );
+  } on Object catch (cause) {
+    throw ChainWalkInterrupted(
+      verifiedThrough: verifiedThrough,
+      cause: cause,
+      findings: List<ChainVerificationFinding>.unmodifiable(findings),
+    );
   }
-  walk.missing(next, last + 1);
-  return ChainVerificationVerdict(
-    from: first,
-    to: last,
-    findings: List<ChainVerificationFinding>.unmodifiable(walk.findings),
-    unresolvedPredecessors: walk.unresolvedPredecessors,
-  );
 }
 
 /// The state of one walk: the findings so far, the forks and reused
 /// positions already reported, and the aggregates' events already read.
 final class _Walk {
-  _Walk(this._source, {required this.holder, required this.last});
+  _Walk(
+    this._source, {
+    required this.holder,
+    required this.last,
+    required this.findings,
+  });
 
   final ChainWalkSource _source;
 
@@ -287,7 +310,8 @@ final class _Walk {
   /// The upper bound of the walk.
   final int last;
 
-  final List<ChainVerificationFinding> findings = <ChainVerificationFinding>[];
+  /// The findings so far, shared with the walk's caller.
+  final List<ChainVerificationFinding> findings;
   int unresolvedPredecessors = 0;
   final Set<String> _reportedForks = <String>{};
   final Set<String> _reportedPositions = <String>{};

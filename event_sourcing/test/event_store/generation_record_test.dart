@@ -14,6 +14,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:sembast/sembast_io.dart' show databaseFactoryIo;
 
+import '../test_support/declarations.dart';
+
 const _kX = 'gen_x';
 
 GenerationDescriptor _descriptor(
@@ -37,7 +39,12 @@ Future<EventStore> _open(
     registry.register(definition);
   }
   registry.register(
-    EntryTypeDefinition(id: _kX, registeredVersion: x, name: _kX),
+    EntryTypeDefinition(
+      id: _kX,
+      registeredVersion: x,
+      name: _kX,
+      declarations: <EventTypeDeclaration>[const EligibleVersion('finalized')],
+    ),
   );
   try {
     return await EventStore.open(
@@ -307,6 +314,7 @@ void main() {
             id: _kX,
             registeredVersion: EntryTypeVersion(1, 0),
             name: _kX,
+            declarations: <EventTypeDeclaration>[EligibleVersion('finalized')],
           ),
         );
       await expectLater(

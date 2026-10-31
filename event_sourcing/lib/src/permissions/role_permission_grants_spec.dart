@@ -30,19 +30,45 @@
 // is 'role_permission_grant', so unrelated events that happen to carry
 // eventType 'permission_granted' are not processed.
 
+import 'package:event_sourcing/src/causal_record.dart';
 import 'package:event_sourcing/src/destinations/subscription_filter.dart';
+import 'package:event_sourcing/src/entry_type_definition.dart';
 import 'package:event_sourcing/src/projections/primitives/row_data.dart';
 import 'package:event_sourcing/src/projections/primitives/row_key.dart';
 import 'package:event_sourcing/src/projections/projection_spec.dart';
 
+/// The event type of a role-permission grant.
+const String kPermissionGrantedEventType = 'permission_granted';
+
+/// The event type of a role-permission revocation.
+const String kPermissionRevokedEventType = 'permission_revoked';
+
+/// The event types of the `role_permission_grant` entry type, which the
+/// permission seed applier appends and [rolePermissionGrantsSpec] folds,
+/// each an eligible version: the declarations an application's definition
+/// of `role_permission_grant` carries.
+const List<EventTypeDeclaration> kRolePermissionGrantDeclarations =
+    <EventTypeDeclaration>[
+      EventTypeDeclaration(
+        eventType: kPermissionGrantedEventType,
+        kind: CausalKind.version,
+        eligible: true,
+      ),
+      EventTypeDeclaration(
+        eventType: kPermissionRevokedEventType,
+        kind: CausalKind.version,
+        eligible: true,
+      ),
+    ];
+
 const rolePermissionGrantsSpec = TableProjectionSpec(
   viewName: 'role_permission_grants',
   interest: SubscriptionFilter(
-    eventTypes: {'permission_granted', 'permission_revoked'},
+    eventTypes: {kPermissionGrantedEventType, kPermissionRevokedEventType},
     aggregateTypes: {'role_permission_grant'},
   ),
-  insertEventTypes: {'permission_granted'},
-  removeEventTypes: {'permission_revoked'},
+  insertEventTypes: {kPermissionGrantedEventType},
+  removeEventTypes: {kPermissionRevokedEventType},
   rowKey: AggregateIdKey(),
   rowData: WholePayload(),
 );

@@ -2,6 +2,8 @@ import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
+import 'test_support/declarations.dart';
+
 class _Fixture {
   _Fixture({
     required this.eventStore,
@@ -82,6 +84,7 @@ EntryTypeDefinition _simpleDef(String id) => EntryTypeDefinition(
   id: id,
   registeredVersion: const EntryTypeVersion(1, 0),
   name: id,
+  declarations: <EventTypeDeclaration>[const EligibleVersion('finalized')],
 );
 
 void main() {
@@ -146,6 +149,7 @@ void main() {
             id: 'non_materialized',
             registeredVersion: EntryTypeVersion(1, 0),
             name: 'Non-Mat',
+            declarations: <EventTypeDeclaration>[EligibleVersion('finalized')],
           ),
         ],
         registerProjection: false,

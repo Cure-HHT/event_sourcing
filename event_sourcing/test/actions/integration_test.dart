@@ -14,6 +14,7 @@
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../test_support/declarations.dart';
 import 'fixtures/test_actions.dart' show AlwaysAllowPolicy;
 import 'test_support/event_store_helper.dart' show bootstrapTestEventStore;
 
@@ -115,6 +116,7 @@ Future<EventStore> _bootstrapStore() => bootstrapTestEventStore(
       id: 'user_invitation',
       registeredVersion: EntryTypeVersion(1, 0),
       name: 'User invitation',
+      declarations: <EventTypeDeclaration>[EligibleVersion('invited')],
     ),
   ],
 );

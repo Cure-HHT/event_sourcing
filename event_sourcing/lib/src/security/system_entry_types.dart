@@ -269,6 +269,18 @@ const Set<String> kChannelWideEntryTypes = <String>{
   kDestinationSenderSucceededEntryType,
 };
 
+/// The entry types whose events every view copy folds whatever the view's
+/// interest, for its outstanding-finding marks: the security finding and
+/// the sender-succession event (EVS-DEV-view-convergence Terms, "folds").
+/// It holds the same entry types as [kChannelWideEntryTypes] by design but
+/// means view folding, not destination enqueueing: neither changes without
+/// checking the other.
+@internal
+const Set<String> kEveryCopyFoldsEntryTypes = <String>{
+  kSecurityFindingEntryType,
+  kDestinationSenderSucceededEntryType,
+};
+
 /// Whether [entryType] is one the fill and every replay enqueue on every
 /// natively serializing destination registration whatever that
 /// destination's filter names ([kChannelWideEntryTypes]).

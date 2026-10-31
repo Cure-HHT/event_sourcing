@@ -37,7 +37,11 @@ import 'package:event_sourcing/src/projections/interpreter/view_row_access.dart'
 import 'package:event_sourcing/src/projections/projection_registry.dart';
 import 'package:event_sourcing/src/projections/projection_spec.dart';
 import 'package:event_sourcing/src/projections/view_read.dart'
-    show isMarkRefreshingEvent, isSecurityFindingEvent;
+    show
+        candidateFilterInTxn,
+        forEachCandidateInTxn,
+        isMarkRefreshingEvent,
+        isSecurityFindingEvent;
 import 'package:event_sourcing/src/promoters/promoter_executor.dart';
 import 'package:event_sourcing/src/promoters/promoter_registry.dart';
 import 'package:event_sourcing/src/security/security_finding.dart'
@@ -453,7 +457,8 @@ class ProjectionInterpreter {
   /// event, strictly before [beforeSequence] and strictly after
   /// [watermark], that [spec]'s definition folds -- its interest matches,
   /// or the event is one [isMarkRefreshingEvent] names (EVS-DEV-view-
-  /// convergence Terms).
+  /// convergence Terms). Reads only the candidate events of that range
+  /// ([candidateFilterInTxn]).
   static Future<bool> _copyIsCurrent({
     required Transaction txn,
     required StorageBackend backend,
@@ -461,26 +466,24 @@ class ProjectionInterpreter {
     required int watermark,
     required int beforeSequence,
   }) async {
-    var after = watermark;
-    const chunkSize = 500;
-    while (after < beforeSequence - 1) {
-      final chunk = await backend.findAllEventsInTxn(
-        txn,
-        afterSequence: after,
-        limit: chunkSize,
-      );
-      if (chunk.isEmpty) return true;
-      for (final e in chunk) {
-        if (e.sequenceNumber >= beforeSequence) return true;
+    final through = beforeSequence - 1;
+    if (watermark >= through) return true;
+    var current = true;
+    await forEachCandidateInTxn(
+      txn,
+      backend,
+      after: watermark,
+      through: through,
+      filter: await candidateFilterInTxn(txn, backend, spec),
+      visit: (e) async {
         if (spec.interest.matches(e) ||
             await isMarkRefreshingEvent(txn, backend, e)) {
-          return false;
+          current = false;
         }
-      }
-      after = chunk.last.sequenceNumber;
-      if (chunk.length < chunkSize) return true;
-    }
-    return true;
+        return current;
+      },
+    );
+    return current;
   }
 
   /// Folds [event] into the view of [spec] under [version], the version

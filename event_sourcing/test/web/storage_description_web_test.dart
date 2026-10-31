@@ -8,10 +8,13 @@ import 'package:idb_shim/idb_client_native.dart' show idbFactoryWeb;
 import 'package:sembast_web/src/web_interop.dart'
     show DatabaseFactoryWeb, JdbFactoryWeb;
 
+import '../test_support/declarations.dart';
+
 const _noteType = EntryTypeDefinition(
   id: 'description_note',
   registeredVersion: EntryTypeVersion(1, 0),
   name: 'Description note',
+  declarations: <EventTypeDeclaration>[EligibleVersion('written')],
 );
 
 Future<EventStore> _open(SembastStorage storage) => EventStore.open(

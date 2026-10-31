@@ -40,10 +40,10 @@
 | EVS-DEV-append-stamps-registered-version   | Substrate stamps entryTypeVersion on append                  | dev-append-stamps-registered-version.md | b0a57e30 |
 | EVS-DEV-authz-watcher                      | Mid-session permission-change signalling                     | reaction-remote.md                      | 533309a9 |
 | EVS-DEV-bootstrap-action-permissions       | YAML-seeded role/permission bootstrap                        | prd-permissions-as-events.md            | c76af2cd |
-| EVS-DEV-causal-parents                     | Causal parents within an aggregate                           | causal-history.md                       | e2eee9c4 |
-| EVS-DEV-chain-verification                 | Storage and origin chain verification                        | causal-history.md                       | 201d5630 |
+| EVS-DEV-causal-parents                     | Causal parents within an aggregate                           | causal-history.md                       | 44d4dd4c |
+| EVS-DEV-chain-verification                 | Storage and origin chain verification                        | causal-history.md                       | 09fb6e24 |
 | EVS-DEV-containment-resolver               | Containment-chain walk via TableProjections                  | scoped-permissions.md                   | aa0359a8 |
-| EVS-DEV-converging-view-reads              | Reads of a converging view                                   | dev-converging-view-reads.md            | bddc55dc |
+| EVS-DEV-converging-view-reads              | Reads of a converging view                                   | dev-converging-view-reads.md            | faec8b08 |
 | EVS-DEV-delivery-channel                   | Delivery channel sender mechanics                            | delivery-continuity.md                  | 29357550 |
 | EVS-DEV-delivery-receiver                  | Delivery channel receiver mechanics                          | delivery-continuity.md                  | d37b43bb |
 | EVS-DEV-delivery-resume                    | Channel resume and new generation                            | delivery-continuity.md                  | ae74fe21 |
@@ -65,10 +65,10 @@
 | EVS-DEV-scope-unresolvable-denial          | Dispatcher denial when Action.scopeFor is unusable           | scoped-permissions.md                   | 2cfc7054 |
 | EVS-DEV-scope-value-json                   | Sealed ScopeValue JSON contract                              | scoped-permissions.md                   | 35e57fd0 |
 | EVS-DEV-scoped-permissions-match-algorithm | TableBackedAuthorizationPolicy match semantics               | scoped-permissions.md                   | f186081d |
-| EVS-DEV-security-findings                  | Security findings                                            | dev-security-findings.md                | 43178ed6 |
+| EVS-DEV-security-findings                  | Security findings                                            | dev-security-findings.md                | 58a4280f |
 | EVS-DEV-sender-succession                  | Sender succession                                            | delivery-continuity.md                  | c24246dc |
 | EVS-DEV-severe-log-default                 | Severe log records reach standard error                      | dev-severe-log-default.md               | 2019159d |
 | EVS-DEV-storage-capability                 | The storage capability the library keeps                     | dev-storage-capability.md               | 4cba8786 |
 | EVS-DEV-transactional-authorize-execute    | Dispatch tx encompasses authorize + execute + persist        | scoped-permissions.md                   | 5e07a961 |
-| EVS-DEV-version-compatibility              | Entry-type and data-format versions                          | dev-version-compatibility.md            | 53f98178 |
-| EVS-DEV-view-convergence                   | View copies and their catch-up                               | dev-view-convergence.md                 | d6590efb |
+| EVS-DEV-version-compatibility              | Entry-type and data-format versions                          | dev-version-compatibility.md            | 11364d97 |
+| EVS-DEV-view-convergence                   | View copies and their catch-up                               | dev-view-convergence.md                 | 766c4e99 |

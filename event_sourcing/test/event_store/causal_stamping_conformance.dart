@@ -15,6 +15,7 @@ import 'package:event_sourcing/src/lifecycle/lib_version.dart'
 import 'package:event_sourcing/src/security/system_entry_types.dart'
     show kIngestDuplicateReceivedEventType, kSecurityContextRedactedEntryType;
 import 'package:flutter_test/flutter_test.dart';
+
 import '../test_support/deliveries.dart';
 
 import '../test_support/version_compatibility_conformance.dart'
@@ -35,6 +36,11 @@ const _kDraft = 'drafted';
 const _kInitiator = UserInitiator('causal-user');
 
 const List<EventTypeDeclaration> _kDeclarations = <EventTypeDeclaration>[
+  EventTypeDeclaration(
+    eventType: _kVersion,
+    kind: CausalKind.version,
+    eligible: true,
+  ),
   EventTypeDeclaration(
     eventType: _kAnnotation,
     kind: CausalKind.annotation,

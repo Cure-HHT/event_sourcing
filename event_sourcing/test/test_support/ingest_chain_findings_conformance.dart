@@ -14,6 +14,7 @@ import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../security/security_finding_conformance.dart' show expectedFindingId;
+import 'declarations.dart';
 import 'deliveries.dart';
 import 'ingest_record_findings_conformance.dart' show resealed, sealedRecord;
 import 'version_compatibility_conformance.dart' show VersionTestDatabase;
@@ -87,6 +88,9 @@ void runIngestChainFindingScenarios({
                 id: _kType,
                 registeredVersion: EntryTypeVersion(1, 0),
                 name: _kType,
+                declarations: <EventTypeDeclaration>[
+                  EligibleVersion('finalized'),
+                ],
               ),
             ),
           source: _receiverSource,

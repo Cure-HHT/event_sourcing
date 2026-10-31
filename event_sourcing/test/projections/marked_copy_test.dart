@@ -6,6 +6,7 @@ import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
+import '../test_support/declarations.dart';
 import '../test_support/manual_timers.dart';
 
 const _kType = 'marked_copy_note';
@@ -37,6 +38,7 @@ Future<EventStore> _open(
         id: _kType,
         registeredVersion: EntryTypeVersion(1, 0),
         name: _kType,
+        declarations: <EventTypeDeclaration>[EligibleVersion('finalized')],
       ),
     );
   final registry = ProjectionRegistry();

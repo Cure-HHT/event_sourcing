@@ -1,5 +1,65 @@
 # Changelog
 
+## 0.7.0
+
+Data: data format 3.0, unchanged; the stored event format is the same. A
+database written by 0.6.3 needs two things before this build serves it: a
+Postgres database is re-provisioned at schema version 9, and the copies of
+views whose interest names entry types or event types are rebuilt once,
+because their stored fingerprints change. Unfiltered and
+aggregate-type-only views keep their copies.
+
+### Views
+
+- `StorageReader.viewsCaughtUp` completes when every registered view has
+  reached the log's head since the store opened, so an application awaits
+  its boot on it. It throws `ViewConvergenceTimeout` when the timeout
+  passes first, naming each view not yet there with its progress, and
+  throws `StateError` when the store closes first.
+- A view's fingerprint covers the entry types that carry the view's
+  events: its named entry types, else the entry types declaring a named
+  event type, else all. It always covers the security-finding and
+  sender-succession entry types, and the reserved entry types an
+  `includeSystemEvents` interest admits.
+- The catch-up, the read-path currency scans and the append-path currency
+  check read only the events that can affect the view, in windows of
+  positions. They read every event while any security finding is held.
+
+### Entry types
+
+- An application entry type declares every event type it carries.
+  `EntryTypeDefinition.declarationFor` returns null for an undeclared
+  event type, and appending one throws `UndeclaredEventTypeError`.
+- `EntryTypeDefinition.patch` is recorded in the registry audit; it is
+  never stamped on an event and never fingerprinted.
+- The declaration lists for action denials, role-permission grants and
+  user-role scopes are exported. `ActionDispatcher`, `PermissionSeedApplier`
+  and `bootstrapRoleAssignments` throw `ArgumentError` when the registered
+  `action_denial`, `role_permission_grant` or `user_role_scope` definition
+  lacks any of the matching declarations, naming the entry type and the
+  missing event types.
+
+### Ingest
+
+- Ingesting an event of an undeclared event type for a registered
+  application entry type is refused with `IngestUndeclaredEventType`, and
+  the store records an `undeclared_event_type` security finding, unless it
+  was opened with `recordUndeclaredIngestFindings: false`. `EventStore.open`
+  and `bootstrapEventStore` take that parameter.
+
+### Verification
+
+- A chain verification interrupted by a failure throws
+  `ChainWalkInterrupted`, carrying `verifiedThrough`, the cause and the
+  findings so far. `EventStore.verifyChains` records the carried findings,
+  and a caller resumes with `from: verifiedThrough + 1`.
+
+### Postgres
+
+- Postgres schema version 9 adds `events_entry_type_seq_idx`, which serves
+  the catch-up's candidate reads. A database provisioned at schema version
+  8 is re-provisioned before this build opens it.
+
 ## 0.6.3
 
 Data: data format 3.0, unchanged. A database written by 0.6.2 opens.

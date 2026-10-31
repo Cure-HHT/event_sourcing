@@ -19,6 +19,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast.dart' as sembast;
 import 'package:sembast/sembast_memory.dart' show newDatabaseFactoryMemory;
 
+import '../test_support/declarations.dart';
 import '../test_support/deliveries.dart';
 import '../test_support/ingest_chain_findings_conformance.dart' show chained;
 import '../test_support/ingest_record_findings_conformance.dart'
@@ -60,6 +61,7 @@ EntryTypeRegistry _entryTypes() {
         id: _kType,
         registeredVersion: EntryTypeVersion(1, 0),
         name: _kType,
+        declarations: <EventTypeDeclaration>[EligibleVersion('finalized')],
       ),
     )
     ..register(
@@ -67,6 +69,7 @@ EntryTypeRegistry _entryTypes() {
         id: _kOtherType,
         registeredVersion: EntryTypeVersion(1, 0),
         name: _kOtherType,
+        declarations: <EventTypeDeclaration>[EligibleVersion('finalized')],
       ),
     );
 }

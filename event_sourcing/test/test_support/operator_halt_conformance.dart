@@ -21,6 +21,7 @@ import 'package:event_sourcing/src/logging.dart';
 import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'declarations.dart';
 import 'deliveries.dart';
 import 'destination_wedges_view_conformance.dart' show forgedEvent;
 import 'drain_wedge_conformance.dart'
@@ -175,6 +176,7 @@ class _World {
           id: _noteType,
           registeredVersion: EntryTypeVersion(1, 0),
           name: _noteType,
+          declarations: <EventTypeDeclaration>[EligibleVersion('finalized')],
         ),
       );
     final store = await EventStore.openForTest(
@@ -1228,6 +1230,9 @@ void runOperatorHaltScenarios(
                 id: _noteType,
                 registeredVersion: EntryTypeVersion(1, 0),
                 name: _noteType,
+                declarations: <EventTypeDeclaration>[
+                  EligibleVersion('finalized'),
+                ],
               ),
             ),
           source: _source,

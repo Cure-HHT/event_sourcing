@@ -1,6 +1,8 @@
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
+
+import '../test_support/declarations.dart';
 import '../test_support/deliveries.dart';
 
 // ---------------------------------------------------------------------------
@@ -32,6 +34,7 @@ const EntryTypeDefinition _demoNoteDef = EntryTypeDefinition(
   id: 'demo_note',
   registeredVersion: EntryTypeVersion(1, 0),
   name: 'Demo Note',
+  declarations: <EventTypeDeclaration>[EligibleVersion('finalized')],
 );
 
 Future<_Fixture> _openDatastore({

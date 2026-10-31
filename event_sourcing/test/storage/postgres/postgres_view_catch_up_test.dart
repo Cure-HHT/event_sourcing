@@ -17,6 +17,7 @@ import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:test/test.dart';
 
 import '../../test_support/catch_up_equivalence_conformance.dart';
+import '../../test_support/declarations.dart';
 import 'test_postgres_url.dart';
 
 const _kType = 'view_catch_up_note';
@@ -67,6 +68,7 @@ Future<EventStore> _openStore(
         id: _kType,
         registeredVersion: EntryTypeVersion(1, 0),
         name: _kType,
+        declarations: <EventTypeDeclaration>[EligibleVersion('finalized')],
       ),
     );
   final registry = ProjectionRegistry();
@@ -240,7 +242,8 @@ void main() {
     );
   });
 
-  // Verifies: EVS-DEV-view-convergence/L
+  // Pins the SHARE table lock, the Postgres means of the bound on serving
+  // appends that the measured scenarios verify.
   test(
     "a catch-up transaction's first lock is SHARE on backend_state, seen "
     'through pg_locks, and an append waits for it and then commits',

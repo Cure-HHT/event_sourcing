@@ -51,6 +51,7 @@ import 'package:event_sourcing/src/security/system_entry_types.dart'
     show
         kDestinationSenderSucceededEntryType,
         kDestinationSenderSucceededEventType,
+        kEveryCopyFoldsEntryTypes,
         kIngestAuditEntryType,
         kIngestDeliveryAcceptedEventType,
         kSecurityFindingEntryType,
@@ -1251,9 +1252,12 @@ class PostgresBackend extends StorageBackend {
   /// nothing; granted, it runs the generation fence and [body] as
   /// [transaction] does, releasing the advisory lock when the transaction
   /// ends.
-  // Implements: EVS-DEV-view-convergence/L
-  // Implements: EVS-DEV-view-convergence/M (Postgres transaction-scoped
-  //   advisory lock)
+  // Implements: EVS-DEV-view-convergence/W
+  // the SHARE lock on the sequence counter's table, taken first and never
+  //   written under, orders the catch-up against appends.
+  // Implements: EVS-DEV-view-convergence/M
+  // a transaction-scoped advisory try-lock per copy: a transaction that
+  //   is not granted it writes nothing.
   @override
   @internal
   Future<T?> catchUpTransaction<T>(
@@ -1699,6 +1703,95 @@ class PostgresBackend extends StorageBackend {
         ? await _read((s) => s.execute(Sql.named(sql), parameters: params))
         : await session.execute(Sql.named(sql), parameters: params);
     return result.map(_storedEventFromRow).toList(growable: false);
+  }
+
+  // One statement over the position range: each filter given is a conjunct
+  // bound as `= ANY(...)`, and the events every copy folds are OR-ed in,
+  // so the server returns only candidates, through the position index or
+  // the type indexes as its planner chooses.
+  @override
+  @internal
+  Future<List<StoredEvent>> findCandidateEventsInTxn(
+    Transaction txn, {
+    required int afterSequence,
+    required int throughSequence,
+    required int limit,
+    Set<String>? entryTypes,
+    Set<String>? eventTypes,
+    Set<String>? aggregateTypes,
+  }) async {
+    final session = _asPgTxn(txn)._session;
+    final query = candidateEventsQuery(
+      afterSequence: afterSequence,
+      throughSequence: throughSequence,
+      limit: limit,
+      entryTypes: entryTypes,
+      eventTypes: eventTypes,
+      aggregateTypes: aggregateTypes,
+    );
+    final result = await session.execute(
+      Sql.named(query.sql),
+      parameters: query.parameters,
+    );
+    return result.map(_storedEventFromRow).toList(growable: false);
+  }
+
+  /// The statement and parameters [findCandidateEventsInTxn] runs: exposed
+  /// so a test can ask the server how it plans the same statement.
+  @internal
+  @visibleForTesting
+  static ({String sql, Map<String, Object?> parameters}) candidateEventsQuery({
+    required int afterSequence,
+    required int throughSequence,
+    required int limit,
+    Set<String>? entryTypes,
+    Set<String>? eventTypes,
+    Set<String>? aggregateTypes,
+  }) {
+    final parameters = <String, Object?>{
+      'after': afterSequence,
+      'through': throughSequence,
+    };
+    final conjuncts = <String>[];
+    if (entryTypes != null) {
+      conjuncts.add('entry_type = ANY(@entryTypes::text[])');
+      parameters['entryTypes'] = entryTypes.toList();
+    }
+    if (eventTypes != null) {
+      conjuncts.add('event_type = ANY(@eventTypes::text[])');
+      parameters['eventTypes'] = eventTypes.toList();
+    }
+    if (aggregateTypes != null) {
+      conjuncts.add('aggregate_type = ANY(@aggregateTypes::text[])');
+      parameters['aggregateTypes'] = aggregateTypes.toList();
+    }
+    var filter = '';
+    if (conjuncts.isNotEmpty) {
+      parameters['everyCopyFolds'] = kEveryCopyFoldsEntryTypes.toList();
+      filter =
+          'AND ((${conjuncts.join(' AND ')}) '
+          'OR entry_type = ANY(@everyCopyFolds::text[])) ';
+    }
+    return (
+      sql:
+          'SELECT * FROM events '
+          'WHERE sequence_number > @after AND sequence_number <= @through '
+          '$filter'
+          'ORDER BY sequence_number ASC LIMIT $limit',
+      parameters: parameters,
+    );
+  }
+
+  // The highest position the transaction's snapshot holds, read from the
+  // primary key's index alone.
+  @override
+  @internal
+  Future<int> readLogHeadInTxn(Transaction txn) async {
+    final session = _asPgTxn(txn)._session;
+    final result = await session.execute(
+      'SELECT COALESCE(MAX(sequence_number), 0) FROM events',
+    );
+    return result.first[0]! as int;
   }
 
   // Implements: EVS-PRD-event-log/A

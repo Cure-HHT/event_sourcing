@@ -8,6 +8,7 @@ import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
+import '../test_support/declarations.dart';
 import '../test_support/surface_scan.dart';
 
 var _dbCounter = 0;
@@ -16,6 +17,7 @@ const _kCustom = EntryTypeDefinition(
   id: 'custom_type',
   registeredVersion: EntryTypeVersion(7, 3),
   name: 'Custom Type',
+  declarations: <EventTypeDeclaration>[EligibleVersion('finalized')],
 );
 
 Future<EventStore> _openStore() async {
@@ -174,6 +176,9 @@ void main() {
           id: 'custom_type',
           registeredVersion: registered,
           name: 'Custom Type',
+          declarations: <EventTypeDeclaration>[
+            const EligibleVersion('finalized'),
+          ],
         ),
       ],
       destinations: const <Destination>[],

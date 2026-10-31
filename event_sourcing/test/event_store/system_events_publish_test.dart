@@ -9,6 +9,8 @@ import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
+import '../test_support/declarations.dart';
+
 const _installUUID = 'aaaa0001-0000-4000-8000-000000000001';
 const _source = Source(
   hopId: 'test',
@@ -20,6 +22,7 @@ EntryTypeDefinition _simpleDef(String id) => EntryTypeDefinition(
   id: id,
   registeredVersion: const EntryTypeVersion(1, 0),
   name: id,
+  declarations: <EventTypeDeclaration>[const EligibleVersion('created')],
 );
 
 Future<

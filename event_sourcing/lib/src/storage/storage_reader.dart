@@ -126,6 +126,20 @@ abstract interface class StorageReader {
   /// watermark, so asking costs nothing that grows with the log.
   Future<List<ViewCopyStatus>> viewProgress();
 
+  /// Completes once every view the instance registers has had a catch-up
+  /// transaction on its current copy end at the log's head since the
+  /// instance's event store opened, and at once on every call after that.
+  /// Waits on the catch-up's own record, as [viewProgress] reports it,
+  /// reading nothing while it waits (EVS-DEV-converging-view-reads/M).
+  ///
+  /// Throws [ViewConvergenceTimeout], carrying the [viewProgress] status of
+  /// each view not yet there, when [timeout] passes first
+  /// (EVS-DEV-converging-view-reads/N+O+P); throws
+  /// [StateError] when the event store closes first. A view caught up once
+  /// may since be converging again: a read still reports the state of the
+  /// rows it returns (EVS-DEV-converging-view-reads/A).
+  Future<void> viewsCaughtUp({required Duration timeout});
+
   /// The head of [destinationId]'s queue, or null.
   Future<FifoEntry?> readFifoHead(String destinationId);
 
@@ -161,7 +175,9 @@ abstract interface class StorageReader {
   /// sequence numbers [from] to [to], computed from the log alone and
   /// recording nothing: the reads hold no transaction an append waits for.
   /// Throws [ArgumentError], before reading any event, for a negative bound
-  /// or a lower bound above the upper.
+  /// or a lower bound above the upper. Throws `ChainWalkInterrupted`, which
+  /// carries the findings reported until then and records nothing, when a
+  /// failure interrupts the verification after it began.
   Future<ChainVerificationVerdict> verifyChains({int? from, int? to});
 
   /// The succession lineage of [databaseId], derived solely from the

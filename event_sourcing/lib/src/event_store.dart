@@ -108,6 +108,7 @@ import 'package:event_sourcing/src/ingest/delivery_envelope.dart';
 import 'package:event_sourcing/src/ingest/ingest_errors.dart';
 import 'package:event_sourcing/src/ingest/ingest_result.dart';
 import 'package:event_sourcing/src/ingest/sender_succession.dart';
+import 'package:event_sourcing/src/library_declarations_check.dart';
 import 'package:event_sourcing/src/lifecycle/boot_errors.dart';
 import 'package:event_sourcing/src/lifecycle/boot_progress.dart';
 import 'package:event_sourcing/src/lifecycle/lib_version.dart';
@@ -325,8 +326,10 @@ class EventStore {
     PromoterRegistry? promoters,
     Clock? clock,
     Uuid? uuid,
+    bool recordUndeclaredIngestFindings = true,
   }) : _backend = backend,
        _viewCopyIds = viewCopyIds,
+       _recordUndeclaredIngestFindings = recordUndeclaredIngestFindings,
        _interpreter = ProjectionInterpreter(
          projections: projections ?? ProjectionRegistry(),
          promoters: promoters ?? PromoterRegistry(),
@@ -405,6 +408,14 @@ class EventStore {
   /// committed with the copy at the log's head
   /// (EVS-DEV-converging-view-reads/J).
   bool _catchUpAtHead(String copyId) => _catchUp.atHead(copyId);
+
+  /// Completes once every registered view's current copy has had a
+  /// catch-up transaction commit at the log's head since this store
+  /// opened; completes with a [StateError] when the store closes first.
+  Future<void> get _catchUpCaughtUp => _catchUp.caughtUp;
+
+  /// The registered views [_catchUpCaughtUp] still waits for.
+  Set<String> _viewsNotCaughtUp() => _catchUp.viewsNotCaughtUp();
 
   /// The security contexts stored beside this store's events, for reading:
   /// an object of its own that declares no writing member. The event
@@ -586,6 +597,12 @@ class EventStore {
   /// guard, released by [close].
   final GenerationRegistration _registration;
 
+  /// Whether an ingest refusal of an event whose event type its registered
+  /// application entry type does not declare is recorded as an
+  /// `undeclared_event_type` finding ([EventStore.open]'s
+  /// `recordUndeclaredIngestFindings`). The refusal is thrown either way.
+  final bool _recordUndeclaredIngestFindings;
+
   /// Sealed registry of promoter specs, threaded in from [EventStore.open] (or
   /// supplied directly on the constructor). Used by `rebuildView` to apply
   /// promoter chains during replay.
@@ -729,6 +746,15 @@ class EventStore {
   /// listener subscribed elsewhere, say), a read a backend serves outside a
   /// transaction, and a transaction an application-supplied backend starts
   /// are not recognised.
+  ///
+  /// Undeclared event types. Ingest refuses an event of a registered
+  /// application entry type whose event type that entry type does not declare
+  /// ([IngestUndeclaredEventType]). With [recordUndeclaredIngestFindings]
+  /// true (the default) the refusal is also recorded, once per event, as an
+  /// `undeclared_event_type` security finding; a database that expects to
+  /// meet the event types of newer builds before it upgrades (a device
+  /// receiving from a server released first, say) opens with false, and
+  /// the refusal alone is thrown.
   // Implements: EVS-DEV-event-store-open/A+B+C+D+E+F
   // the sole production constructor; the whole boot, refusals first, runs
   //   in one storage transaction (see _runBoot).
@@ -748,6 +774,7 @@ class EventStore {
     Clock? clock,
     Uuid? uuid,
     void Function(BootProgress progress)? onBootProgress,
+    bool recordUndeclaredIngestFindings = true,
   }) async {
     refuseCallFromBootProgressObserver('EventStore.open');
     final progress = BootProgressReporter(onBootProgress);
@@ -782,6 +809,7 @@ class EventStore {
           promoters: effectivePromoters,
           clock: clock,
           uuid: uuid,
+          recordUndeclaredIngestFindings: recordUndeclaredIngestFindings,
         );
       } catch (_) {
         await opened.close();
@@ -812,8 +840,9 @@ class EventStore {
   /// so sequence numbers stay predictable, and at a first open it mints the
   /// database identity without a log record; a later [open] adopts that
   /// identity. The guarantee that the log records every version that opened
-  /// the database holds for [open] only. [onBootProgress] observes the boot
-  /// as it does for [open].
+  /// the database holds for [open] only. [onBootProgress] observes the boot,
+  /// and [recordUndeclaredIngestFindings] decides whether ingest records its
+  /// undeclared-event-type refusals, as they do for [open].
   ///
   /// The caller keeps [storage]: [close] does not close it, so several
   /// stores may run over one backend. In a build with assertions disabled
@@ -838,6 +867,7 @@ class EventStore {
     Clock? clock,
     Uuid? uuid,
     void Function(BootProgress progress)? onBootProgress,
+    bool recordUndeclaredIngestFindings = true,
   }) async {
     var assertionsEnabled = false;
     assert(() {
@@ -880,6 +910,7 @@ class EventStore {
         promoters: effectivePromoters,
         clock: clock,
         uuid: uuid,
+        recordUndeclaredIngestFindings: recordUndeclaredIngestFindings,
       );
       progress
         ..bootFinished()
@@ -2011,7 +2042,10 @@ class EventStore {
   /// the same verdict and records nothing.
   ///
   /// Throws [ArgumentError], before reading any event, for a negative bound
-  /// or a lower bound above the upper.
+  /// or a lower bound above the upper. Throws [ChainWalkInterrupted] when a
+  /// read fails after the verification began; the findings it had reported
+  /// are recorded first, and a verification with its lower bound at
+  /// [ChainWalkInterrupted.verifiedThrough] plus one checks the rest.
   // Implements: EVS-PRD-hash-chain-integrity/C+F
   // any holder of the log verifies its storage chain and every origin-chain
   //   link it can resolve, from the log alone, the first event of a range
@@ -2036,14 +2070,41 @@ class EventStore {
     Future<void> Function()? afterPage,
   }) async {
     refuseCallFromBootProgressObserver('EventStore.verifyChains');
-    final verdict = await verifyChainsOver(
-      _backend,
-      from: from,
-      to: to,
-      pageSize: pageSize,
-      afterPage: afterPage,
-    );
-    for (final finding in verdict.findings) {
+    final ChainVerificationVerdict verdict;
+    try {
+      verdict = await verifyChainsOver(
+        _backend,
+        from: from,
+        to: to,
+        pageSize: pageSize,
+        afterPage: afterPage,
+      );
+    } on ChainWalkInterrupted catch (interrupted) {
+      // Implements: EVS-DEV-chain-verification/V
+      // the findings the interruption carries are recorded before it is
+      //   rethrown; a failure to record them is logged and does not mask it.
+      try {
+        await _recordWalkFindings(interrupted.findings);
+      } on Object catch (e, st) {
+        libraryLog(
+          'chain_verification',
+          'recording the findings of an interrupted chain verification '
+              'failed',
+          level: LibraryLogLevel.warning,
+          error: e,
+          stackTrace: st,
+        );
+      }
+      rethrow;
+    }
+    await _recordWalkFindings(verdict.findings);
+    return verdict;
+  }
+
+  Future<void> _recordWalkFindings(
+    List<ChainVerificationFinding> findings,
+  ) async {
+    for (final finding in findings) {
       await _runInTxnWithPublish<void>((txn, collector) async {
         await _recordFindingInTxn(
           txn,
@@ -2055,7 +2116,6 @@ class EventStore {
         );
       });
     }
-    return verdict;
   }
 
   /// [evidence] with its `record` key, when it holds a record (an
@@ -2322,6 +2382,17 @@ class EventStore {
         'not registered in EntryTypeRegistry',
       );
     }
+    // Implements: EVS-DEV-causal-parents/T
+    // every append is stamped from its entry type's declaration for its event
+    //   type, so an event type the entry type does not declare is refused,
+    //   before the sequence number is reserved; a receiver of the same build
+    //   therefore never refuses an event it appended.
+    if (entryTypes.byId(entryType)!.declarationFor(eventType) == null) {
+      throw UndeclaredEventTypeError(
+        entryType: entryType,
+        eventType: eventType,
+      );
+    }
     if (aggregateType.isEmpty) {
       throw ArgumentError.value(
         aggregateType,
@@ -2557,7 +2628,7 @@ class EventStore {
       _backend,
       txn,
       aggregateId: aggregateId,
-      declaration: def.declarationFor(eventType),
+      declaration: def.declarationFor(eventType)!,
     );
     final provenance0 = _originatorEntry(
       hop: source.hopId,
@@ -2702,13 +2773,80 @@ class EventStore {
   Future<PerEventIngestOutcome> _ingestEvent(StoredEvent incoming) async {
     _refuseOtherDataFormatMajor(incoming.eventId, incoming.libFormatVersion);
     final record = Map<String, Object?>.from(incoming.toMap());
-    return _runInTxnWithPublish((txn, collector) {
-      return _ingestRecordInTxn(
+    try {
+      return await _runInTxnWithPublish((txn, collector) {
+        return _ingestRecordInTxn(
+          txn,
+          record,
+          parsed: incoming,
+          batchContext: null,
+          collector: collector,
+        );
+      });
+    } on IngestUndeclaredEventType catch (refusal) {
+      await _recordUndeclaredEventTypeFinding(refusal, FindingRole.ingest);
+      rethrow;
+    }
+  }
+
+  /// Records, in a write transaction of its own after the ingest that threw
+  /// [refusal] rolled back, the `undeclared_event_type` finding of detector
+  /// role [role] about the refused event, unless this database holds it as
+  /// authored already or this store was opened with
+  /// `recordUndeclaredIngestFindings: false`. Every ingest entry point and
+  /// the restore call it where they catch the refusal, and surface the
+  /// refusal after it returns: a failure of the finding's own transaction
+  /// is logged as a warning and does not replace the refusal.
+  // Implements: EVS-DEV-security-findings/F+V
+  // the finding commits in a transaction of its own after the refusal rolled
+  //   back, and its evidence is exactly the refused event's identifier,
+  //   entry type, event type and originating database.
+  // Implements: EVS-DEV-security-findings/E+Q
+  // the finding's evidence is fixed by the refused event, so a redelivery of
+  //   it computes the same identity and appends nothing; it is recorded
+  //   under the role of the operation that refused the event.
+  Future<void> _recordUndeclaredEventTypeFinding(
+    IngestUndeclaredEventType refusal,
+    FindingRole role,
+  ) async {
+    if (!_recordUndeclaredIngestFindings) return;
+    try {
+      await _appendUndeclaredEventTypeFinding(refusal, role);
+    } on Object catch (e, st) {
+      libraryLog(
+        'event_store',
+        'the undeclared_event_type finding about event ${refusal.eventId} '
+            'could not be recorded; the event is refused regardless',
+        level: LibraryLogLevel.warning,
+        error: e,
+        stackTrace: st,
+      );
+    }
+  }
+
+  Future<void> _appendUndeclaredEventTypeFinding(
+    IngestUndeclaredEventType refusal,
+    FindingRole role,
+  ) async {
+    if (DeliveryTestHooks.current?.failUndeclaredEventTypeFindingAppend
+            ?.call() ??
+        false) {
+      throw const InjectedFailure('undeclared_event_type_finding_append');
+    }
+    await _runInTxnWithPublish<void>((txn, collector) async {
+      final held = await _backend.findEventByIdInTxn(txn, refusal.eventId);
+      await _recordFindingInTxn(
         txn,
-        record,
-        parsed: incoming,
-        batchContext: null,
-        collector: collector,
+        collector,
+        role: role,
+        kind: FindingKind.undeclaredEventType,
+        evidence: <String, Object?>{
+          'event_id': refusal.eventId,
+          'entry_type': refusal.entryType,
+          'event_type': refusal.eventType,
+          'origin_database_id': refusal.originDatabaseId,
+        },
+        aggregates: <String>[if (held != null) held.aggregateId],
       );
     });
   }
@@ -2840,8 +2978,8 @@ class EventStore {
       }
     }
     if (event != null) {
-      _refuseUnadmittedVersion(event);
-      unstorable = _unstorableReason(event, originator!);
+      _refuseUnadmittedVersion(event, originDatabaseId: originator!);
+      unstorable = _unstorableReason(event, originator);
     }
 
     final held = eventId == null
@@ -3219,15 +3357,27 @@ class EventStore {
 
   /// Throws, before the record is written, when [incoming]'s entry-type
   /// version is above the major this build registers for its entry type
-  /// ([IngestEntryTypeVersionAhead]), or below it with no promoter path for
-  /// a view it folds into ([IngestEntryTypeVersionUnpromotable]). An entry
+  /// ([IngestEntryTypeVersionAhead]), when that entry type is an application
+  /// entry type that does not declare its event type
+  /// ([IngestUndeclaredEventType], naming [originDatabaseId], the database
+  /// that originated it), or below it with no promoter path for a view it
+  /// folds into ([IngestEntryTypeVersionUnpromotable]). An entry
   /// type this build does not register is accepted at any version: it is
   /// stored as it is and folds under its own version.
   // Implements: EVS-DEV-version-compatibility/D
   // every ingest entry point refuses a higher entry-type major, and an
   //   event below the registered version that a view it folds into has no
   //   promoter path for, by name before any write.
-  void _refuseUnadmittedVersion(StoredEvent incoming) {
+  // Implements: EVS-DEV-version-compatibility/D
+  // every ingest entry point refuses, before any write, an event of a
+  //   registered application entry type whose event type that entry type
+  //   does not declare, as it refuses a higher major; an unregistered entry
+  //   type is accepted, and a reserved entry type in a shape the library
+  //   does not declare is kept in a finding (EVS-DEV-security-findings/O).
+  void _refuseUnadmittedVersion(
+    StoredEvent incoming, {
+    required String originDatabaseId,
+  }) {
     _refuseOtherDataFormatMajor(incoming.eventId, incoming.libFormatVersion);
     final def = entryTypes.byId(incoming.entryType);
     if (def == null) return;
@@ -3237,6 +3387,15 @@ class EventStore {
         entryType: incoming.entryType,
         wireVersion: incoming.entryTypeVersion,
         receiverVersion: def.registeredVersion,
+      );
+    }
+    if (!isReservedEntryType(incoming.entryType) &&
+        def.declarationFor(incoming.eventType) == null) {
+      throw IngestUndeclaredEventType(
+        eventId: incoming.eventId,
+        entryType: incoming.entryType,
+        eventType: incoming.eventType,
+        originDatabaseId: originDatabaseId,
       );
     }
     if (!(incoming.entryTypeVersion < def.registeredVersion)) return;
@@ -3704,7 +3863,14 @@ String _sealedHashOf(StoredEvent stored) {
 EventTypeDeclaration _reservedDeclaration(String entryType, String eventType) {
   for (final definition in kSystemEntryTypes) {
     if (definition.id == entryType) {
-      return definition.declarationFor(eventType);
+      final declaration = definition.declarationFor(eventType);
+      if (declaration == null) {
+        throw UndeclaredEventTypeError(
+          entryType: entryType,
+          eventType: eventType,
+        );
+      }
+      return declaration;
     }
   }
   throw StateError('$entryType is not a reserved system entry type');
@@ -4257,6 +4423,54 @@ final class _StorageReader implements StorageReader {
     }
     return statuses;
   });
+
+  // Implements: EVS-DEV-converging-view-reads/M
+  // returns once the catch-up driver's own record holds every registered
+  //   view's current copy as having reached the log's head since open.
+  // Implements: EVS-DEV-converging-view-reads/N+O+P
+  // at the deadline throws ViewConvergenceTimeout naming every view not yet
+  //   caught up with its copy's progress, as viewProgress reports it, or as
+  //   a copy at watermark 0 for a view viewProgress has no status for.
+  @override
+  Future<void> viewsCaughtUp({required Duration timeout}) async {
+    final caughtUp = _store._catchUpCaughtUp;
+    final deadline = Completer<bool>();
+    final timer = libraryTimer(timeout, () {
+      if (!deadline.isCompleted) deadline.complete(false);
+    });
+    try {
+      final reached = await Future.any<bool>([
+        caughtUp.then((_) => true),
+        deadline.future,
+      ]);
+      if (reached) return;
+    } finally {
+      timer.cancel();
+    }
+    final pending = _store._viewsNotCaughtUp();
+    // The signal can complete between the deadline firing and this line:
+    // every view is there, so the wait succeeded.
+    if (pending.isEmpty) return;
+    final progress = await viewProgress();
+    final byName = {for (final status in progress) status.viewName: status};
+    var logHead = 0;
+    for (final status in progress) {
+      if (status.logHead > logHead) logHead = status.logHead;
+    }
+    if (progress.isEmpty) logHead = await readSequenceCounter();
+    throw ViewConvergenceTimeout([
+      for (final viewName in pending)
+        byName[viewName] ??
+            ViewCopyStatus(
+              viewName: viewName,
+              state: ViewConvergenceState.converging,
+              watermark: 0,
+              logHead: logHead,
+              lastFailure: null,
+              lastFailureAt: null,
+            ),
+    ]);
+  }
 
   @override
   Future<FifoEntry?> readFifoHead(String destinationId) =>

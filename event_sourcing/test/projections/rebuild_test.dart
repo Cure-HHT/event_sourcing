@@ -6,6 +6,7 @@ import 'package:event_sourcing/src/projections/view_fingerprint.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
+import '../test_support/declarations.dart';
 import '../test_support/record_fixtures.dart';
 import '../test_support/test_backends.dart';
 
@@ -43,6 +44,7 @@ Future<EventStore> _openStore() async {
         id: _kEntryType,
         registeredVersion: EntryTypeVersion(1, 0),
         name: _kEntryType,
+        declarations: <EventTypeDeclaration>[EligibleVersion('finalized')],
       ),
     );
   final store = await EventStore.openForTest(

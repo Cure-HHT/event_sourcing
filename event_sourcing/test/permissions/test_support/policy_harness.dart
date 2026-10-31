@@ -10,6 +10,8 @@ import 'package:event_sourcing/event_sourcing.dart';
 // AggregateIdKey and WholePayload are not re-exported from the barrel.
 import 'package:sembast/sembast_memory.dart';
 
+import '../../test_support/declarations.dart';
+
 /// Test grant: role -> permission-name. Pumped through bootstrap-equivalent
 /// permission_granted events.
 class Grant {
@@ -93,6 +95,7 @@ class PolicyHarness {
           id: 'role_permission_grant',
           registeredVersion: EntryTypeVersion(1, 0),
           name: 'Role-permission grant',
+          declarations: kRolePermissionGrantDeclarations,
         ),
       )
       ..register(
@@ -100,6 +103,7 @@ class PolicyHarness {
           id: 'user_role_scope',
           registeredVersion: EntryTypeVersion(1, 0),
           name: 'User-role-scope assignment',
+          declarations: kUserRoleScopeDeclarations,
         ),
       )
       ..register(
@@ -107,6 +111,9 @@ class PolicyHarness {
           id: 'patient_site_assignment',
           registeredVersion: EntryTypeVersion(1, 0),
           name: 'Patient-to-site assignment',
+          declarations: <EventTypeDeclaration>[
+            EligibleVersion('patient_site_set'),
+          ],
         ),
       );
 

@@ -1,11 +1,42 @@
 import 'package:event_sourcing/event_sourcing.dart';
 
+/// The event types of a demo note, each an eligible version: the action
+/// bar records a checkpoint, a finalized note and a tombstone.
+const List<EventTypeDeclaration> _noteDeclarations = <EventTypeDeclaration>[
+  EventTypeDeclaration(
+    eventType: 'checkpoint',
+    kind: CausalKind.version,
+    eligible: true,
+  ),
+  EventTypeDeclaration(
+    eventType: 'finalized',
+    kind: CausalKind.version,
+    eligible: true,
+  ),
+  EventTypeDeclaration(
+    eventType: 'tombstone',
+    kind: CausalKind.version,
+    eligible: true,
+  ),
+];
+
+/// The event type of a button press, an eligible version: the action bar
+/// records a press as finalized.
+const List<EventTypeDeclaration> _buttonDeclarations = <EventTypeDeclaration>[
+  EventTypeDeclaration(
+    eventType: 'finalized',
+    kind: CausalKind.version,
+    eligible: true,
+  ),
+];
+
 /// Regular diary-like entry type. Materializes into the `notes` view via
 /// the `AggregateProjectionSpec` registered in `_bootstrapPane`.
 const EntryTypeDefinition demoNoteType = EntryTypeDefinition(
   id: 'demo_note',
   registeredVersion: EntryTypeVersion(1, 0),
   name: 'Demo note',
+  declarations: _noteDeclarations,
 );
 
 /// Red-button action event. Point-in-time; no materialized view row.
@@ -13,6 +44,7 @@ const EntryTypeDefinition redButtonType = EntryTypeDefinition(
   id: 'red_button_pressed',
   registeredVersion: EntryTypeVersion(1, 0),
   name: 'Red button pressed',
+  declarations: _buttonDeclarations,
 );
 
 /// Green-button action event.
@@ -20,6 +52,7 @@ const EntryTypeDefinition greenButtonType = EntryTypeDefinition(
   id: 'green_button_pressed',
   registeredVersion: EntryTypeVersion(1, 0),
   name: 'Green button pressed',
+  declarations: _buttonDeclarations,
 );
 
 /// Blue-button action event.
@@ -27,6 +60,7 @@ const EntryTypeDefinition blueButtonType = EntryTypeDefinition(
   id: 'blue_button_pressed',
   registeredVersion: EntryTypeVersion(1, 0),
   name: 'Blue button pressed',
+  declarations: _buttonDeclarations,
 );
 
 /// Full demo entry-type set. Passed as `entryTypes:` to

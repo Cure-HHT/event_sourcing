@@ -15,12 +15,15 @@ import 'package:sembast/sembast.dart' show Database;
 import 'package:sembast_web/src/web_interop.dart'
     show DatabaseFactoryWeb, JdbFactoryWeb;
 
+import '../test_support/declarations.dart';
+
 import '../test_support/fifo_entry_helpers.dart';
 
 EntryTypeDefinition _testEventDef() => const EntryTypeDefinition(
   id: 'test_event',
   registeredVersion: EntryTypeVersion(1, 0),
   name: 'test_event',
+  declarations: <EventTypeDeclaration>[EligibleVersion('created')],
 );
 
 /// Opens [dbName] through a freshly built web factory, as one tab would.

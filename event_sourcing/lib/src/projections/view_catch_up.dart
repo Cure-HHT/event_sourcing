@@ -13,15 +13,15 @@
 //   for this instance's own registered views, forever: another build's
 //   append can make a current copy converging again, and the next idle
 //   pass notices it.
-// Implements: EVS-DEV-view-convergence/L
 // Implements: EVS-DEV-view-convergence/M
 // a copy's lock, and on Postgres the sequence-counter table's SHARE lock
 //   that orders a catch-up transaction against appends, are the backend's
 //   own concern (StorageBackend.catchUpTransaction): this driver only
 //   reacts to a null result by treating the attempt as lock-held.
-// Implements: EVS-DEV-view-convergence/N
+// Implements: EVS-DEV-view-convergence/W
 // a catch-up transaction begins no further step once the driver's clock
-//   shows 200 ms have passed since the transaction began.
+//   shows 200 ms have passed since the transaction began, so the appends
+//   it holds back wait one bounded transaction at most.
 // Implements: EVS-DEV-view-convergence/O
 // the step loop is a do-while: the first step always runs, whatever the
 //   clock reads; a fold failure ends the transaction on the event it met,
@@ -55,6 +55,8 @@ import 'package:event_sourcing/src/projections/interpreter/view_row_access.dart'
 import 'package:event_sourcing/src/projections/projection_registry.dart';
 import 'package:event_sourcing/src/projections/projection_spec.dart';
 import 'package:event_sourcing/src/projections/view_fingerprint.dart';
+import 'package:event_sourcing/src/projections/view_read.dart'
+    show candidateFilterInTxn, effectiveCandidateWindow, kEveryEventCandidate;
 import 'package:event_sourcing/src/promoters/promoter_registry.dart';
 import 'package:event_sourcing/src/security/security_finding.dart'
     show FindingKind, FindingRole, securityFindingId;
@@ -112,16 +114,17 @@ class _CatchUpFoldFailureSignal implements Exception {
 // Implements: EVS-DEV-view-convergence/X
 // steps repeat back to back while a copy is behind, so its watermark
 //   reaches the log head within the measured window.
-/// The step bound of one catch-up transaction (EVS-DEV-view-convergence/N):
-/// no further step begins once a transaction has run this long.
+/// The step bound of one catch-up transaction, the means of
+/// EVS-DEV-view-convergence/W: no further step begins once a transaction
+/// has run this long.
 @internal
 const Duration kCatchUpStepBound = Duration(milliseconds: 200);
 
 /// The page size a catch-up transaction reads the log in, and the most
 /// events whose folded rows it holds in memory before writing them: an
 /// implementation detail of how it walks the log within one transaction,
-/// not a spec-bound quantity like [kCatchUpStepBound] or
-/// [kCatchUpDeleteBatchLimit].
+/// not a spec-bound quantity like [kCatchUpDeleteBatchLimit], nor the
+/// means of a measured bound like [kCatchUpStepBound].
 @internal
 const int kCatchUpReadChunk = 200;
 
@@ -260,6 +263,17 @@ class ViewCatchUpDriver {
   /// since [start], so a replacement copy starts absent.
   final Map<String, bool> _atHeadByCopyId = {};
 
+  /// The copy ids an attempt of this driver has committed at the log's head
+  /// at least once since [start]: unlike [_atHeadByCopyId], an entry stays
+  /// when a later attempt leaves the copy behind again.
+  final Set<String> _reachedHeadCopyIds = {};
+
+  /// Completes once every registered view's current copy is in
+  /// [_reachedHeadCopyIds], or with a [StateError] from [stop] first.
+  /// Ignored at construction so a [stop] nobody awaited reports no
+  /// unhandled error; a later await still receives it.
+  final Completer<void> _caughtUp = Completer<void>()..future.ignore();
+
   /// Per copy id, the log position through which the copy folds event by
   /// event, each fold in a savepoint of its own, rather than through a
   /// buffer: set when a batched flush met a rejected row write, dropped
@@ -289,6 +303,31 @@ class ViewCatchUpDriver {
   /// work it has done.
   bool atHead(String copyId) => _atHeadByCopyId[copyId] ?? false;
 
+  /// Completes once every view this driver keeps current has had a
+  /// catch-up transaction on its current copy -- the copy the instance
+  /// registers for the view now, not one a rebuild has since replaced --
+  /// commit at the log's head since [start]; then stays completed. Completes
+  /// with a [StateError] when [stop] is called first.
+  // Implements: EVS-DEV-converging-view-reads/M
+  // the signal is the driver's own record of the copies it has left at the
+  //   log's head, held across attempts once set: a view is caught up once
+  //   its current copy is in that record.
+  Future<void> get caughtUp => _caughtUp.future;
+
+  /// The names of the views whose current copy no attempt of this driver
+  /// has committed at the log's head since [start]: the views [caughtUp]
+  /// still waits for.
+  Set<String> viewsNotCaughtUp() => {
+    for (final target in _targets)
+      if (!_reachedHeadCopyIds.contains(_viewCopyIds[target.viewName]))
+        target.viewName,
+  };
+
+  void _completeCaughtUpIfReached() {
+    if (_caughtUp.isCompleted) return;
+    if (viewsNotCaughtUp().isEmpty) _caughtUp.complete();
+  }
+
   /// Schedules the driver's loop to begin on the event loop's task queue,
   /// after every microtask already pending -- in particular, after the
   /// continuation of the `await` that called `EventStore.open` -- has run.
@@ -307,6 +346,14 @@ class ViewCatchUpDriver {
   // Implements: EVS-DEV-view-convergence/I
   Future<void> stop() async {
     _stopping = true;
+    if (!_caughtUp.isCompleted) {
+      _caughtUp.completeError(
+        StateError(
+          'EventStore closed before every registered view reached the '
+          "log's head.",
+        ),
+      );
+    }
     _cancelWait?.call();
     final txn = _currentTransaction;
     if (txn != null) {
@@ -349,9 +396,12 @@ class ViewCatchUpDriver {
         continue;
       }
       var progressed = false;
+      // A store registering no view has nothing to wait for.
+      _completeCaughtUpIfReached();
       for (final target in _targets) {
         if (_stopping) return;
         final outcome = await _attemptView(target, copies);
+        _completeCaughtUpIfReached();
         // Implements: EVS-DEV-view-convergence/Q
         // a failure other than a fold failure backs off; it is not
         //   progress, so it must not skip the idle wait below -- a copy
@@ -416,6 +466,7 @@ class ViewCatchUpDriver {
     final liveCopyIds = {for (final copy in copies) copy.copyId};
     _perEventThrough.removeWhere((copyId, _) => !liveCopyIds.contains(copyId));
     _atHeadByCopyId.removeWhere((copyId, _) => !liveCopyIds.contains(copyId));
+    _reachedHeadCopyIds.removeWhere((copyId) => !liveCopyIds.contains(copyId));
     if (_progressByCopyId.isEmpty) return;
     final unmarkedFingerprints = {
       for (final copy in copies)
@@ -501,38 +552,71 @@ class ViewCatchUpDriver {
       var steps = 0;
       var reachedTip = false;
       try {
+        // Implements: EVS-DEV-view-convergence/J
+        // the transaction reads, window by window from the watermark, only
+        //   the candidate events of the copy's definition -- a superset of
+        //   the events it folds (candidateFilterInTxn), read unfiltered
+        //   while any security finding is held -- so every event it moves
+        //   the watermark past unread is one the definition does not fold.
+        //   The log's head is read once: a window whose candidates are all
+        //   folded moves the watermark to the window's end, the last window
+        //   ending at that head, which is the only way the transaction
+        //   reaches the tip.
+        final head = await _backend.readLogHeadInTxn(txn);
+        final filter = head > watermark
+            ? await candidateFilterInTxn(txn, _backend, spec)
+            : kEveryEventCandidate;
+        final window = effectiveCandidateWindow();
+        var windowEnd = watermark;
+        var windowExhausted = true;
+        var chunk = const <StoredEvent>[];
+        var index = 0;
+
         Future<List<StoredEvent>> readChunk() async {
-          final chunk = await _backend.findAllEventsInTxn(
+          // Every event read before is folded or passed over by now, so
+          // the read resumes at the watermark.
+          final read = await _backend.findCandidateEventsInTxn(
             txn,
             afterSequence: watermark,
+            throughSequence: windowEnd,
             limit: kCatchUpReadChunk,
+            entryTypes: filter.entryTypes,
+            eventTypes: filter.eventTypes,
+            aggregateTypes: filter.aggregateTypes,
           );
           if (rows != null && spec is AggregateProjectionSpec) {
             await rows.prefetch(<String>{
-              for (final e in chunk)
+              for (final e in read)
                 if (spec.interest.matches(e)) e.aggregateId,
             });
           }
-          return chunk;
+          return read;
         }
 
-        var chunk = await readChunk();
-        var index = 0;
         // Implements: EVS-DEV-view-convergence/O
-        // a do-while: the first step always runs, whatever the clock reads.
+        // a do-while that ends only once a step has run: the first step
+        //   always runs, whatever the clock reads.
         do {
-          if (index >= chunk.length) {
-            if (chunk.length < kCatchUpReadChunk) {
-              reachedTip = true;
-              break;
-            }
+          if (index >= chunk.length && !windowExhausted) {
             await rows?.flush();
             chunk = await readChunk();
             index = 0;
-            if (chunk.isEmpty) {
+            windowExhausted = chunk.length < kCatchUpReadChunk;
+          }
+          if (index >= chunk.length) {
+            // Every candidate of the window is folded: the rest of it is
+            // events the definition does not fold, passed over at once.
+            if (windowEnd > watermark) {
+              watermark = windowEnd;
+              steps++;
+            }
+            if (watermark >= head) {
               reachedTip = true;
               break;
             }
+            windowEnd = watermark + window < head ? watermark + window : head;
+            windowExhausted = false;
+            continue;
           }
           final event = chunk[index];
           index++;
@@ -626,7 +710,8 @@ class ViewCatchUpDriver {
           }
           watermark = event.sequenceNumber;
           steps++;
-        } while (_effectiveClock().difference(start) < kCatchUpStepBound);
+        } while (steps == 0 ||
+            _effectiveClock().difference(start) < kCatchUpStepBound);
         await rows?.flush();
       } on RowWriteRejected {
         // Only a batched flush reaches here: the event-by-event fold above
@@ -673,6 +758,7 @@ class ViewCatchUpDriver {
         if (staleKey != result.copyId) _progressByCopyId.remove(staleKey);
       }
       _atHeadByCopyId[result.copyId] = result.reachedTip;
+      if (result.reachedTip) _reachedHeadCopyIds.add(result.copyId);
       if (result.reachedTip) onCaughtUp?.call(target.viewName);
       return result.steps == 0
           ? _Outcome.idle

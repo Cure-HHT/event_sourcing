@@ -88,6 +88,12 @@ S. The chain verification operation SHALL hold no transaction that an append wai
 
 T. On the Postgres backend, the library's append throughput and its ingest throughput SHALL each be at least half the throughput that the baseline build its throughput test pins (the library as it stood on its main branch before the data-format major step) reaches on the same workload and host.
 
+U. A chain verification interrupted by a failure SHALL fail naming the highest local sequence number whose checks completed.
+
+V. An open event store SHALL record each finding carried by the interruption of its chain verification.
+
+W. A chain verification interrupted by a failure SHALL fail carrying each finding it had reported.
+
 ### Rationale
 
 **Why read the originating database, the sealed hash and the origin position this way (assertion A)?** Each receiver re-stamps the copy it stores: it appends its entry, gives the event its own local sequence number, and seals the result under a new `event_hash`. So a copy's `event_hash` and `sequence_number` belong to its holder, not to the event. The values the originator sealed survive in the copy: the first receiver entry records the hash the event arrived under and the position the originator stored it at, and ingest's arrival-hash walk verifies that entry against the record. Reading the originating database, the sealed hash and the origin position from these fields gives the same values at every holder: the originator, each receiver and a successor that restored the event. Links and parents therefore resolve alike everywhere. The originator entry names the database identity (`EVS-DEV-event-record`); the application's `Source` identifier is attribution and plays no part in chaining.
@@ -112,6 +118,8 @@ T. On the Postgres backend, the library's append throughput and its ingest throu
 
 **Why record the walk's findings, and hold nothing appends wait for (assertions R and S)?** A verdict returned to a caller is lost with the caller; recorded as findings, the anomalies the walk meets are facts of the holder's log, each once, whoever runs the walk and however often. The walk only reads, and appends never wait for it: on Postgres it reads in one read-only snapshot, and readers never block writers; on Sembast it reads through the database outside any transaction, and only transactions take the lock appends wait for. Its upper bound is fixed when it starts, so events appended meanwhile are left to the next walk. Its findings are appended in short transactions of their own; a crash repeats nothing, because a detector records a finding once. A verifier that holds only the log computes the same verdict and appends nothing. A full walk of a large log is slow, so the library does not schedule it: a caller runs it, over a range from its last verified position or over the whole log, where a deployment chooses in a maintenance window. Walking in resumable chunks is recorded in `spec/roadmap/security-findings.md`.
 
+**Why report how far an interrupted walk verified (assertions U, V and W)?** A verification of a whole log can fail part-way, for instance when the connection to the database drops. Without a position, the next verification starts again from the first event and meets the same failure at the same cost. The interruption names the highest local sequence number whose checks completed and carries the findings reported until then, so a caller verifies the rest with a range starting just above that number. Assertion D already makes that range check the link from the event before it into its first event, so a break exactly at the seam is found. An open event store records the findings the interruption carries, as it records those of a verdict, and does so before the interruption reaches the caller, so an anomaly met before the failure is not lost with it. A resumed verification can report again a finding of the event that was being checked when the failure came, or a fork already reported; recording keeps one finding of each identity, so a caller reads the two lists together by identity, not by concatenation.
+
 **Why a throughput bound (assertion T)?** The chains and the causal stamping add reads and writes to every append and every ingested event. Measured against the last release of the preceding major on the same workload and host, a fixed baseline the test pins, the bound keeps that cost proportionate and makes a regression fail the suite.
 
 **Succession.** A successor is a new database with its own identity, so its authored events form their own origin chain, rooted at its first event, and its predecessor's events form the predecessor's chain as the successor restored them, forks included. A succession therefore creates no fork, and the walk verifies the two chains separately. Continuity of authorship across a succession is a Layer 2 interpretation. The Layer 1 facts are the two chains and the succession event.
@@ -120,6 +128,9 @@ T. On the Postgres backend, the library's append throughput and its ingest throu
 
 ### Changelog
 
+- 2026-10-31 | 09fb6e24 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-10-31 | 8e5e6e3c | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-10-31 | - | - | Michael Lewis (<michael@anspar.org>) | U, V and W: a verification interrupted by a failure reports how far it verified and the findings it had reported, and an open event store records them.
 - 2026-09-26 | 201d5630 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-26 | - | - | Michael Lewis (<michael@anspar.org>) | I: every verdict finding carries the evidence a security finding of its kind carries. T: the baseline is the build the throughput test pins, the library on its main branch before the data-format major step. No code or test references I or T
 - 2026-09-25 | 9d31a14d | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
@@ -148,7 +159,7 @@ T. On the Postgres backend, the library's append throughput and its ingest throu
 - 2026-09-25 | 954cdf2b | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-24 | - | - | Michael Lewis (<michael@anspar.org>) | Add A-N: sealed hash, origin position and originating database read alike at every holder; the predecessor hash names the previous authored event; every stored event records its storage link in its last provenance entry; the chain verification operation over the storage chain and every origin chain, checking the first event of a range, reporting predecessor breaks, unrecorded forks (successors no skip lists by name) and skip record mismatches, listing pending recoveries, with its verdict; the predecessor check and the fork_unrecorded refusal at ingest; a second authored successor at the holding database reported as a fork of live sources; the chain index checked against the log
 
-*End* *Storage and origin chain verification* | **Hash**: 201d5630
+*End* *Storage and origin chain verification* | **Hash**: 09fb6e24
 
 ## EVS-DEV-causal-parents: Causal parents within an aggregate
 
@@ -165,7 +176,7 @@ A. Every event record SHALL carry a `causal` object with exactly these keys: `ki
 
 B. The library SHALL treat a record that carries no `causal` object of that shape as malformed: every ingest entry point and restore SHALL store no event for it, and every append and read SHALL refuse it, naming the field.
 
-C. The library SHALL let an entry-type definition declare, for each event type, its kind and its eligibility, and SHALL stamp an event type the definition does not declare as an eligible version.
+C. An entry-type definition SHALL declare every event type that events of its entry type carry.
 
 D. The library SHALL refuse an entry-type definition that declares one event type twice.
 
@@ -199,20 +210,26 @@ R. <RETIRED> Ingest compares no declarations: every holder reads the kind and el
 
 S. <RETIRED> Ingest checks an event's parents only as the chain verification does, by assertion K of this requirement.
 
+T. The library SHALL append no event of an event type that its entry type's definition does not declare.
+
 ### Rationale
 
-**Why a causal record on every event, and why record kind and eligibility on it (assertions A to G)?** A version names the version it follows, which records under the event's hash what history its author held when it wrote; later structural conflict detection builds on that record (`spec/roadmap/multi-source-editing.md`). The library stamps it inside the append transaction from the log, so the application cannot make it claim a history it did not hold. Kind and eligibility are recorded on the event as well as declared, so a verifier holding another database's events needs no registry (`EVS-PRD-hash-chain-integrity`), and the record stays the truth whichever build wrote it. Reserved events are ineligible annotations, so the library's own records never enter an aggregate's causal structure.
+**Why a causal record on every event, and why record kind and eligibility on it (assertions A to G)?** A version names the version it follows, which records under the event's hash what history its author held when it wrote; later structural conflict detection builds on that record (`spec/roadmap/multi-source-editing.md`). The library stamps it inside the append transaction from the log, so the application cannot make it claim a history it did not hold. A declaration states an event type's kind and its eligibility, and an entry type's declarations name every event type it carries, so the library appends no event whose stamp it would have to invent (assertions C and T); ingest refuses an event of an application entry type whose event type the receiver does not declare (`EVS-DEV-version-compatibility/D`). Kind and eligibility are recorded on the event as well as declared, so a verifier holding another database's events needs no registry (`EVS-PRD-hash-chain-integrity`), and the record stays the truth whichever build wrote it. Reserved events are ineligible annotations, so the library's own records never enter an aggregate's causal structure.
 
 **Why is the stamping rule the latest eligible version in the appender's log (assertion H)?** While an aggregate has one writer of versions, the version it follows is the latest one its writer holds. Reading the appender's log order, not origin positions, covers the events the appender holds without having authored them: a successor's first edit of its predecessor's entry names the predecessor's last version it restored. Where the holder holds two branches of a fork, the rule names the latest in log order, which a restore fixes by storing the branches in the order its receiver accepted them, and decides nothing between them: the aggregate carries the outstanding-finding mark, and detecting the conflict from the parents is roadmap work (`spec/roadmap/multi-source-editing.md`). An ineligible event, such as a draft, is local working state and never a parent. An annotation with no eligible version held is a root annotation with no parents. Annotations are skipped when parents are chosen, so a score recorded between two versions does not become the later version's parent. The rule reads the log, served by the storage backend's own index, which no check compares: on Postgres an index over the eligible versions of each aggregate, and on Sembast a per-aggregate record of the latest eligible version, written in the transaction that stores the event, so an append reads it without scanning the log.
 
 **Why check parents this way (assertions K and L)?** Some checks need no history. A parent that is an annotation, an ineligible event or an event of another aggregate breaks the stamping rule at any holder. So does an identifier held under another hash. Exactness does need history, and only the database that appended an event knows exactly what it held: its log order and the versions a filter kept from any other holder. So the appender checks its own events against its log order, and every other holder checks validity only.
 
-**Why are declarations compared nowhere?** Every rule that reads kind or eligibility reads the values recorded on the event under its hash: the stamping rule and the walk. A build that declares an event type otherwise, within one entry-type major or across majors, records its own events truthfully under its own declaration, and every holder reads what was recorded, so no boot, ingest or walk compares a build's declarations with another's, and changing a declaration is no entry-type major step. The registry audit records each build's declarations (`EVS-DEV-version-compatibility/K`), so the log shows which declarations were in force when each event was appended.
+**Why are declarations compared nowhere?** Every rule that reads kind or eligibility reads the values recorded on the event under its hash: the stamping rule and the walk. A build that declares an event type otherwise, within one entry-type major or across majors, records its own events truthfully under its own declaration, and every holder reads what was recorded, so no boot, ingest or walk compares a build's kind or eligibility for an event type with another's, and changing a declaration is no entry-type major step. Ingest checks only that the receiver's build declares the event's event type at all (`EVS-DEV-version-compatibility/D`). The registry audit records each build's declarations (`EVS-DEV-version-compatibility/K`), so the log shows which declarations were in force when each event was appended.
 
 **Layer.** The causal record on each event is a Layer 1 fact: what the library stamped, covered by the hash. Two things are Layer 2 conventions: the vocabulary of versions, annotations and eligibility, and the rule that a version follows the latest eligible version. The substrate could equally track causality per field, or not at all. The verification checks the Layer 1 record against the Layer 2 rule, and reports every place where the two disagree.
 
 ### Changelog
 
+- 2026-10-31 | 44d4dd4c | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-10-31 | - | - | Michael Lewis (<michael@anspar.org>) | C: an entry-type definition declares every event type its entry type carries, replacing the eligible-version default for an undeclared event type. Add T: the library appends no event of an event type its entry type does not declare
+- 2026-10-30 | e2eee9c4 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: sync changelog hash
+- 2026-10-30 | - | - | Michael Lewis (<michael@anspar.org>) | Rationale: ingest checks only that the receiver's build declares an event's event type, and compares no kind or eligibility. No assertion changes
 - 2026-09-28 | e2eee9c4 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: sync changelog hash
 - 2026-09-28 | - | - | Michael Lewis (<michael@anspar.org>) | Rationale of H: each backend serves the latest eligible version from its own index, on Sembast a per-aggregate record written with the event, so an append does not scan the log. No assertion changes
 - 2026-09-26 | e2eee9c4 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
@@ -236,4 +253,4 @@ S. <RETIRED> Ingest checks an event's parents only as the chain verification doe
 - 2026-09-25 | 64844bd2 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-24 | - | - | Michael Lewis (<michael@anspar.org>) | Add A-P: the causal record on every event, with kind, eligibility, parents and the skip events a reconciliation closes; per-event-type declarations of kind and eligibility, reserved event types ineligible annotations; the stamping rule for versions, annotations, ineligible events on a conflicted aggregate and reconciliations, ignoring uncovered recovered events; parent validity and exactness checks in the chain verification, and reconciliation checks; declarations refused at open when they differ within one major and at ingest when they differ from the receiver's, and listed as notes by the walk; the withheld-parent record by queue membership, and the ingest refusal of a contradicting one; the per-aggregate causal working copy, serialized with the skip and checked against the log
 
-*End* *Causal parents within an aggregate* | **Hash**: e2eee9c4
+*End* *Causal parents within an aggregate* | **Hash**: 44d4dd4c

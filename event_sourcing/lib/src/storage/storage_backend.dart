@@ -4,7 +4,7 @@ import 'package:event_sourcing/src/destinations/destination_schedule.dart';
 import 'package:event_sourcing/src/destinations/wire_payload.dart';
 import 'package:event_sourcing/src/security/security_context_store.dart';
 import 'package:event_sourcing/src/security/system_entry_types.dart'
-    show kDestinationSenderSucceededEntryType;
+    show kDestinationSenderSucceededEntryType, kEveryCopyFoldsEntryTypes;
 import 'package:event_sourcing/src/storage/append_result.dart';
 import 'package:event_sourcing/src/storage/attempt_result.dart';
 import 'package:event_sourcing/src/storage/boot_check.dart';
@@ -321,6 +321,49 @@ abstract class StorageBackend {
     DateTime? clientTimestampStart,
     DateTime? clientTimestampEnd,
   });
+
+  /// The events of the log, read inside [txn], whose position is after
+  /// [afterSequence] and at or before [throughSequence], in ascending
+  /// position order, at most [limit] of them: each event that matches
+  /// every filter given -- its entry type in [entryTypes], its event type
+  /// in [eventTypes], its aggregate type in [aggregateTypes] -- and every
+  /// event of an entry type in [kEveryCopyFoldsEntryTypes] whatever the
+  /// filters. A null filter restricts nothing; an empty one matches no
+  /// event.
+  ///
+  /// The read a catch-up and a currency scan make of the events past a
+  /// copy's watermark: asked for the events its definition can fold, the
+  /// backend returns only those, so a log of events the view never folds
+  /// costs it no read of them. This default reads the range through
+  /// [findAllEventsInTxn] and filters in Dart; a backend overrides it with
+  /// a read its engine filters.
+  @internal
+  Future<List<StoredEvent>> findCandidateEventsInTxn(
+    Transaction txn, {
+    required int afterSequence,
+    required int throughSequence,
+    required int limit,
+    Set<String>? entryTypes,
+    Set<String>? eventTypes,
+    Set<String>? aggregateTypes,
+  }) => findCandidateEventsByScan(
+    this,
+    txn,
+    afterSequence: afterSequence,
+    throughSequence: throughSequence,
+    limit: limit,
+    entryTypes: entryTypes,
+    eventTypes: eventTypes,
+    aggregateTypes: aggregateTypes,
+  );
+
+  /// The position of the latest event of the log, as [txn] reads it, or 0
+  /// for an empty log. This default reads the latest event through
+  /// [readEventsReverseInTxn]; a backend overrides it with a read that
+  /// decodes no event.
+  @internal
+  Future<int> readLogHeadInTxn(Transaction txn) =>
+      readLogHeadByReverseRead(this, txn);
 
   /// Reserve-and-increment the per-device sequence counter within [txn] and
   /// return the reserved value.
@@ -1159,7 +1202,10 @@ abstract class StorageBackend {
   /// used by one process (Sembast outside the browser) uses an
   /// isolate-local lock, since only one instance can ever reach the
   /// database.
-  // Implements: EVS-DEV-view-convergence/L
+  // Implements: EVS-DEV-view-convergence/W
+  // on Postgres the SHARE lock on the sequence counter's table orders a
+  //   catch-up transaction against appends, so an append waits for one
+  //   bounded catch-up at most.
   // Implements: EVS-DEV-view-convergence/M
   @internal
   Future<T?> catchUpTransaction<T>(
@@ -1765,6 +1811,81 @@ abstract class StorageBackend {
   /// Callers MUST await all outstanding operations before calling close.
   Future<void> close();
 }
+
+/// [StorageBackend.findCandidateEventsInTxn] as any backend can answer it:
+/// the range read through [StorageBackend.findAllEventsInTxn] a page at a
+/// time and filtered by [isCandidateEvent].
+@internal
+Future<List<StoredEvent>> findCandidateEventsByScan(
+  StorageBackend backend,
+  Transaction txn, {
+  required int afterSequence,
+  required int throughSequence,
+  required int limit,
+  Set<String>? entryTypes,
+  Set<String>? eventTypes,
+  Set<String>? aggregateTypes,
+}) async {
+  final found = <StoredEvent>[];
+  var after = afterSequence;
+  while (after < throughSequence && found.length < limit) {
+    final page = await backend.findAllEventsInTxn(
+      txn,
+      afterSequence: after,
+      limit: limit,
+    );
+    if (page.isEmpty) break;
+    for (final e in page) {
+      if (e.sequenceNumber > throughSequence) return found;
+      if (isCandidateEvent(
+        entryType: e.entryType,
+        eventType: e.eventType,
+        aggregateType: e.aggregateType,
+        entryTypes: entryTypes,
+        eventTypes: eventTypes,
+        aggregateTypes: aggregateTypes,
+      )) {
+        found.add(e);
+        if (found.length == limit) return found;
+      }
+    }
+    after = page.last.sequenceNumber;
+    if (page.length < limit) break;
+  }
+  return found;
+}
+
+/// [StorageBackend.readLogHeadInTxn] as any backend can answer it: the
+/// position of the first event [StorageBackend.readEventsReverseInTxn]
+/// yields, or 0.
+@internal
+Future<int> readLogHeadByReverseRead(
+  StorageBackend backend,
+  Transaction txn,
+) async {
+  await for (final e in backend.readEventsReverseInTxn(txn)) {
+    return e.sequenceNumber;
+  }
+  return 0;
+}
+
+/// Whether an event of [entryType], [eventType] and [aggregateType] is one
+/// [StorageBackend.findCandidateEventsInTxn] returns for the filters given:
+/// of an entry type in [kEveryCopyFoldsEntryTypes], or matching every
+/// non-null filter of [entryTypes], [eventTypes] and [aggregateTypes].
+@internal
+bool isCandidateEvent({
+  required String entryType,
+  required String eventType,
+  required String aggregateType,
+  required Set<String>? entryTypes,
+  required Set<String>? eventTypes,
+  required Set<String>? aggregateTypes,
+}) =>
+    kEveryCopyFoldsEntryTypes.contains(entryType) ||
+    ((entryTypes == null || entryTypes.contains(entryType)) &&
+        (eventTypes == null || eventTypes.contains(eventType)) &&
+        (aggregateTypes == null || aggregateTypes.contains(aggregateType)));
 
 /// Thrown from [StorageBackend.runInSavepointInTxn]'s body, in place of the
 /// original error, by a backend that classifies it as a rejection of a row

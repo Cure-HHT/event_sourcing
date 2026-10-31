@@ -8,6 +8,7 @@ import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../test_support/declarations.dart';
 import '../test_support/drain_wedge_conformance.dart'
     show expectWedgeRecordMatchesLog;
 import '../test_support/fake_destination.dart';
@@ -45,6 +46,7 @@ void main() {
         id: 'rerun_note',
         registeredVersion: EntryTypeVersion(1, 0),
         name: 'rerun_note',
+        declarations: <EventTypeDeclaration>[EligibleVersion('noted')],
       ),
     );
     store = await EventStore.openForTest(

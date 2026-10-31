@@ -18,12 +18,14 @@ import 'package:event_sourcing/postgres.dart';
 import 'package:postgres/postgres.dart';
 import 'package:test/test.dart';
 
+import '../../test_support/declarations.dart';
 import 'test_postgres_url.dart';
 
 const EntryTypeDefinition _noteDef = EntryTypeDefinition(
   id: 'description_note',
   registeredVersion: EntryTypeVersion(1, 0),
   name: 'description_note',
+  declarations: <EventTypeDeclaration>[EligibleVersion('written')],
 );
 
 const Source _source = Source(
