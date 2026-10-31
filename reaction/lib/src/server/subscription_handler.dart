@@ -29,12 +29,15 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:event_sourcing/event_sourcing.dart';
+import 'package:logging/logging.dart';
 import 'package:reaction/src/interfaces/principal_auth_validator.dart';
 import 'package:reaction/src/server/view_scope_registry.dart';
 import 'package:reaction/src/server/ws_connection_registry.dart';
 import 'package:reaction/src/wire/subscription_messages.dart';
 import 'package:reaction/src/wire/update_codec.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
+
+final _log = Logger('reaction.subscription_handler');
 
 /// Composition-time mapper from `ProjectionSpec.viewName` to the
 /// view-level `Permission` name required to subscribe to it.
@@ -170,10 +173,8 @@ class _ConnectionState {
   ///
   /// A send queued before the connection closed is dropped when it runs:
   /// the sink rejects writes after closing, and the chain must not carry
-  /// that rejection as an unhandled error.
-  // Implements: EVS-PRD-cross-process-event-transport/C
-  // a send to a closed connection is dropped, so the write chain never
-  //   raises and the remaining envelopes keep their submission order.
+  /// that rejection as an unhandled error. Any other write failure is
+  /// logged and the chain stays usable for later sends.
   void _send(Map<String, Object?> envelope) {
     if (_closed) return;
     final encoded = jsonEncode(envelope);
@@ -187,6 +188,8 @@ class _ConnectionState {
         // The sink closed underneath this write (peer gone before the
         // handler observed it): the send is dropped.
         _closed = true;
+      } catch (e, st) {
+        _log.warning('dropping a subscription send that failed', e, st);
       }
     });
   }

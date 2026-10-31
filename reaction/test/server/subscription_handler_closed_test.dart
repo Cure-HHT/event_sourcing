@@ -100,13 +100,13 @@ class _AllowPolicy implements AuthorizationPolicy {
 }
 
 void main() {
-  // Verifies: EVS-PRD-cross-process-event-transport/C
   // A send queued behind authentication is dropped when the connection
   // closed before it ran; no error escapes and nothing is written.
   test(
     'client closing while authentication is pending drops the send',
     () async {
       final errors = <Object>[];
+      final registry = WsConnectionRegistry();
       await runZonedGuarded(() async {
         final channel = _ClosingChannel();
         final validator = _GatedValidator();
@@ -117,7 +117,7 @@ void main() {
           policy: _AllowPolicy(),
           viewScopes: ViewScopeRegistry(),
           viewPermissionNamer: (v) => null,
-          connectionRegistry: WsConnectionRegistry(),
+          connectionRegistry: registry,
         );
 
         channel.incoming.add(jsonEncode({'type': 'auth', 'credential': 'x'}));
@@ -137,4 +137,34 @@ void main() {
       expect(errors, isEmpty);
     },
   );
+
+  // The sink closes without the stream's onDone being delivered; the send
+  // queued behind authentication hits the closed sink and is dropped.
+  test('a send hitting a closed sink is dropped without an error', () async {
+    final errors = <Object>[];
+    late _ClosingChannel channel;
+    await runZonedGuarded(() async {
+      channel = _ClosingChannel();
+      final validator = _GatedValidator();
+      runSubscriptionHandler(
+        channel: channel,
+        validator: validator,
+        eventStore: _NoStore(),
+        policy: _AllowPolicy(),
+        viewScopes: ViewScopeRegistry(),
+        viewPermissionNamer: (v) => null,
+        connectionRegistry: WsConnectionRegistry(),
+      );
+
+      channel.incoming.add(jsonEncode({'type': 'auth', 'credential': 'x'}));
+      await pumpEventQueue();
+
+      channel.closed = true;
+      validator.release();
+      await pumpEventQueue();
+    }, (Object e, StackTrace _) => errors.add(e));
+
+    expect(errors, isEmpty);
+    expect(channel.sent, isEmpty);
+  });
 }
