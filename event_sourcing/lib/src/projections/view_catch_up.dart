@@ -305,9 +305,10 @@ class ViewCatchUpDriver {
   /// registers for the view now, not one a rebuild has since replaced --
   /// commit at the log's head since [start]; then stays completed. Completes
   /// with a [StateError] when [stop] is called first.
-  // Implements: EVS-DEV-converging-view-reads/J
+  // Implements: EVS-DEV-converging-view-reads/M
   // the signal is the driver's own record of the copies it has left at the
-  //   log's head, held across attempts once set.
+  //   log's head, held across attempts once set: a view is caught up once
+  //   its current copy is in that record.
   Future<void> get caughtUp => _caughtUp.future;
 
   /// The names of the views whose current copy no attempt of this driver

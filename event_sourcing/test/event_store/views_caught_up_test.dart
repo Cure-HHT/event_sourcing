@@ -91,7 +91,7 @@ Future<SembastBackend> _backendWithUnfoldedLog() async {
 
 void main() {
   group('viewsCaughtUp', () {
-    // Verifies: EVS-DEV-converging-view-reads/J+L
+    // Verifies: EVS-DEV-converging-view-reads/M
     test('viewsCaughtUp completes once both copies reach the head', () async {
       final backend = await _backendWithUnfoldedLog();
       final store = await _open(backend);
@@ -110,7 +110,7 @@ void main() {
       await store.close();
     });
 
-    // Verifies: EVS-DEV-converging-view-reads/J
+    // Verifies: EVS-DEV-converging-view-reads/M
     test(
       'viewsCaughtUp returns at once when every copy is already at head',
       () async {
@@ -118,15 +118,20 @@ void main() {
         final store = await _open(backend);
         await store.reader.viewsCaughtUp(timeout: const Duration(seconds: 20));
 
-        final watch = Stopwatch()..start();
-        await store.reader.viewsCaughtUp(timeout: const Duration(seconds: 20));
-        watch.stop();
-        expect(watch.elapsed, lessThan(const Duration(milliseconds: 100)));
+        // The second wait completes within the microtasks of its own
+        // call, before the next event-loop task (a zero-length timer) runs.
+        var returned = false;
+        final second = store.reader
+            .viewsCaughtUp(timeout: const Duration(seconds: 20))
+            .then((_) => returned = true);
+        await Future<void>.delayed(Duration.zero);
+        expect(returned, isTrue);
+        await second;
         await store.close();
       },
     );
 
-    // Verifies: EVS-DEV-converging-view-reads/J+L
+    // Verifies: EVS-DEV-converging-view-reads/N+O+P
     test(
       'viewsCaughtUp throws ViewConvergenceTimeout naming the paused view',
       () async {
@@ -145,14 +150,39 @@ void main() {
           () async {
             store = await _open(backend);
             opened = true;
+            // Precondition: every view but the paused one has caught up, so
+            // the 1 s deadline below measures only the paused view.
+            final settleBy = DateTime.now().add(const Duration(seconds: 20));
+            while (true) {
+              final progress = await store.reader.viewProgress();
+              final others = progress.where((s) => s.viewName != paused);
+              if (others.every(
+                (s) => s.state == ViewConvergenceState.current,
+              )) {
+                break;
+              }
+              expect(DateTime.now().isBefore(settleBy), isTrue);
+              await Future<void>.delayed(const Duration(milliseconds: 20));
+            }
             await expectLater(
               store.reader.viewsCaughtUp(timeout: const Duration(seconds: 1)),
               throwsA(
-                isA<ViewConvergenceTimeout>().having(
-                  (e) => e.converging.map((s) => s.viewName),
-                  'views',
-                  [paused],
-                ),
+                isA<ViewConvergenceTimeout>()
+                    .having(
+                      (e) => e.converging.map((s) => s.viewName),
+                      'views',
+                      [paused],
+                    )
+                    .having(
+                      (e) => e.converging.single.logHead,
+                      "the paused copy's progress: the log's head",
+                      greaterThanOrEqualTo(_kLogLength),
+                    )
+                    .having(
+                      (e) => e.converging.single.watermark,
+                      "the paused copy's progress: its watermark",
+                      lessThan(_kLogLength),
+                    ),
               ),
             );
             await store.close();
@@ -161,7 +191,7 @@ void main() {
       },
     );
 
-    // Verifies: EVS-DEV-converging-view-reads/J
+    // Verifies: EVS-DEV-converging-view-reads/M
     test(
       'viewsCaughtUp throws StateError when the store closes first',
       () async {

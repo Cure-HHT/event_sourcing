@@ -4266,10 +4266,13 @@ final class _StorageReader implements StorageReader {
     return statuses;
   });
 
-  // Implements: EVS-DEV-converging-view-reads/J+L
-  // waits on the catch-up driver's own record of the copies it has left at
-  //   the log's head, and on the deadline names each view not yet there
-  //   with its copy's progress, as viewProgress reports it.
+  // Implements: EVS-DEV-converging-view-reads/M
+  // returns once the catch-up driver's own record holds every registered
+  //   view's current copy as having reached the log's head since open.
+  // Implements: EVS-DEV-converging-view-reads/N+O+P
+  // at the deadline throws ViewConvergenceTimeout naming every view not yet
+  //   caught up with its copy's progress, as viewProgress reports it, or as
+  //   a copy at watermark 0 for a view viewProgress has no status for.
   @override
   Future<void> viewsCaughtUp({required Duration timeout}) async {
     final caughtUp = _store._catchUpCaughtUp;
@@ -4291,9 +4294,23 @@ final class _StorageReader implements StorageReader {
     // every view is there, so the wait succeeded.
     if (pending.isEmpty) return;
     final progress = await viewProgress();
+    final byName = {for (final status in progress) status.viewName: status};
+    var logHead = 0;
+    for (final status in progress) {
+      if (status.logHead > logHead) logHead = status.logHead;
+    }
+    if (progress.isEmpty) logHead = await readSequenceCounter();
     throw ViewConvergenceTimeout([
-      for (final status in progress)
-        if (pending.contains(status.viewName)) status,
+      for (final viewName in pending)
+        byName[viewName] ??
+            ViewCopyStatus(
+              viewName: viewName,
+              state: ViewConvergenceState.converging,
+              watermark: 0,
+              logHead: logHead,
+              lastFailure: null,
+              lastFailureAt: null,
+            ),
     ]);
   }
 
