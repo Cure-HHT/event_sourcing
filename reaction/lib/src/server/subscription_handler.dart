@@ -150,6 +150,10 @@ class _ConnectionState {
   // order across all subscriptions on this connection.
   Future<void> _writeChain = Future<void>.value();
 
+  // True once the connection is gone: the peer disconnected or errored,
+  // or this side closed the sink. No write reaches the sink afterwards.
+  bool _closed = false;
+
   void start() {
     channel.stream.listen(
       _onMessage,
@@ -163,11 +167,34 @@ class _ConnectionState {
   /// serializes the `channel.sink.add` through `_writeChain` so that
   /// concurrent producers (multiple substrate subscriptions) cannot
   /// interleave on the wire.
+  ///
+  /// A send queued before the connection closed is dropped when it runs:
+  /// the sink rejects writes after closing, and the chain must not carry
+  /// that rejection as an unhandled error.
+  // Implements: EVS-PRD-cross-process-event-transport/C
+  // a send to a closed connection is dropped, so the write chain never
+  //   raises and the remaining envelopes keep their submission order.
   void _send(Map<String, Object?> envelope) {
+    if (_closed) return;
     final encoded = jsonEncode(envelope);
-    _writeChain = _writeChain.then((_) async {
-      channel.sink.add(encoded);
+    _writeChain = _writeChain.then((_) {
+      if (_closed) return;
+      try {
+        channel.sink.add(encoded);
+        // The sink reports a write after closing as a StateError.
+        // ignore: avoid_catching_errors
+      } on StateError {
+        // The sink closed underneath this write (peer gone before the
+        // handler observed it): the send is dropped.
+        _closed = true;
+      }
     });
+  }
+
+  /// Close the sink from the server side and stop all further writes.
+  Future<void> _reject() async {
+    _closed = true;
+    await channel.sink.close(4001, 'auth_rejected');
   }
 
   Future<void> _onMessage(dynamic raw) async {
@@ -198,15 +225,18 @@ class _ConnectionState {
     try {
       msg = SubscriptionMessages.decodeClient(json);
     } on FormatException {
-      await channel.sink.close(4001, 'auth_rejected');
+      await _reject();
       return;
     }
     if (msg is! AuthMessage) {
-      await channel.sink.close(4001, 'auth_rejected');
+      await _reject();
       return;
     }
     try {
       final principal = await validator.authenticate(msg.credential);
+      // The connection closed while authentication was pending: nothing
+      // is registered or sent for it.
+      if (_closed) return;
       _principal = principal;
       final principalId = principal is UserPrincipal
           ? principal.userId
@@ -216,7 +246,7 @@ class _ConnectionState {
         SubscriptionMessages.encodeServer(AuthOkMsg(principalId: principalId)),
       );
     } on AuthenticationDenied {
-      await channel.sink.close(4001, 'auth_rejected');
+      await _reject();
     }
   }
 
@@ -321,6 +351,9 @@ class _ConnectionState {
     } else {
       effectiveAggregates = msg.aggregates!.intersection(allowedAggregates);
     }
+
+    // The connection closed while the authorization reads were pending.
+    if (_closed) return;
 
     // --- Step 4: open the substrate subscription and relay. ---
     final stream = eventStore.subscribe<Map<String, Object?>>(
@@ -463,6 +496,7 @@ class _ConnectionState {
   }
 
   Future<void> _cleanup() async {
+    _closed = true;
     for (final sub in _subs.values) {
       await sub.cancel();
     }
