@@ -70,5 +70,5 @@
 | EVS-DEV-severe-log-default                 | Severe log records reach standard error                      | dev-severe-log-default.md               | 2019159d |
 | EVS-DEV-storage-capability                 | The storage capability the library keeps                     | dev-storage-capability.md               | 4cba8786 |
 | EVS-DEV-transactional-authorize-execute    | Dispatch tx encompasses authorize + execute + persist        | scoped-permissions.md                   | 5e07a961 |
-| EVS-DEV-version-compatibility              | Entry-type and data-format versions                          | dev-version-compatibility.md            | 8d1becf9 |
+| EVS-DEV-version-compatibility              | Entry-type and data-format versions                          | dev-version-compatibility.md            | 11364d97 |
 | EVS-DEV-view-convergence                   | View copies and their catch-up                               | dev-view-convergence.md                 | d6590efb |

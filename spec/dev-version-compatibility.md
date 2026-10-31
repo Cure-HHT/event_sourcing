@@ -15,7 +15,7 @@ B. The library SHALL refuse to register a promoter step within one major unless 
 
 C. The library SHALL declare a data-format version, a major and a minor number distinct from its package version, SHALL stamp it on every event it appends, and SHALL treat builds with the same data-format major as compatible.
 
-D. On every ingest entry point the library SHALL refuse, before any write, an event whose data-format major differs from its own, whose entry-type major is above the registered major, whose event type its registered entry type does not declare, or whose entry-type version is below the registered version with no registered promoter path from it for a view the event folds into; SHALL accept an event of the registered entry-type major at any minor, folding it unchanged when its minor is not below the registered minor; and SHALL accept an event of an entry type it does not register at any version.
+D. On every ingest entry point the library SHALL refuse, before any write, an event whose data-format major differs from its own, whose entry-type major is above the registered major, whose event type its registered application entry type does not declare, or whose entry-type version is below the registered version with no registered promoter path from it for a view the event folds into; SHALL accept an event of the registered entry-type major at any minor, folding it unchanged when its minor is not below the registered minor; and SHALL accept an event of an entry type it does not register at any version.
 
 E. <RETIRED> A fold under an older minor folds into that build's own view copy, whose definition names its minor (EVS-DEV-view-convergence).
 
@@ -53,7 +53,7 @@ R. <RETIRED> A changed declaration of kind or eligibility is no entry-type major
 
 **What each version part means.** An entry type's version has three parts, each defined by its effect on the events already stored. A major step makes stored events unreadable without a promoter, so builds of different majors never run side by side and ingest refuses a higher major. A minor step makes stored events replay differently, so a view folding the entry type is a new definition with a copy of its own (EVS-DEV-view-convergence). A patch makes no stored event replay differently: adding an event type is one, since no stored event is of it. The event carries only the major and minor, the parts that decide how it is read; the patch is a property of the definition, recorded in the registry audit and never stamped on an event or part of a view's definition.
 
-**Why refuse an event type the entry type does not declare (assertion D)?** An entry type declares every event type it carries, so an event of a registered entry type whose event type the receiver's build does not declare was appended by a build that added that event type. The receiver cannot know the kind and eligibility that build declared for it, nor how its views should fold it, so it refuses the event before any write, as it refuses a higher major, and the delivery waits until the receiver runs a build that declares it. An event of an entry type the receiver does not register at all is still accepted at any version: the receiver folds it into no view of its own.
+**Why refuse an event type the entry type does not declare (assertion D)?** An entry type declares every event type it carries, so an event of a registered application entry type whose event type the receiver's build does not declare was appended by a build that added that event type. The receiver cannot know the kind and eligibility that build declared for it, nor how its views should fold it, so it refuses the event before any write, as it refuses a higher major, and the delivery waits until the receiver runs a build that declares it. An event of an entry type the receiver does not register at all is still accepted at any version: the receiver folds it into no view of its own. A reserved entry type in a shape the library does not declare for it is kept in a finding instead (`EVS-DEV-security-findings/O`).
 
 **How do builds of different minors, or with different views, share a database?** Each stores a view per fingerprint of its definition, which includes the registered version of every entry type the view folds (EVS-DEV-view-convergence). Builds that agree share a copy; a build of another minor, or one that adds or changes a view, folds into a copy of its own, which catches up with the log after its open and is reported as converging until it has (EVS-DEV-converging-view-reads). A build of an older minor therefore never folds into a newer minor's rows, and a view registered over an existing log, or one another build's appends leave behind, is caught up by the builds that register it. The copies and their watermarks are storage state kept beside the views (EVS-PRD-destinations/L), not facts of the log.
 
@@ -82,6 +82,9 @@ A field the library requires, and refuses a record without, cannot be added in a
 
 ## Changelog
 
+- 2026-10-30 | 11364d97 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: sync changelog hash
+- 2026-10-30 | - | - | Michael Lewis (<michael@anspar.org>) | D: the undeclared-event-type refusal applies to application entry types; a reserved entry type in an undeclared shape stays kept in a finding
+- 2026-10-30 | 11364d97 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-10-30 | 8d1becf9 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-10-30 | - | - | Michael Lewis (<michael@anspar.org>) | D: ingest refuses, before any write, an event whose event type its registered entry type does not declare. Rationale: the three version parts by their effect on stored events, the patch recorded in the registry audit and never on an event, and why an undeclared event type is refused
 - 2026-09-25 | 53f98178 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
@@ -108,4 +111,4 @@ A field the library requires, and refuses a record without, cannot be added in a
 - 2026-09-23 | b1c77f28 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-23 | - | - | Michael Lewis (<michael@anspar.org>) | Add A-E, J, K: entry-type and data-format versions are major.minor; promoter step rule; ingest compares majors, refuses an unpromotable lower version and accepts an unregistered entry type; a fold under an older minor lowers the stored target; versions are hashed; the registry audit records every major and minor
 
-*End* *Entry-type and data-format versions* | **Hash**: 8d1becf9
+*End* *Entry-type and data-format versions* | **Hash**: 11364d97
