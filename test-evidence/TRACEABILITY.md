@@ -2553,10 +2553,10 @@ Code:
 - event_sourcing/lib/src/permissions/table_backed_authorization_policy.dart:32
 - event_sourcing/lib/src/projections/view_read.dart:131
 - reaction/lib/src/server/action_route.dart:68
-- reaction/lib/src/server/authorization_watcher.dart:230
+- reaction/lib/src/server/authorization_watcher.dart:245
 - reaction/lib/src/server/permission_route.dart:31
 - reaction/lib/src/server/reaction_handlers.dart:99
-- reaction/lib/src/server/subscription_handler.dart:293
+- reaction/lib/src/server/subscription_handler.dart:326
 - reaction/lib/src/server/view_converging_response.dart:1
 
 Tests:
@@ -11959,7 +11959,7 @@ Tests:
 
 Code:
 
-- reaction/lib/src/server/authorization_watcher.dart:188
+- reaction/lib/src/server/authorization_watcher.dart:203
 - reaction/lib/src/server/authorization_watcher.dart:31
 
 Tests:
