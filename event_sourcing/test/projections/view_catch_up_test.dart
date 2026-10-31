@@ -273,7 +273,8 @@ void main() {
       );
     });
 
-    // Verifies: EVS-DEV-view-convergence/N
+    // The 200 ms step bound is the means of the bound on serving appends;
+    // this pins it beside the step floor.
     // Verifies: EVS-DEV-view-convergence/O
     test(
       'the 200 ms bound stops further steps, and one step always runs',

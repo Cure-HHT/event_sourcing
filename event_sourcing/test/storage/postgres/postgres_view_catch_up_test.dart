@@ -242,7 +242,8 @@ void main() {
     );
   });
 
-  // Verifies: EVS-DEV-view-convergence/L
+  // Pins the SHARE table lock, the Postgres means of the bound on serving
+  // appends that the measured scenarios verify.
   test(
     "a catch-up transaction's first lock is SHARE on backend_state, seen "
     'through pg_locks, and an append waits for it and then commits',

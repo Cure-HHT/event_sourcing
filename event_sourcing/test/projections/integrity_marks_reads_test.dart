@@ -247,7 +247,8 @@ void main() {
     },
   );
 
-  // Verifies: EVS-DEV-view-convergence/N
+  // A catch-up step reads from the copy's watermark, so the step bound
+  // that keeps a serving append's wait short holds however long the log.
   test('a catch-up transaction of a behind copy with a counted finding held '
       'makes no full-log replay scan', () async {
     final (store, backend) = await _open();

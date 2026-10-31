@@ -430,8 +430,8 @@ class DeliveryTestHooks {
   final FutureOr<void> Function(String copyId, String eventId)? onCatchUpStep;
 
   /// Replaces the clock a `ViewCatchUpDriver` reads elapsed time from to
-  /// decide when its 200 ms per-transaction step bound
-  /// (EVS-DEV-view-convergence/N) has passed. Production reads
+  /// decide when its 200 ms per-transaction step bound (the means of
+  /// EVS-DEV-view-convergence/W) has passed. Production reads
   /// `DateTime.now()`.
   final DateTime Function()? catchUpClock;
 

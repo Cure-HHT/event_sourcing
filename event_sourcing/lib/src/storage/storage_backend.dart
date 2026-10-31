@@ -1159,7 +1159,10 @@ abstract class StorageBackend {
   /// used by one process (Sembast outside the browser) uses an
   /// isolate-local lock, since only one instance can ever reach the
   /// database.
-  // Implements: EVS-DEV-view-convergence/L
+  // Implements: EVS-DEV-view-convergence/W
+  // on Postgres the SHARE lock on the sequence counter's table orders a
+  //   catch-up transaction against appends, so an append waits for one
+  //   bounded catch-up at most.
   // Implements: EVS-DEV-view-convergence/M
   @internal
   Future<T?> catchUpTransaction<T>(

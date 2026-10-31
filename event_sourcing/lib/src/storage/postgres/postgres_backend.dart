@@ -1251,9 +1251,12 @@ class PostgresBackend extends StorageBackend {
   /// nothing; granted, it runs the generation fence and [body] as
   /// [transaction] does, releasing the advisory lock when the transaction
   /// ends.
-  // Implements: EVS-DEV-view-convergence/L
-  // Implements: EVS-DEV-view-convergence/M (Postgres transaction-scoped
-  //   advisory lock)
+  // Implements: EVS-DEV-view-convergence/W
+  // the SHARE lock on the sequence counter's table, taken first and never
+  //   written under, orders the catch-up against appends.
+  // Implements: EVS-DEV-view-convergence/M
+  // a transaction-scoped advisory try-lock per copy: a transaction that
+  //   is not granted it writes nothing.
   @override
   @internal
   Future<T?> catchUpTransaction<T>(

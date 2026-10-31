@@ -13,15 +13,15 @@
 //   for this instance's own registered views, forever: another build's
 //   append can make a current copy converging again, and the next idle
 //   pass notices it.
-// Implements: EVS-DEV-view-convergence/L
 // Implements: EVS-DEV-view-convergence/M
 // a copy's lock, and on Postgres the sequence-counter table's SHARE lock
 //   that orders a catch-up transaction against appends, are the backend's
 //   own concern (StorageBackend.catchUpTransaction): this driver only
 //   reacts to a null result by treating the attempt as lock-held.
-// Implements: EVS-DEV-view-convergence/N
+// Implements: EVS-DEV-view-convergence/W
 // a catch-up transaction begins no further step once the driver's clock
-//   shows 200 ms have passed since the transaction began.
+//   shows 200 ms have passed since the transaction began, so the appends
+//   it holds back wait one bounded transaction at most.
 // Implements: EVS-DEV-view-convergence/O
 // the step loop is a do-while: the first step always runs, whatever the
 //   clock reads; a fold failure ends the transaction on the event it met,
@@ -112,16 +112,17 @@ class _CatchUpFoldFailureSignal implements Exception {
 // Implements: EVS-DEV-view-convergence/X
 // steps repeat back to back while a copy is behind, so its watermark
 //   reaches the log head within the measured window.
-/// The step bound of one catch-up transaction (EVS-DEV-view-convergence/N):
-/// no further step begins once a transaction has run this long.
+/// The step bound of one catch-up transaction, the means of
+/// EVS-DEV-view-convergence/W: no further step begins once a transaction
+/// has run this long.
 @internal
 const Duration kCatchUpStepBound = Duration(milliseconds: 200);
 
 /// The page size a catch-up transaction reads the log in, and the most
 /// events whose folded rows it holds in memory before writing them: an
 /// implementation detail of how it walks the log within one transaction,
-/// not a spec-bound quantity like [kCatchUpStepBound] or
-/// [kCatchUpDeleteBatchLimit].
+/// not a spec-bound quantity like [kCatchUpDeleteBatchLimit], nor the
+/// means of a measured bound like [kCatchUpStepBound].
 @internal
 const int kCatchUpReadChunk = 200;
 
