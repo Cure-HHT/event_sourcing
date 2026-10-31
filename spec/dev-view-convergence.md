@@ -15,7 +15,7 @@ Terms used below:
 - A copy is **behind** in a transaction when its watermark is before the position of the latest event of the log that the transaction reads.
 - A copy is **current** in a transaction when the log that the transaction reads holds no event past the copy's watermark that the copy's definition folds, and **converging** otherwise.
 - The events a copy's definition **folds** include every security finding event and every sender-succession event, whatever the view's interest, which the copy folds for its outstanding-finding marks.
-- A **catch-up transaction** is a transaction, other than the boot of `EventStore.open` and a transaction that stores events, that folds events into a copy or deletes rows of a copy marked for deletion. A **step** of it is the fold of one event, or the passing over of one event its copy's definition does not fold or whose fold into it fails, or the deletion of up to 500 rows.
+- A **catch-up transaction** is a transaction, other than the boot of `EventStore.open` and a transaction that stores events, that folds events into a copy or deletes rows of a copy marked for deletion. A **step** of it is the fold of one event, or the passing over of one event its copy's definition does not fold or whose fold into it fails, or the passing over of one window of log positions none of which holds an event its copy's definition folds, or the deletion of up to 500 rows.
 - A **fold failure** is a deterministic failure to compute or to write one copy's rows for one event, as the library classifies it: a failure raised by a promoter of the copy's chain, or by the computation of a row's key, a row's data or a derived field the copy's shape declares; and, on a `PostgresBackend`, a write of a row of the copy that the server rejects with an error of SQLSTATE class `22` (data exception), `23` (integrity constraint violation) or `54` (program limit exceeded). Every other failure is a **storage failure**, not a fold failure: a lost connection, a serialization failure or deadlock (`40001`, `40P01`), insufficient resources (class `53`), operator intervention (class `57`), a read or write any other backend refuses, and any other error of the backend.
 - An **always-stored event** is an event an ingest or a restore stores, a record the library appends in the transaction of an ingest, a restore or the drain, and a security finding.
 - A copy **passes over** an event when it sets its watermark past the event, writing no row for it; it passes over only an event its definition does not fold or whose fold into it fails.
@@ -111,6 +111,8 @@ Z. A copy of a view SHALL keep serving, and keep folding the events after each s
 
 ## Changelog
 
+- 2026-10-31 | 766c4e99 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: sync changelog hash
+- 2026-10-31 | - | - | Michael Lewis (<michael@anspar.org>) | Terms: a step of a catch-up transaction includes passing over one window of log positions none of which holds an event its copy's definition folds
 - 2026-10-31 | 766c4e99 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: sync changelog hash
 - 2026-10-31 | - | - | Michael Lewis (<michael@anspar.org>) | Rationale: a step of a catch-up is one event folded or one window of positions passed over
 - 2026-10-31 | 766c4e99 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: sync changelog hash
