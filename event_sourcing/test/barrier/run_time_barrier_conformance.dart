@@ -24,6 +24,7 @@ import 'package:event_sourcing/src/security/security_context_store.dart'
     show MutableSecurityContextStore;
 import 'package:flutter_test/flutter_test.dart';
 
+import '../test_support/declarations.dart';
 import '../test_support/deliveries.dart';
 import '../test_support/fake_destination.dart';
 
@@ -43,6 +44,7 @@ const EntryTypeDefinition barrierNoteType = EntryTypeDefinition(
   id: 'barrier_note',
   registeredVersion: EntryTypeVersion(1, 0),
   name: 'Barrier note',
+  declarations: <EventTypeDeclaration>[EligibleVersion('written')],
 );
 
 const String _notesView = 'barrier_notes';

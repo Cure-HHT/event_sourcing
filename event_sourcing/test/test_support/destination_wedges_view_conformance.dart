@@ -21,6 +21,7 @@ import 'package:event_sourcing/src/security/system_entry_types.dart'
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
+import 'declarations.dart';
 import 'deliveries.dart';
 import 'fake_destination.dart';
 import 'queue_registry_conformance.dart' show QueueTestDatabase;
@@ -47,6 +48,10 @@ const EntryTypeDefinition _noteDef = EntryTypeDefinition(
   id: _noteType,
   registeredVersion: EntryTypeVersion(1, 0),
   name: _noteType,
+  declarations: <EventTypeDeclaration>[
+    EligibleVersion('finalized'),
+    EligibleVersion('destination_wedged'),
+  ],
 );
 
 DateTime _fillNow() => DateTime.utc(2027, 1, 1);

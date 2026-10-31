@@ -14,6 +14,7 @@ import 'package:event_sourcing/src/ingest/sender_succession.dart'
 import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'declarations.dart';
 import 'deliveries.dart' show TestDelivery, deliverTo, testChannel;
 import 'ingest_record_findings_conformance.dart' show resealed, sealedRecord;
 import 'manual_timers.dart' show neverFiringTimer;
@@ -39,6 +40,20 @@ const EntryTypeDefinition _entryType = EntryTypeDefinition(
   id: _kType,
   registeredVersion: EntryTypeVersion(1, 0),
   name: _kType,
+  declarations: <EventTypeDeclaration>[EligibleVersion('finalized')],
+);
+
+/// [_entryType] as a later build declares it, with an event type the
+/// successor's build does not declare.
+const EntryTypeDefinition _laterEntryType = EntryTypeDefinition(
+  id: _kType,
+  registeredVersion: EntryTypeVersion(1, 0),
+  name: _kType,
+  patch: 1,
+  declarations: <EventTypeDeclaration>[
+    EligibleVersion('finalized'),
+    EligibleVersion('archived'),
+  ],
 );
 
 /// A [Destination] whose pull routes directly to [receiver]'s receiver
@@ -149,12 +164,15 @@ class TamperingRangeDestination extends ReceiverPullDestination {
   }
 }
 
-/// Opens a fresh receiver store over [db].
-Future<EventStore> openRestoreReceiver(VersionTestDatabase db) async {
+/// Opens a fresh receiver store over [db], registering [entryType].
+Future<EventStore> openRestoreReceiver(
+  VersionTestDatabase db, {
+  EntryTypeDefinition entryType = _entryType,
+}) async {
   final backend = await db.openBackend();
   return EventStore.open(
     storage: ApplicationSuppliedStorage(backend, db.securityFor(backend)),
-    entryTypes: EntryTypeRegistry()..register(_entryType),
+    entryTypes: EntryTypeRegistry()..register(entryType),
     source: _receiverSource,
   );
 }
@@ -240,10 +258,12 @@ void runSuccessionRestoreScenarios({
     final opened = <EventStore>[];
     final databases = <VersionTestDatabase>[];
 
-    Future<EventStore> receiverStore() async {
+    Future<EventStore> receiverStore({
+      EntryTypeDefinition entryType = _entryType,
+    }) async {
       final db = (await openDatabase())!;
       databases.add(db);
-      final store = await openRestoreReceiver(db);
+      final store = await openRestoreReceiver(db, entryType: entryType);
       opened.add(store);
       return store;
     }
@@ -1081,6 +1101,78 @@ void runSuccessionRestoreScenarios({
         reason: 'no succession event was appended',
       );
     });
+
+    // Verifies: EVS-DEV-version-compatibility/D
+    test(
+      'refuses a restore serving an event whose event type the '
+      "successor's entry type does not declare, storing nothing, and "
+      'records one undeclared_event_type finding under the restore role',
+      () async {
+        final receiver = await receiverStore(entryType: _laterEntryType);
+        const predecessorId = 'predecessor-later-build';
+        final channel = testChannel(predecessorId);
+        final declared = sealedRecord(
+          databaseId: predecessorId,
+          entryType: _kType,
+        );
+        final undeclared = sealedRecord(
+          databaseId: predecessorId,
+          entryType: _kType,
+          eventType: 'archived',
+        );
+        for (final record in <Map<String, Object?>>[declared, undeclared]) {
+          expect(
+            (await deliverTo(receiver, <Map<String, Object?>>[
+              record,
+            ], channel: channel)).accepted,
+            isTrue,
+          );
+        }
+
+        final bundle = await successorBundle(receiver);
+        final successor = bundle.eventStore;
+        for (var attempt = 0; attempt < 2; attempt++) {
+          await expectLater(
+            successor.restoreFromReceiver(
+              registry: bundle.destinations,
+              destinationId: _destinationId,
+              predecessorDatabaseId: predecessorId,
+              initiator: const AutomationInitiator(service: 'restore-test'),
+            ),
+            throwsA(
+              isA<IngestUndeclaredEventType>()
+                  .having((e) => e.eventId, 'eventId', undeclared['event_id'])
+                  .having((e) => e.eventType, 'eventType', 'archived'),
+            ),
+          );
+        }
+
+        expect(
+          await successor.reader.findEventById(declared['event_id']! as String),
+          isNull,
+          reason: 'nothing of the restore was stored',
+        );
+        expect(
+          await successor.reader.findAllEvents(
+            entryType: kDestinationSenderSucceededEntryType,
+          ),
+          isEmpty,
+          reason: 'no succession event was appended',
+        );
+        final findings = <Map<String, Object?>>[
+          for (final f in await _ownFindings(successor))
+            if (f['kind'] == 'undeclared_event_type') f,
+        ];
+        expect(findings, hasLength(1));
+        expect(findings.single['evidence'], <String, Object?>{
+          'event_id': undeclared['event_id'],
+          'entry_type': _kType,
+          'event_type': 'archived',
+          'origin_database_id': predecessorId,
+        });
+        expect((findings.single['detector']! as Map)['role'], 'restore');
+      },
+    );
 
     // Verifies: EVS-DEV-sender-succession/H
     test('refuses a restore into a successor whose log already holds a '

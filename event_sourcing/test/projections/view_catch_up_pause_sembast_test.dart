@@ -18,6 +18,8 @@ import 'package:event_sourcing/src/event_store.dart' show PublishCollector;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart' hide Transaction;
 
+import '../test_support/declarations.dart';
+
 const _kType = 'pause_measured_note';
 const _kPing = 'pause_measured_ping';
 const _kView = 'pause_measured_notes';
@@ -41,6 +43,7 @@ Future<EventStore> _open(
         id: _kType,
         registeredVersion: EntryTypeVersion(1, 0),
         name: _kType,
+        declarations: <EventTypeDeclaration>[EligibleVersion('finalized')],
       ),
     )
     ..register(
@@ -48,6 +51,7 @@ Future<EventStore> _open(
         id: _kPing,
         registeredVersion: EntryTypeVersion(1, 0),
         name: _kPing,
+        declarations: <EventTypeDeclaration>[EligibleVersion('finalized')],
       ),
     );
   final registry = ProjectionRegistry();

@@ -4,6 +4,7 @@ import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
+import '../test_support/declarations.dart';
 import '../test_support/delivery_cycle_conformance.dart' show Receiver, until;
 import '../test_support/registry_with_audit.dart';
 
@@ -20,6 +21,7 @@ _pane(String name) async {
         id: _noteType,
         registeredVersion: EntryTypeVersion(1, 0),
         name: _noteType,
+        declarations: <EventTypeDeclaration>[EligibleVersion('noted')],
       ),
     ],
   );

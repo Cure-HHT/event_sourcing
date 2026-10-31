@@ -8,6 +8,7 @@ import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
+import '../test_support/declarations.dart';
 import '../test_support/manual_timers.dart';
 
 const _kType = 'catch_up_note';
@@ -49,6 +50,9 @@ Future<EventStore> _open(
         id: _kType,
         registeredVersion: registered,
         name: _kType,
+        declarations: <EventTypeDeclaration>[
+          const EligibleVersion('finalized'),
+        ],
       ),
     );
   final registry = ProjectionRegistry();

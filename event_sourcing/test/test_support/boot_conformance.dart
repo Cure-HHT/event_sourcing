@@ -12,8 +12,9 @@ import 'package:event_sourcing/src/security/security_context_store.dart';
 import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
-import 'deliveries.dart';
 
+import 'declarations.dart';
+import 'deliveries.dart';
 import 'lib_version_seed.dart';
 import 'manual_timers.dart' show neverFiringTimer;
 import 'test_backends.dart';
@@ -92,6 +93,7 @@ EntryTypeRegistry _registry(EntryTypeVersion noteVersion) {
       id: _kType,
       registeredVersion: noteVersion,
       name: _kType,
+      declarations: <EventTypeDeclaration>[const EligibleVersion('finalized')],
     ),
   );
   return registry;

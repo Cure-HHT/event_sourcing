@@ -34,6 +34,7 @@ import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:postgres/postgres.dart';
 import 'package:test/test.dart';
 
+import '../../test_support/declarations.dart';
 import '../../test_support/delivery_cycle_conformance.dart';
 import '../../test_support/destination_wedges_view_conformance.dart';
 import '../../test_support/drain_wedge_conformance.dart';
@@ -189,6 +190,7 @@ class _World {
         id: _noteType,
         registeredVersion: EntryTypeVersion(1, 0),
         name: _noteType,
+        declarations: <EventTypeDeclaration>[EligibleVersion('noted')],
       ),
     );
     final projections = ProjectionRegistry()

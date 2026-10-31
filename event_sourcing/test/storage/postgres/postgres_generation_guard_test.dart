@@ -32,6 +32,7 @@ import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:postgres/postgres.dart';
 import 'package:test/test.dart';
 
+import '../../test_support/declarations.dart';
 import '../../test_support/lib_version_seed.dart';
 import '../../test_support/tool_subprocess.dart';
 import 'test_postgres_url.dart';
@@ -246,7 +247,14 @@ Future<EventStore> _openStore(
   }
   types.forEach(
     (id, version) => registry.register(
-      EntryTypeDefinition(id: id, registeredVersion: version, name: id),
+      EntryTypeDefinition(
+        id: id,
+        registeredVersion: version,
+        name: id,
+        declarations: <EventTypeDeclaration>[
+          const EligibleVersion('finalized'),
+        ],
+      ),
     ),
   );
   final promoterRegistry = PromoterRegistry();

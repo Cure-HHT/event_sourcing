@@ -19,6 +19,8 @@ import 'package:sembast/sembast.dart' as sembast;
 import 'package:sembast_web/src/web_interop.dart'
     show DatabaseFactoryWeb, JdbFactoryWeb;
 
+import '../test_support/declarations.dart';
+
 /// The note entry type every tab model registers.
 const String kWebNote = 'web_note';
 
@@ -129,6 +131,7 @@ Future<WebTab> openWebTab(
       id: kWebNote,
       registeredVersion: noteVersion,
       name: kWebNote,
+      declarations: <EventTypeDeclaration>[const EligibleVersion('noted')],
     ),
   );
   try {

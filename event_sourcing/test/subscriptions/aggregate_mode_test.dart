@@ -20,6 +20,8 @@ import 'package:event_sourcing/src/versions.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
+import '../test_support/declarations.dart';
+
 class _Note {
   _Note({required this.entryId, required this.answers});
   factory _Note.fromMap(Map<String, Object?> m) => _Note(
@@ -41,6 +43,11 @@ Future<EventStore> _open() async {
         id: 'epistaxis_event',
         registeredVersion: EntryTypeVersion(1, 0),
         name: 'Epistaxis Event',
+        declarations: <EventTypeDeclaration>[
+          EligibleVersion('finalized'),
+          EligibleVersion('checkpoint'),
+          EligibleVersion('tombstone'),
+        ],
       ),
     );
   final projections = ProjectionRegistry()
@@ -96,6 +103,11 @@ Future<(EventStore, SembastBackend)> _openWithBackend() async {
         id: 'epistaxis_event',
         registeredVersion: EntryTypeVersion(1, 0),
         name: 'Epistaxis Event',
+        declarations: <EventTypeDeclaration>[
+          EligibleVersion('finalized'),
+          EligibleVersion('checkpoint'),
+          EligibleVersion('tombstone'),
+        ],
       ),
     );
   final projections = ProjectionRegistry()

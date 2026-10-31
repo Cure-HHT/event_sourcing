@@ -12,6 +12,7 @@ import 'package:sembast/sembast.dart' as sembast;
 import 'package:sembast/sembast_memory.dart' show newDatabaseFactoryMemory;
 
 import '../test_support/chain_verification_conformance.dart';
+import '../test_support/declarations.dart';
 import '../test_support/manual_timers.dart' show openWithCatchUpParked;
 
 class _SembastChainDatabase implements ChainTestDatabase {
@@ -107,6 +108,9 @@ void main() {
                 id: 'walked_note',
                 registeredVersion: EntryTypeVersion(1, 0),
                 name: 'walked_note',
+                declarations: <EventTypeDeclaration>[
+                  EligibleVersion('finalized'),
+                ],
               ),
             ),
           source: const Source(

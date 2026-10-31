@@ -14,6 +14,8 @@ import 'package:event_sourcing/src/versions.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
+import '../test_support/declarations.dart';
+
 Future<SembastBackend> _backend() async => SembastBackend(
   database: await newDatabaseFactoryMemory().openDatabase(
     'rp-${DateTime.now().microsecondsSinceEpoch}.db',
@@ -40,6 +42,7 @@ void main() {
           id: 'epistaxis_event',
           registeredVersion: EntryTypeVersion(1, 0),
           name: 'Epistaxis Event',
+          declarations: <EventTypeDeclaration>[EligibleVersion('finalized')],
         ),
       );
 
@@ -104,6 +107,7 @@ void main() {
           id: 'epistaxis_event',
           registeredVersion: EntryTypeVersion(1, 0),
           name: 'Epistaxis Event',
+          declarations: <EventTypeDeclaration>[EligibleVersion('finalized')],
         ),
       );
 

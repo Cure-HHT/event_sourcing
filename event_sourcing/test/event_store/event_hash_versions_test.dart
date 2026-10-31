@@ -10,6 +10,7 @@ import 'package:event_sourcing/src/verification/chain_walk.dart'
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
+import '../test_support/declarations.dart';
 import '../test_support/deliveries.dart';
 
 const _kType = 'hashed_note';
@@ -30,6 +31,7 @@ Future<EventStore> _openStore(String hop) async {
       id: _kType,
       registeredVersion: EntryTypeVersion(1, 2),
       name: _kType,
+      declarations: <EventTypeDeclaration>[EligibleVersion('finalized')],
     ),
   );
   return EventStore.openForTest(

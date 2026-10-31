@@ -10,6 +10,7 @@ import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart' show newDatabaseFactoryMemory;
 
+import '../test_support/declarations.dart';
 import 'fixtures/test_actions.dart'
     show
         AlwaysAllowPolicy,
@@ -82,6 +83,7 @@ Future<(EventStore, _RecordingSembastBackend)> _bootstrapRecordingStore({
         id: 'action_denial',
         registeredVersion: EntryTypeVersion(1, 0),
         name: 'Action denial',
+        declarations: kActionDenialDeclarations,
       ),
     )
     ..register(
@@ -89,6 +91,7 @@ Future<(EventStore, _RecordingSembastBackend)> _bootstrapRecordingStore({
         id: 'greeting',
         registeredVersion: EntryTypeVersion(1, 0),
         name: 'Greeting',
+        declarations: <EventTypeDeclaration>[EligibleVersion('hello.said')],
       ),
     );
   final store = await EventStore.openForTest(

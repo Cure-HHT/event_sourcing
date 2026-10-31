@@ -3,6 +3,8 @@ import 'package:event_sourcing/src/event_store.dart' show PublishCollector;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart' show newDatabaseFactoryMemory;
 
+import '../test_support/declarations.dart';
+
 Future<StoredEvent?> _appendNote(
   EventStore store,
   Transaction txn,
@@ -40,6 +42,7 @@ void main() {
           id: 'note',
           registeredVersion: EntryTypeVersion(1, 0),
           name: 'note',
+          declarations: <EventTypeDeclaration>[EligibleVersion('created')],
         ),
       );
     store = await EventStore.openForTest(

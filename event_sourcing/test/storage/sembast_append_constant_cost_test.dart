@@ -42,6 +42,7 @@ import 'package:event_sourcing/src/ingest/sender_succession.dart'
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart' hide Transaction;
 
+import '../test_support/declarations.dart';
 import '../test_support/deliveries.dart';
 import '../test_support/ingest_record_findings_conformance.dart'
     show sealedRecord;
@@ -90,6 +91,7 @@ EntryTypeRegistry _registry() {
         id: _kVersionType,
         registeredVersion: EntryTypeVersion(1, 0),
         name: _kVersionType,
+        declarations: <EventTypeDeclaration>[EligibleVersion('finalized')],
       ),
     )
     ..register(

@@ -10,6 +10,7 @@ import 'package:sembast/sembast_memory.dart' show newDatabaseFactoryMemory;
 
 import '../actions/fixtures/test_actions.dart'
     show HelloAction, ScopedPatientEditAction;
+import '../test_support/declarations.dart';
 import 'test_support/policy_harness.dart' show patientSiteIndexSpec;
 
 /// Fails every catch-up step so a copy this test has rewound behind the
@@ -48,6 +49,7 @@ EntryTypeRegistry _entryTypes() {
         id: 'action_denial',
         registeredVersion: EntryTypeVersion(1, 0),
         name: 'Action denial',
+        declarations: kActionDenialDeclarations,
       ),
     )
     ..register(
@@ -55,6 +57,10 @@ EntryTypeRegistry _entryTypes() {
         id: 'greeting',
         registeredVersion: EntryTypeVersion(1, 0),
         name: 'Greeting',
+        declarations: <EventTypeDeclaration>[
+          EligibleVersion('hello.said'),
+          EligibleVersion('patient.edited'),
+        ],
       ),
     )
     ..register(
@@ -62,6 +68,7 @@ EntryTypeRegistry _entryTypes() {
         id: 'role_permission_grant',
         registeredVersion: EntryTypeVersion(1, 0),
         name: 'Role-permission grant',
+        declarations: kRolePermissionGrantDeclarations,
       ),
     )
     ..register(
@@ -69,6 +76,7 @@ EntryTypeRegistry _entryTypes() {
         id: 'user_role_scope',
         registeredVersion: EntryTypeVersion(1, 0),
         name: 'User-role-scope assignment',
+        declarations: kUserRoleScopeDeclarations,
       ),
     );
 }
@@ -236,6 +244,7 @@ EntryTypeRegistry _entryTypesScoped() => _entryTypes()
       id: 'patient_site_assignment',
       registeredVersion: EntryTypeVersion(1, 0),
       name: 'Patient-to-site assignment',
+      declarations: <EventTypeDeclaration>[EligibleVersion('patient_site_set')],
     ),
   );
 

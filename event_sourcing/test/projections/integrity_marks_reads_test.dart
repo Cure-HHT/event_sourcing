@@ -10,6 +10,7 @@ import 'package:event_sourcing/src/ingest/sender_succession.dart'
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart' show newDatabaseFactoryMemory;
 
+import '../test_support/declarations.dart';
 import '../test_support/deliveries.dart';
 import '../test_support/ingest_chain_findings_conformance.dart'
     show chained, originChain;
@@ -109,6 +110,7 @@ Future<(EventStore, _CountingBackend)> _open() async {
           id: _kType,
           registeredVersion: EntryTypeVersion(1, 0),
           name: _kType,
+          declarations: <EventTypeDeclaration>[EligibleVersion('finalized')],
         ),
       ),
     projections: ProjectionRegistry()..register(_kNotesSpec),

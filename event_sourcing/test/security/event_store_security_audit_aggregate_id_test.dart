@@ -11,6 +11,8 @@ import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
+import '../test_support/declarations.dart';
+
 const _installUUID = 'cccc3333-4444-5555-6666-777788889999';
 const _source = Source(
   hopId: 'mobile-device',
@@ -33,6 +35,7 @@ EntryTypeDefinition _simpleDef(String id) => EntryTypeDefinition(
   id: id,
   registeredVersion: const EntryTypeVersion(1, 0),
   name: id,
+  declarations: <EventTypeDeclaration>[const EligibleVersion('finalized')],
 );
 
 Future<_Fixture> _setup({DateTime? now}) async {

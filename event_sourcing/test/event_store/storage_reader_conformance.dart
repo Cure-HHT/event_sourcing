@@ -16,6 +16,7 @@ import 'package:event_sourcing/src/event_store.dart' show PublishCollector;
 import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../test_support/declarations.dart';
 import '../test_support/version_compatibility_conformance.dart'
     show VersionTestDatabase;
 
@@ -43,6 +44,7 @@ Future<EventStore> _openStore(VersionTestDatabase db, StorageBackend backend) {
         id: _kType,
         registeredVersion: EntryTypeVersion(1, 0),
         name: _kType,
+        declarations: <EventTypeDeclaration>[EligibleVersion('noted')],
       ),
     );
   return EventStore.openForTest(

@@ -17,6 +17,7 @@ import 'package:event_sourcing/src/verification/chain_walk.dart'
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
+import 'declarations.dart';
 import 'deliveries.dart';
 import 'queue_registry_conformance.dart' show QueueTestDatabase;
 import 'record_fixtures.dart';
@@ -81,6 +82,10 @@ const EntryTypeDefinition _noteDef = EntryTypeDefinition(
   id: _noteType,
   registeredVersion: EntryTypeVersion(1, 0),
   name: _noteType,
+  declarations: <EventTypeDeclaration>[
+    EligibleVersion('finalized'),
+    EligibleVersion('checkpoint'),
+  ],
 );
 
 var _built = 0;

@@ -3,6 +3,7 @@ import 'package:event_sourcing/src/projections/interpreter/projection_interprete
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
+import '../test_support/declarations.dart';
 import '../test_support/record_fixtures.dart';
 
 var _dbCounter = 0;
@@ -52,6 +53,7 @@ void main() {
             id: _kNoteEntryType,
             registeredVersion: EntryTypeVersion(1, 0),
             name: 'Note',
+            declarations: <EventTypeDeclaration>[EligibleVersion('finalized')],
           ),
         );
 
@@ -99,6 +101,9 @@ void main() {
               id: _kNoteEntryType,
               registeredVersion: EntryTypeVersion(2, 0),
               name: 'Note',
+              declarations: <EventTypeDeclaration>[
+                EligibleVersion('finalized'),
+              ],
             ),
           );
 
@@ -177,6 +182,7 @@ void main() {
             id: _kNoteEntryType,
             registeredVersion: EntryTypeVersion(2, 0),
             name: 'Note',
+            declarations: <EventTypeDeclaration>[EligibleVersion('finalized')],
           ),
         );
 

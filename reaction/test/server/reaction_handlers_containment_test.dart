@@ -80,6 +80,13 @@ EntryTypeRegistry _entryTypes() => EntryTypeRegistry()
       id: 'participant',
       registeredVersion: EntryTypeVersion(1, 0),
       name: 'Participant',
+      declarations: <EventTypeDeclaration>[
+        EventTypeDeclaration(
+          eventType: 'participant_registered',
+          kind: CausalKind.version,
+          eligible: true,
+        ),
+      ],
     ),
   )
   ..register(
@@ -87,6 +94,7 @@ EntryTypeRegistry _entryTypes() => EntryTypeRegistry()
       id: 'role_permission_grant',
       registeredVersion: EntryTypeVersion(1, 0),
       name: 'Role-Permission Grant',
+      declarations: kRolePermissionGrantDeclarations,
     ),
   )
   ..register(
@@ -94,6 +102,7 @@ EntryTypeRegistry _entryTypes() => EntryTypeRegistry()
       id: 'user_role_scope',
       registeredVersion: EntryTypeVersion(1, 0),
       name: 'User-Role-Scope Assignment',
+      declarations: kUserRoleScopeDeclarations,
     ),
   )
   ..register(
@@ -101,6 +110,7 @@ EntryTypeRegistry _entryTypes() => EntryTypeRegistry()
       id: 'action_denial',
       registeredVersion: EntryTypeVersion(1, 0),
       name: 'Action Denial',
+      declarations: kActionDenialDeclarations,
     ),
   );
 

@@ -9,6 +9,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 import 'package:uuid/uuid.dart';
 
+import '../test_support/declarations.dart';
 import '../test_support/deliveries.dart';
 import '../test_support/record_fixtures.dart';
 
@@ -86,6 +87,9 @@ Future<EventStoreBundle> _bootstrapWithRegistry({
         id: 'demo_note',
         registeredVersion: registeredVersion,
         name: 'demo_note',
+        declarations: <EventTypeDeclaration>[
+          const EligibleVersion('finalized'),
+        ],
       ),
     ],
     destinations: const <Destination>[],

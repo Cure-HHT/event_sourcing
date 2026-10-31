@@ -11,6 +11,7 @@ import 'package:event_sourcing/src/verification/chain_walk.dart'
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
+import '../test_support/declarations.dart';
 import '../test_support/ingest_hash_conformance.dart';
 import '../test_support/queue_registry_conformance.dart';
 
@@ -59,6 +60,7 @@ void main() {
             id: 'hash_note',
             registeredVersion: EntryTypeVersion(1, 0),
             name: 'hash_note',
+            declarations: <EventTypeDeclaration>[EligibleVersion('finalized')],
           ),
         ),
       source: const Source(

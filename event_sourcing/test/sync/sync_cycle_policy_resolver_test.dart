@@ -13,6 +13,7 @@ import 'package:event_sourcing/src/versions.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
+import '../test_support/declarations.dart';
 import '../test_support/fake_destination.dart';
 import '../test_support/fifo_entry_helpers.dart';
 import '../test_support/registry_with_audit.dart';
@@ -39,6 +40,7 @@ _bootstrap() async {
         id: _noteType,
         registeredVersion: EntryTypeVersion(1, 0),
         name: _noteType,
+        declarations: <EventTypeDeclaration>[EligibleVersion('finalized')],
       ),
     ],
   );

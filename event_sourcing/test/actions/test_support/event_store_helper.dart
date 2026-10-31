@@ -11,6 +11,8 @@
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:sembast/sembast_memory.dart';
 
+import '../../test_support/declarations.dart';
+
 /// Builds a fully-wired in-memory [EventStore] suitable for actions tests.
 ///
 /// Registers all reserved system entry types plus the two test-specific
@@ -50,6 +52,7 @@ Future<EventStore> bootstrapTestEventStore({
         id: 'action_denial',
         registeredVersion: EntryTypeVersion(1, 0),
         name: 'Action denial',
+        declarations: kActionDenialDeclarations,
       ),
     )
     // greeting is emitted by HelloAction and MultiEventAction.
@@ -58,6 +61,10 @@ Future<EventStore> bootstrapTestEventStore({
         id: 'greeting',
         registeredVersion: EntryTypeVersion(1, 0),
         name: 'Greeting',
+        declarations: <EventTypeDeclaration>[
+          EligibleVersion('hello.said'),
+          EligibleVersion('patient.edited'),
+        ],
       ),
     );
   for (final definition in extraEntryTypes) {

@@ -2,6 +2,8 @@ import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
+import '../test_support/declarations.dart';
+
 Future<EventStore> _bootstrap() async {
   final db = await newDatabaseFactoryMemory().openDatabase(
     'append-versioning-${DateTime.now().microsecondsSinceEpoch}.db',
@@ -22,6 +24,7 @@ Future<EventStore> _bootstrap() async {
         id: 'demo_note',
         registeredVersion: EntryTypeVersion(5, 0),
         name: 'demo_note',
+        declarations: <EventTypeDeclaration>[EligibleVersion('finalized')],
       ),
     ],
     destinations: const <Destination>[],

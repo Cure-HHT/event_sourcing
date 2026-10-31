@@ -2,6 +2,7 @@ import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
+import '../test_support/declarations.dart';
 import '../test_support/deliveries.dart';
 
 // ---------------------------------------------------------------------------
@@ -33,6 +34,10 @@ Future<_Fixture> _openStore({
         id: 'epistaxis_event',
         registeredVersion: EntryTypeVersion(1, 0),
         name: 'Epistaxis Event',
+        declarations: <EventTypeDeclaration>[
+          EligibleVersion('checkpoint'),
+          EligibleVersion('finalized'),
+        ],
       ),
     );
   final securityContexts = SembastSecurityContextStore(backend: backend);

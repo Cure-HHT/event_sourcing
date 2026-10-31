@@ -11,6 +11,8 @@ import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
+import '../test_support/declarations.dart';
+
 const _source = Source(
   hopId: 'mobile-device',
   identifier: 'install-aaaa',
@@ -36,11 +38,13 @@ Future<EventStore> _bootstrap() async {
         id: _typeA,
         registeredVersion: EntryTypeVersion(1, 0),
         name: _typeA,
+        declarations: <EventTypeDeclaration>[EligibleVersion('finalized')],
       ),
       EntryTypeDefinition(
         id: _typeB,
         registeredVersion: EntryTypeVersion(1, 0),
         name: _typeB,
+        declarations: <EventTypeDeclaration>[EligibleVersion('finalized')],
       ),
     ],
     destinations: const <Destination>[],
