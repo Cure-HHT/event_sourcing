@@ -346,47 +346,24 @@ abstract class StorageBackend {
     Set<String>? entryTypes,
     Set<String>? eventTypes,
     Set<String>? aggregateTypes,
-  }) async {
-    final found = <StoredEvent>[];
-    var after = afterSequence;
-    while (after < throughSequence && found.length < limit) {
-      final page = await findAllEventsInTxn(
-        txn,
-        afterSequence: after,
-        limit: limit,
-      );
-      if (page.isEmpty) break;
-      for (final e in page) {
-        if (e.sequenceNumber > throughSequence) return found;
-        if (isCandidateEvent(
-          entryType: e.entryType,
-          eventType: e.eventType,
-          aggregateType: e.aggregateType,
-          entryTypes: entryTypes,
-          eventTypes: eventTypes,
-          aggregateTypes: aggregateTypes,
-        )) {
-          found.add(e);
-          if (found.length == limit) return found;
-        }
-      }
-      after = page.last.sequenceNumber;
-      if (page.length < limit) break;
-    }
-    return found;
-  }
+  }) => findCandidateEventsByScan(
+    this,
+    txn,
+    afterSequence: afterSequence,
+    throughSequence: throughSequence,
+    limit: limit,
+    entryTypes: entryTypes,
+    eventTypes: eventTypes,
+    aggregateTypes: aggregateTypes,
+  );
 
   /// The position of the latest event of the log, as [txn] reads it, or 0
   /// for an empty log. This default reads the latest event through
   /// [readEventsReverseInTxn]; a backend overrides it with a read that
   /// decodes no event.
   @internal
-  Future<int> readLogHeadInTxn(Transaction txn) async {
-    await for (final e in readEventsReverseInTxn(txn)) {
-      return e.sequenceNumber;
-    }
-    return 0;
-  }
+  Future<int> readLogHeadInTxn(Transaction txn) =>
+      readLogHeadByReverseRead(this, txn);
 
   /// Reserve-and-increment the per-device sequence counter within [txn] and
   /// return the reserved value.
@@ -1833,6 +1810,63 @@ abstract class StorageBackend {
   /// connection). Not safe to call concurrently with an in-flight transaction.
   /// Callers MUST await all outstanding operations before calling close.
   Future<void> close();
+}
+
+/// [StorageBackend.findCandidateEventsInTxn] as any backend can answer it:
+/// the range read through [StorageBackend.findAllEventsInTxn] a page at a
+/// time and filtered by [isCandidateEvent].
+@internal
+Future<List<StoredEvent>> findCandidateEventsByScan(
+  StorageBackend backend,
+  Transaction txn, {
+  required int afterSequence,
+  required int throughSequence,
+  required int limit,
+  Set<String>? entryTypes,
+  Set<String>? eventTypes,
+  Set<String>? aggregateTypes,
+}) async {
+  final found = <StoredEvent>[];
+  var after = afterSequence;
+  while (after < throughSequence && found.length < limit) {
+    final page = await backend.findAllEventsInTxn(
+      txn,
+      afterSequence: after,
+      limit: limit,
+    );
+    if (page.isEmpty) break;
+    for (final e in page) {
+      if (e.sequenceNumber > throughSequence) return found;
+      if (isCandidateEvent(
+        entryType: e.entryType,
+        eventType: e.eventType,
+        aggregateType: e.aggregateType,
+        entryTypes: entryTypes,
+        eventTypes: eventTypes,
+        aggregateTypes: aggregateTypes,
+      )) {
+        found.add(e);
+        if (found.length == limit) return found;
+      }
+    }
+    after = page.last.sequenceNumber;
+    if (page.length < limit) break;
+  }
+  return found;
+}
+
+/// [StorageBackend.readLogHeadInTxn] as any backend can answer it: the
+/// position of the first event [StorageBackend.readEventsReverseInTxn]
+/// yields, or 0.
+@internal
+Future<int> readLogHeadByReverseRead(
+  StorageBackend backend,
+  Transaction txn,
+) async {
+  await for (final e in backend.readEventsReverseInTxn(txn)) {
+    return e.sequenceNumber;
+  }
+  return 0;
 }
 
 /// Whether an event of [entryType], [eventType] and [aggregateType] is one
