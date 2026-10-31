@@ -2,11 +2,12 @@
 // viewFingerprint computes the fingerprint the Terms section above
 //   defines: a digest of a view's definition, covering its name, its
 //   shape, the event types and derived fields the shape declares, its
-//   interest, the registered version of every entry type the interest
-//   names (or of every registered entry type when it names none), and the
-//   promoter chain the view registers for each of those entry types.
+//   interest, the registered version of each entry type that carries the
+//   events the view folds, and the promoter chain the view registers for
+//   each of those entry types.
 import 'package:canonical_json_jcs/canonical_json_jcs.dart';
 import 'package:crypto/crypto.dart';
+import 'package:event_sourcing/src/entry_type_definition.dart';
 import 'package:event_sourcing/src/entry_type_registry.dart';
 import 'package:event_sourcing/src/projections/primitives/derived_field.dart';
 import 'package:event_sourcing/src/projections/primitives/row_data.dart';
@@ -15,6 +16,7 @@ import 'package:event_sourcing/src/projections/projection_spec.dart';
 import 'package:event_sourcing/src/promoters/primitives/transform.dart';
 import 'package:event_sourcing/src/promoters/promoter_registry.dart';
 import 'package:event_sourcing/src/promoters/promoter_spec.dart';
+import 'package:event_sourcing/src/security/system_entry_types.dart';
 
 /// The fingerprint of [spec]'s definition against [entryTypes] and
 /// [promoters], as `EVS-DEV-view-convergence` Terms defines it.
@@ -33,15 +35,12 @@ String viewFingerprint(
   EntryTypeRegistry entryTypes,
   PromoterRegistry promoters,
 ) {
-  final namedEntryTypes = spec.interest.entryTypes;
-  final resolvedIds =
-      (namedEntryTypes ?? {for (final def in entryTypes.all()) def.id}).toList()
-        ..sort();
+  final resolvedIds = _coveredEntryTypeIds(spec, entryTypes).toList()..sort();
 
   final entryTypeVersions = <String, Object?>{};
   final promoterChains = <String, Object?>{};
   for (final id in resolvedIds) {
-    final def = entryTypes.byId(id);
+    final def = _definitionOf(id, entryTypes);
     if (def == null) continue;
     entryTypeVersions[id] = def.registeredVersion.toString();
     promoterChains[id] = [
@@ -67,6 +66,45 @@ String viewFingerprint(
   };
   return sha256.convert(canonicalizeBytes(input)).toString();
 }
+
+// The ids of the entry types that carry the events [spec] folds: the ones its
+// interest names; else the registered ones declaring an event type it names;
+// else every registered one; and always the reserved ones every copy folds.
+Set<String> _coveredEntryTypeIds(
+  ProjectionSpec spec,
+  EntryTypeRegistry entryTypes,
+) {
+  final interest = spec.interest;
+  final Set<String> ids;
+  if (interest.entryTypes != null) {
+    ids = {...interest.entryTypes!};
+  } else if (interest.eventTypes != null) {
+    ids = {
+      for (final def in entryTypes.all())
+        if (interest.eventTypes!.any((e) => def.declarationFor(e) != null))
+          def.id,
+    };
+  } else {
+    ids = {for (final def in entryTypes.all()) def.id};
+  }
+  return ids..addAll(_reservedFoldedEntryTypeIds);
+}
+
+// The application's registry may or may not hold a reserved entry type;
+// the library's own definition stands in when it does not.
+EntryTypeDefinition? _definitionOf(String id, EntryTypeRegistry entryTypes) {
+  final registered = entryTypes.byId(id);
+  if (registered != null) return registered;
+  for (final def in kSystemEntryTypes) {
+    if (def.id == id) return def;
+  }
+  return null;
+}
+
+const _reservedFoldedEntryTypeIds = {
+  kSecurityFindingEntryType,
+  kDestinationSenderSucceededEntryType,
+};
 
 List<String>? _sortedOrNull(Set<String>? values) =>
     values == null ? null : (values.toList()..sort());

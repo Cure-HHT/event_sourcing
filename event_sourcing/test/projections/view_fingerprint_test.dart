@@ -1,3 +1,4 @@
+import 'package:event_sourcing/src/causal_record.dart';
 import 'package:event_sourcing/src/entry_type_definition.dart';
 import 'package:event_sourcing/src/entry_type_registry.dart';
 import 'package:event_sourcing/src/projections/primitives/row_data.dart';
@@ -8,11 +9,42 @@ import 'package:event_sourcing/src/projections/view_fingerprint.dart';
 import 'package:event_sourcing/src/promoters/primitives/transform.dart';
 import 'package:event_sourcing/src/promoters/promoter_registry.dart';
 import 'package:event_sourcing/src/promoters/promoter_spec.dart';
+import 'package:event_sourcing/src/security/system_entry_types.dart';
 import 'package:event_sourcing/src/versions.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 EntryTypeDefinition _def(String id, EntryTypeVersion version) =>
     EntryTypeDefinition(id: id, registeredVersion: version, name: id);
+
+EntryTypeDefinition _declaring(
+  String id,
+  EntryTypeVersion version,
+  List<String> eventTypes, {
+  int patch = 0,
+}) => EntryTypeDefinition(
+  id: id,
+  registeredVersion: version,
+  patch: patch,
+  name: id,
+  declarations: [
+    for (final e in eventTypes)
+      EventTypeDeclaration(
+        eventType: e,
+        kind: CausalKind.version,
+        eligible: true,
+      ),
+  ],
+);
+
+EntryTypeDefinition _systemDef(String id, EntryTypeVersion version) =>
+    EntryTypeDefinition(id: id, registeredVersion: version, name: id);
+
+AggregateProjectionSpec _eventSpec(Set<String>? eventTypes) =>
+    AggregateProjectionSpec(
+      viewName: 'toy_view',
+      interest: SubscriptionFilter(eventTypes: eventTypes),
+      tombstoneEventTypes: const {'toy_deleted'},
+    );
 
 AggregateProjectionSpec _spec({
   Set<String>? entryTypeIds,
@@ -120,12 +152,84 @@ void main() {
       );
     });
 
-    test("differs for any registered entry type's minor when the interest "
-        'names none', () {
-      // interest.entryTypes == null: names no entry type, so it covers
-      // every registered entry type's version, whatever the interest
-      // actually matches at fold time.
-      final spec = _spec();
+    // Verifies: EVS-DEV-view-convergence/A
+    test("registering an entry type that declares none of a view's event "
+        'types leaves its fingerprint unchanged', () {
+      final spec = _eventSpec({'note_created'});
+      final promoters = PromoterRegistry();
+      final before = EntryTypeRegistry()
+        ..register(
+          _declaring('note', const EntryTypeVersion(1, 0), ['note_created']),
+        );
+      final after = EntryTypeRegistry()
+        ..register(
+          _declaring('note', const EntryTypeVersion(1, 0), ['note_created']),
+        )
+        ..register(
+          _declaring('photo', const EntryTypeVersion(1, 0), ['photo_taken']),
+        );
+
+      expect(
+        viewFingerprint(spec, after, promoters),
+        viewFingerprint(spec, before, promoters),
+      );
+    });
+
+    // Verifies: EVS-DEV-view-convergence/A
+    test('adding an event type to an entry type (a patch) changes no '
+        'fingerprint', () {
+      final promoters = PromoterRegistry();
+      final before = EntryTypeRegistry()
+        ..register(
+          _declaring('note', const EntryTypeVersion(1, 0), ['note_created']),
+        );
+      final after = EntryTypeRegistry()
+        ..register(
+          _declaring('note', const EntryTypeVersion(1, 0), [
+            'note_created',
+            'note_edited',
+          ], patch: 1),
+        );
+      for (final spec in [
+        _eventSpec({'note_created'}),
+        _eventSpec(null),
+        _spec(entryTypeIds: {'note'}),
+      ]) {
+        expect(
+          viewFingerprint(spec, after, promoters),
+          viewFingerprint(spec, before, promoters),
+        );
+      }
+    });
+
+    // Verifies: EVS-DEV-view-convergence/A
+    test("a minor of an entry type declaring one of the view's event types "
+        'changes its fingerprint', () {
+      final spec = _eventSpec({'note_created'});
+      final promoters = PromoterRegistry();
+      final v1 = EntryTypeRegistry()
+        ..register(
+          _declaring('note', const EntryTypeVersion(1, 0), ['note_created']),
+        );
+      final v2 = EntryTypeRegistry()
+        ..register(
+          _declaring('note', const EntryTypeVersion(1, 1), ['note_created']),
+        );
+
+      expect(
+        viewFingerprint(spec, v1, promoters),
+        isNot(viewFingerprint(spec, v2, promoters)),
+      );
+    });
+
+    // Verifies: EVS-DEV-view-convergence/A
+    test('a view filtering only by aggregate type covers every registered '
+        'entry type', () {
+      const spec = AggregateProjectionSpec(
+        viewName: 'toy_view',
+        interest: SubscriptionFilter(aggregateTypes: {'diary'}),
+        tombstoneEventTypes: {'toy_deleted'},
+      );
       final promoters = PromoterRegistry();
       final v1 = EntryTypeRegistry()
         ..register(_def('unrelated', const EntryTypeVersion(1, 0)));
@@ -135,6 +239,64 @@ void main() {
       expect(
         viewFingerprint(spec, v1, promoters),
         isNot(viewFingerprint(spec, v2, promoters)),
+      );
+    });
+
+    // Verifies: EVS-DEV-view-convergence/A
+    test("a minor of the security-finding entry type changes every view's "
+        'fingerprint', () {
+      final promoters = PromoterRegistry();
+      for (final spec in [
+        _eventSpec({'note_created'}),
+        _spec(entryTypeIds: {'note'}),
+        _spec(),
+      ]) {
+        final v1 = EntryTypeRegistry()
+          ..register(_def('note', const EntryTypeVersion(1, 0)))
+          ..register(
+            _systemDef(kSecurityFindingEntryType, const EntryTypeVersion(1, 0)),
+          );
+        final v2 = EntryTypeRegistry()
+          ..register(_def('note', const EntryTypeVersion(1, 0)))
+          ..register(
+            _systemDef(kSecurityFindingEntryType, const EntryTypeVersion(1, 1)),
+          );
+
+        expect(
+          viewFingerprint(spec, v1, promoters),
+          isNot(viewFingerprint(spec, v2, promoters)),
+        );
+      }
+    });
+
+    // Verifies: EVS-DEV-view-convergence/A
+    test('a view whose event types no entry type declares still covers the '
+        'reserved entry types', () {
+      final spec = _eventSpec({'nobody_declares_this'});
+      final named = _spec(entryTypeIds: {'note'});
+      final promoters = PromoterRegistry();
+      final v1 = EntryTypeRegistry()
+        ..register(
+          _systemDef(
+            kDestinationSenderSucceededEntryType,
+            const EntryTypeVersion(1, 0),
+          ),
+        );
+      final v2 = EntryTypeRegistry()
+        ..register(
+          _systemDef(
+            kDestinationSenderSucceededEntryType,
+            const EntryTypeVersion(1, 1),
+          ),
+        );
+
+      expect(
+        viewFingerprint(spec, v1, promoters),
+        isNot(viewFingerprint(spec, v2, promoters)),
+      );
+      expect(
+        viewFingerprint(named, v1, promoters),
+        isNot(viewFingerprint(named, v2, promoters)),
       );
     });
 
