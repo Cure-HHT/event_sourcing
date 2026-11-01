@@ -1023,7 +1023,7 @@ void main() {
       );
     });
 
-    // Verifies: EVS-DEV-view-convergence/K
+    // Verifies: EVS-DEV-view-convergence/W
     test('a table view prefetches the rows a chunk removes in one batched '
         'read instead of reading each key on its first touch', () async {
       const tableView = 'catch_up_sites';
@@ -1058,20 +1058,36 @@ void main() {
       }
       await seeder.close();
 
-      final store = await _open(
-        backend,
-        projections: const [tableSpec],
-        eventTypes: eventTypes,
+      // A clock that stands still: the step bound never ends a transaction,
+      // so the copy folds the whole log in one transaction, reading it in
+      // two chunks, whatever the load on the machine running the test.
+      final frozen = DateTime.utc(2026, 1, 1);
+      late String copyId;
+      var transactions = 0;
+      await runWithDeliveryTestHooks(
+        DeliveryTestHooks(
+          catchUpClock: () => frozen,
+          onCatchUpTransactionBegin: (id) {
+            if (id == copyId) transactions++;
+          },
+        ),
+        () async {
+          final store = await _open(
+            backend,
+            projections: const [tableSpec],
+            eventTypes: eventTypes,
+          );
+          copyId = store.copyIdOf(tableView);
+          await _waitUntilWatermarkAtLeast(
+            backend,
+            tableView,
+            last!.sequenceNumber,
+          );
+          final rows = (await store.reader.findViewRows(tableView)).rows;
+          expect(rows, hasLength(sites));
+          await store.close();
+        },
       );
-      final copyId = store.copyIdOf(tableView);
-      await _waitUntilWatermarkAtLeast(
-        backend,
-        tableView,
-        last!.sequenceNumber,
-      );
-      final rows = (await store.reader.findViewRows(tableView)).rows;
-      expect(rows, hasLength(sites));
-      await store.close();
 
       expect(
         backend.singleRowReads[copyId] ?? 0,
@@ -1080,11 +1096,11 @@ void main() {
       );
       expect(
         backend.batchedRowReads[copyId] ?? 0,
-        inInclusiveRange(1, 2),
+        1,
         reason:
-            'the rows the events remove are read in one batched read per '
-            'chunk, at most: ${2 * kCatchUpReadChunk} events read in two '
-            'chunks',
+            'the first chunk loads every site its remove events touch in '
+            'one batched read, and the second chunk finds them all loaded '
+            '($transactions catch-up transactions)',
       );
     });
   });
