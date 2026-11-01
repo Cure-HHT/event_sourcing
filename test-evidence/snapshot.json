@@ -16,61 +16,61 @@
  ],
  "targets": [
   {
-   "digest": "fef639c077dadfbf5d8733abbd0863d8cf115128efd0b91d5e9ac4f2364a60f7",
+   "digest": "6182214fdb7ace36f54fc68878427a7c78646ebd68af1caa0ef9dd1220ad4497",
    "target": "canonical_json_jcs"
   },
   {
-   "digest": "fef639c077dadfbf5d8733abbd0863d8cf115128efd0b91d5e9ac4f2364a60f7",
+   "digest": "6182214fdb7ace36f54fc68878427a7c78646ebd68af1caa0ef9dd1220ad4497",
    "target": "event_sourcing"
   },
   {
-   "digest": "fef639c077dadfbf5d8733abbd0863d8cf115128efd0b91d5e9ac4f2364a60f7",
+   "digest": "6182214fdb7ace36f54fc68878427a7c78646ebd68af1caa0ef9dd1220ad4497",
    "target": "event_sourcing-example"
   },
   {
-   "digest": "fef639c077dadfbf5d8733abbd0863d8cf115128efd0b91d5e9ac4f2364a60f7",
+   "digest": "6182214fdb7ace36f54fc68878427a7c78646ebd68af1caa0ef9dd1220ad4497",
    "target": "event_sourcing-example-desktop"
   },
   {
-   "digest": "fef639c077dadfbf5d8733abbd0863d8cf115128efd0b91d5e9ac4f2364a60f7",
+   "digest": "6182214fdb7ace36f54fc68878427a7c78646ebd68af1caa0ef9dd1220ad4497",
    "target": "event_sourcing-example_action_permissions"
   },
   {
-   "digest": "fef639c077dadfbf5d8733abbd0863d8cf115128efd0b91d5e9ac4f2364a60f7",
+   "digest": "6182214fdb7ace36f54fc68878427a7c78646ebd68af1caa0ef9dd1220ad4497",
    "target": "event_sourcing-example_action_permissions-postgres"
   },
   {
-   "digest": "fef639c077dadfbf5d8733abbd0863d8cf115128efd0b91d5e9ac4f2364a60f7",
+   "digest": "6182214fdb7ace36f54fc68878427a7c78646ebd68af1caa0ef9dd1220ad4497",
    "target": "event_sourcing-example_clinical_scopes"
   },
   {
-   "digest": "fef639c077dadfbf5d8733abbd0863d8cf115128efd0b91d5e9ac4f2364a60f7",
+   "digest": "6182214fdb7ace36f54fc68878427a7c78646ebd68af1caa0ef9dd1220ad4497",
    "target": "event_sourcing-postgres"
   },
   {
-   "digest": "fef639c077dadfbf5d8733abbd0863d8cf115128efd0b91d5e9ac4f2364a60f7",
+   "digest": "6182214fdb7ace36f54fc68878427a7c78646ebd68af1caa0ef9dd1220ad4497",
    "target": "event_sourcing-web"
   },
   {
-   "digest": "fef639c077dadfbf5d8733abbd0863d8cf115128efd0b91d5e9ac4f2364a60f7",
+   "digest": "6182214fdb7ace36f54fc68878427a7c78646ebd68af1caa0ef9dd1220ad4497",
    "target": "provenance"
   },
   {
-   "digest": "fef639c077dadfbf5d8733abbd0863d8cf115128efd0b91d5e9ac4f2364a60f7",
+   "digest": "6182214fdb7ace36f54fc68878427a7c78646ebd68af1caa0ef9dd1220ad4497",
    "target": "reaction"
   },
   {
-   "digest": "fef639c077dadfbf5d8733abbd0863d8cf115128efd0b91d5e9ac4f2364a60f7",
+   "digest": "6182214fdb7ace36f54fc68878427a7c78646ebd68af1caa0ef9dd1220ad4497",
    "target": "reaction-example"
   },
   {
-   "digest": "fef639c077dadfbf5d8733abbd0863d8cf115128efd0b91d5e9ac4f2364a60f7",
+   "digest": "6182214fdb7ace36f54fc68878427a7c78646ebd68af1caa0ef9dd1220ad4497",
    "target": "reaction_widgets"
   },
   {
-   "digest": "fef639c077dadfbf5d8733abbd0863d8cf115128efd0b91d5e9ac4f2364a60f7",
+   "digest": "6182214fdb7ace36f54fc68878427a7c78646ebd68af1caa0ef9dd1220ad4497",
    "target": "reaction_widgets_testing"
   }
  ],
- "tree": "fef639c077dadfbf5d8733abbd0863d8cf115128efd0b91d5e9ac4f2364a60f7"
+ "tree": "6182214fdb7ace36f54fc68878427a7c78646ebd68af1caa0ef9dd1220ad4497"
 }

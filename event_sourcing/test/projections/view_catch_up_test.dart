@@ -6,7 +6,7 @@ import 'package:event_sourcing/src/event_store.dart'
 import 'package:event_sourcing/src/projections/view_catch_up.dart';
 import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:sembast/sembast_memory.dart';
+import 'package:sembast/sembast_memory.dart' show newDatabaseFactoryMemory;
 
 import '../test_support/declarations.dart';
 import '../test_support/manual_timers.dart';
@@ -43,6 +43,7 @@ Future<EventStore> _open(
   List<ProjectionSpec> projections = const <ProjectionSpec>[_kSpec],
   PromoterRegistry? promoters,
   DateTime Function()? clock,
+  List<String> eventTypes = const <String>['finalized'],
 }) {
   final entryTypes = EntryTypeRegistry()
     ..register(
@@ -51,7 +52,7 @@ Future<EventStore> _open(
         registeredVersion: registered,
         name: _kType,
         declarations: <EventTypeDeclaration>[
-          const EligibleVersion('finalized'),
+          for (final eventType in eventTypes) EligibleVersion(eventType),
         ],
       ),
     );
@@ -72,6 +73,52 @@ Future<EventStore> _open(
     promoters: promoters,
     clock: clock,
   );
+}
+
+/// A Sembast backend that observes the reads a catch-up transaction makes:
+/// [onReadLogHead] runs on every read of the log's head (the first read of
+/// a catch-up transaction's setup), and the row reads of each copy are
+/// counted, one by one and batched.
+class _ObservedBackend extends SembastBackend {
+  _ObservedBackend({required super.database});
+
+  void Function()? onReadLogHead;
+  final Map<String, int> singleRowReads = <String, int>{};
+  final Map<String, int> batchedRowReads = <String, int>{};
+
+  @override
+  Future<int> readLogHeadInTxn(Transaction txn) {
+    onReadLogHead?.call();
+    return super.readLogHeadInTxn(txn);
+  }
+
+  @override
+  Future<Map<String, dynamic>?> readViewRowInTxn(
+    Transaction txn,
+    String copyId,
+    String key,
+  ) {
+    singleRowReads[copyId] = (singleRowReads[copyId] ?? 0) + 1;
+    return super.readViewRowInTxn(txn, copyId, key);
+  }
+
+  @override
+  Future<Map<String, Map<String, dynamic>>> readViewRowsByKeysInTxn(
+    Transaction txn,
+    String copyId,
+    Set<String> keys,
+  ) {
+    batchedRowReads[copyId] = (batchedRowReads[copyId] ?? 0) + 1;
+    return super.readViewRowsByKeysInTxn(txn, copyId, keys);
+  }
+}
+
+Future<_ObservedBackend> _openObservedBackend() async {
+  _dbCounter += 1;
+  final db = await newDatabaseFactoryMemory().openDatabase(
+    'view-catch-up-$_dbCounter.db',
+  );
+  return _ObservedBackend(database: db);
 }
 
 Future<ViewCopy> _copyOf(SembastBackend backend, String viewName) async {
@@ -290,6 +337,7 @@ void main() {
         var now = DateTime.utc(2026, 1, 1);
         late String viewCopyId;
         var transactionBegins = 0;
+        final foldsByTransaction = <int, int>{};
         late EventStore store;
         await runWithDeliveryTestHooks(
           DeliveryTestHooks(
@@ -299,6 +347,8 @@ void main() {
             },
             onCatchUpStep: (copyId, eventId) {
               if (copyId == viewCopyId) {
+                foldsByTransaction[transactionBegins] =
+                    (foldsByTransaction[transactionBegins] ?? 0) + 1;
                 now = now.add(const Duration(milliseconds: 201));
               }
             },
@@ -312,12 +362,11 @@ void main() {
               last!.sequenceNumber,
             );
             expect(
-              transactionBegins,
-              6,
+              foldsByTransaction.values,
+              List<int>.filled(5, 1),
               reason:
                   'the 200 ms bound stopped every transaction after one '
-                  'step, so the 5 events each needed their own transaction, '
-                  'plus one confirming transaction that found the tip',
+                  'step, so the 5 events each needed their own transaction',
             );
             await store.close();
           },
@@ -821,6 +870,237 @@ void main() {
 
           await store.close();
         },
+      );
+    });
+  });
+
+  group('catch-up progress per transaction and per pass', () {
+    // Verifies: EVS-DEV-view-convergence/W
+    // Verifies: EVS-DEV-view-convergence/O
+    test("a slow transaction setup does not limit the transaction's folding "
+        'to one step', () async {
+      final backend = await _openObservedBackend();
+      final seeder = await _open(backend, projections: const []);
+      StoredEvent? last;
+      for (var i = 0; i < 450; i++) {
+        last = await _appendNote(seeder, 'agg-${i % 20}');
+      }
+      await seeder.close();
+
+      // The clock stands still except while a catch-up transaction reads
+      // the log's head -- its setup -- which takes longer than the whole
+      // step bound, as every statement does on a slow database.
+      var now = DateTime.utc(2026, 1, 1);
+      backend.onReadLogHead = () {
+        now = now.add(kCatchUpStepBound + const Duration(milliseconds: 100));
+      };
+      late String viewCopyId;
+      var transactions = 0;
+      final stepsByTransaction = <int, int>{};
+      await runWithDeliveryTestHooks(
+        DeliveryTestHooks(
+          catchUpClock: () => now,
+          onCatchUpTransactionBegin: (copyId) {
+            if (copyId == viewCopyId) transactions++;
+          },
+          onCatchUpStep: (copyId, eventId) {
+            if (copyId != viewCopyId) return;
+            stepsByTransaction[transactions] =
+                (stepsByTransaction[transactions] ?? 0) + 1;
+          },
+        ),
+        () async {
+          final store = await _open(backend);
+          viewCopyId = store.copyIdOf(_kView);
+          for (var i = 0; i < 500; i++) {
+            final copy = await _copyOf(backend, _kView);
+            if (copy.watermark >= last!.sequenceNumber) break;
+            await pumpEventQueue();
+          }
+          await store.close();
+        },
+      );
+      final most = stepsByTransaction.values.fold(0, (a, b) => a > b ? a : b);
+      expect(
+        most,
+        greaterThan(1),
+        reason:
+            'the step bound is measured from the first step, so a setup '
+            'that alone outlasts it still leaves the transaction its '
+            'folding budget ($transactions transactions, at most $most '
+            'steps in one)',
+      );
+    });
+
+    // Verifies: EVS-DEV-view-convergence/J
+    // Verifies: EVS-DEV-view-convergence/W
+    test('a behind copy that progresses gets further transactions within '
+        'one pass before the current copies get theirs', () async {
+      const behindSpec = AggregateProjectionSpec(
+        viewName: 'catch_up_behind',
+        interest: SubscriptionFilter(entryTypes: <String>{_kType}),
+        tombstoneEventTypes: <String>{},
+      );
+      final currentSpecs = <ProjectionSpec>[
+        for (var v = 0; v < 3; v++)
+          AggregateProjectionSpec(
+            viewName: 'catch_up_current_$v',
+            interest: const SubscriptionFilter(entryTypes: <String>{_kType}),
+            tombstoneEventTypes: const <String>{},
+          ),
+      ];
+      final backend = await _openBackend();
+      final seeder = await _open(backend, projections: const []);
+      StoredEvent? last;
+      for (var i = 0; i < 30; i++) {
+        last = await _appendNote(seeder, 'agg-$i');
+      }
+      await seeder.close();
+
+      // Every fold into the behind copy outlasts the step bound, so each of
+      // its transactions folds one event; the clock stands still for the
+      // other copies, which reach the tip in their first transaction.
+      var now = DateTime.utc(2026, 1, 1);
+      late String behindCopyId;
+      var behindAtHead = false;
+      var behindTransactions = 0;
+      var currentTransactions = 0;
+      final begins = <String>[];
+      late EventStore store;
+      await runWithDeliveryTestHooks(
+        DeliveryTestHooks(
+          catchUpClock: () => now,
+          onCatchUpTransactionBegin: (copyId) {
+            begins.add(copyId);
+            if (behindAtHead) return;
+            if (copyId == behindCopyId) {
+              behindTransactions++;
+            } else {
+              currentTransactions++;
+            }
+          },
+          onCatchUpStep: (copyId, eventId) {
+            if (copyId == behindCopyId) {
+              now = now.add(
+                kCatchUpStepBound + const Duration(milliseconds: 1),
+              );
+            }
+          },
+        ),
+        () async {
+          store = await _open(
+            backend,
+            projections: <ProjectionSpec>[behindSpec, ...currentSpecs],
+          );
+          behindCopyId = store.copyIdOf(behindSpec.viewName);
+          for (var i = 0; i < 2000; i++) {
+            final copy = await _copyOf(backend, behindSpec.viewName);
+            if (copy.watermark >= last!.sequenceNumber) break;
+            await pumpEventQueue();
+          }
+          behindAtHead = true;
+          await store.close();
+        },
+      );
+      final consecutive = <int>[
+        for (var i = 1; i < begins.length; i++)
+          if (begins[i] == behindCopyId && begins[i - 1] == behindCopyId) i,
+      ];
+      expect(
+        consecutive,
+        isNotEmpty,
+        reason:
+            'a progressing copy is attempted again before the pass moves '
+            'on to the next view',
+      );
+      expect(
+        currentTransactions,
+        lessThan(behindTransactions),
+        reason:
+            'the current copies get a turn per pass, not one turn per '
+            'transaction of the behind copy ($behindTransactions behind, '
+            '$currentTransactions current)',
+      );
+    });
+
+    // Verifies: EVS-DEV-view-convergence/W
+    test('a table view prefetches the rows a chunk removes in one batched '
+        'read instead of reading each key on its first touch', () async {
+      const tableView = 'catch_up_sites';
+      const tableSpec = TableProjectionSpec(
+        viewName: tableView,
+        interest: SubscriptionFilter(entryTypes: <String>{_kType}),
+        insertEventTypes: <String>{'finalized'},
+        removeEventTypes: <String>{'removed'},
+        rowKey: CompositeKey(<String>['data.site_id']),
+        rowData: WholePayload(),
+      );
+      const eventTypes = <String>['finalized', 'removed'];
+      final backend = await _openObservedBackend();
+      final seeder = await _open(
+        backend,
+        projections: const [],
+        eventTypes: eventTypes,
+      );
+      // Every site's first event is a removal, so a fold that reads each
+      // row on its first touch reads every site's row one by one.
+      const sites = 4;
+      StoredEvent? last;
+      for (var i = 0; i < 2 * kCatchUpReadChunk; i++) {
+        last = await seeder.append(
+          entryType: _kType,
+          aggregateId: 'agg-$i',
+          aggregateType: 'note',
+          eventType: i.isEven ? 'removed' : 'finalized',
+          data: <String, Object?>{'site_id': 'site-${(i ~/ 2) % sites}'},
+          initiator: const UserInitiator('catch-up-user'),
+        );
+      }
+      await seeder.close();
+
+      // A clock that stands still: the step bound never ends a transaction,
+      // so the copy folds the whole log in one transaction, reading it in
+      // two chunks, whatever the load on the machine running the test.
+      final frozen = DateTime.utc(2026, 1, 1);
+      late String copyId;
+      var transactions = 0;
+      await runWithDeliveryTestHooks(
+        DeliveryTestHooks(
+          catchUpClock: () => frozen,
+          onCatchUpTransactionBegin: (id) {
+            if (id == copyId) transactions++;
+          },
+        ),
+        () async {
+          final store = await _open(
+            backend,
+            projections: const [tableSpec],
+            eventTypes: eventTypes,
+          );
+          copyId = store.copyIdOf(tableView);
+          await _waitUntilWatermarkAtLeast(
+            backend,
+            tableView,
+            last!.sequenceNumber,
+          );
+          final rows = (await store.reader.findViewRows(tableView)).rows;
+          expect(rows, hasLength(sites));
+          await store.close();
+        },
+      );
+
+      expect(
+        backend.singleRowReads[copyId] ?? 0,
+        0,
+        reason: 'no row of the table view is read one key at a time',
+      );
+      expect(
+        backend.batchedRowReads[copyId] ?? 0,
+        1,
+        reason:
+            'the first chunk loads every site its remove events touch in '
+            'one batched read, and the second chunk finds them all loaded '
+            '($transactions catch-up transactions)',
       );
     });
   });

@@ -2636,7 +2636,7 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/event_store.dart:4427
-- event_sourcing/lib/src/projections/view_catch_up.dart:311
+- event_sourcing/lib/src/projections/view_catch_up.dart:335
 
 Tests:
 
@@ -6173,11 +6173,11 @@ Code:
 - event_sourcing/lib/src/event_store.dart:2158
 - event_sourcing/lib/src/event_store.dart:2800
 - event_sourcing/lib/src/event_store.dart:2914
-- event_sourcing/lib/src/projections/view_catch_up.dart:780
+- event_sourcing/lib/src/projections/view_catch_up.dart:849
 
 Tests:
 
-- event_sourcing/test/projections/view_catch_up_test.dart:628 a catch-up fold failure a converging copy that cannot key one event records one fold_failed finding, passes over it, and becomes current -- passed
+- event_sourcing/test/projections/view_catch_up_test.dart:677 a catch-up fold failure a converging copy that cannot key one event records one fold_failed finding, passes over it, and becomes current -- passed
 - event_sourcing/test/security/security_finding_conformance.dart:275 security findings (postgres) a finding recorded in a transaction that does not commit is not stored -- passed, skipped
 - event_sourcing/test/security/security_finding_conformance.dart:275 security findings (sembast (memory)) a finding recorded in a transaction that does not commit is not stored -- passed
 - event_sourcing/test/storage/postgres/postgres_view_catch_up_test.dart:347 a converging copy that cannot key one event records one fold_failed finding, passes over it, and becomes current -- passed, skipped
@@ -6626,11 +6626,11 @@ Code:
 - event_sourcing/lib/src/event_store.dart:3151
 - event_sourcing/lib/src/event_store.dart:3294
 - event_sourcing/lib/src/event_store.dart:3597
-- event_sourcing/lib/src/projections/view_catch_up.dart:781
+- event_sourcing/lib/src/projections/view_catch_up.dart:850
 
 Tests:
 
-- event_sourcing/test/projections/view_catch_up_test.dart:628 a catch-up fold failure a converging copy that cannot key one event records one fold_failed finding, passes over it, and becomes current -- passed
+- event_sourcing/test/projections/view_catch_up_test.dart:677 a catch-up fold failure a converging copy that cannot key one event records one fold_failed finding, passes over it, and becomes current -- passed
 - event_sourcing/test/storage/postgres/delivery_receiver_postgres_test.dart:258 a view-row write the server rejects with SQLSTATE 54000 is a fold_failed finding of reason row_write_failed; the delivery is accepted, the copy stays current and its other row folds normally -- passed, skipped
 - event_sourcing/test/storage/postgres/delivery_receiver_postgres_test.dart:354 when one of the copies an event folds into meets a row write the server rejects, only that copy passes over the event and records a fold_failed finding; the other copy folds it -- passed, skipped
 - event_sourcing/test/storage/postgres/postgres_view_catch_up_test.dart:347 a converging copy that cannot key one event records one fold_failed finding, passes over it, and becomes current -- passed, skipped
@@ -6659,12 +6659,12 @@ Code:
 
 - event_sourcing/lib/src/event_store.dart:2211
 - event_sourcing/lib/src/projections/interpreter/projection_interpreter.dart:375
-- event_sourcing/lib/src/projections/view_catch_up.dart:669
-- event_sourcing/lib/src/projections/view_catch_up.dart:675
+- event_sourcing/lib/src/projections/view_catch_up.dart:735
+- event_sourcing/lib/src/projections/view_catch_up.dart:741
 
 Tests:
 
-- event_sourcing/test/projections/view_catch_up_test.dart:730 a catch-up fold failure a fold_failed finding event the copy cannot key is passed over at once, with no second finding authored about it -- passed
+- event_sourcing/test/projections/view_catch_up_test.dart:779 a catch-up fold failure a fold_failed finding event the copy cannot key is passed over at once, with no second finding authored about it -- passed
 - event_sourcing/test/security/security_finding_conformance.dart:317 security findings (postgres) a received finding of kind fold_failed a view cannot key is passed over; no fold_failed finding about it is authored -- passed, skipped
 - event_sourcing/test/security/security_finding_conformance.dart:317 security findings (sembast (memory)) a received finding of kind fold_failed a view cannot key is passed over; no fold_failed finding about it is authored -- passed
 - event_sourcing/test/test_support/delivery_receiver_conformance.dart:1141 receiver accept path (postgres) a view whose fold cannot key a security finding event records one fold_failed finding about the delivered event and none about the fold_failed finding itself -- passed, skipped
@@ -7488,46 +7488,47 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/projections/view_catch_up.dart:1
-- event_sourcing/lib/src/projections/view_catch_up.dart:334
+- event_sourcing/lib/src/projections/view_catch_up.dart:358
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1509
 
 Tests:
 
-- event_sourcing/test/projections/view_catch_up_test.dart:136 the catch-up driver a view added over a log becomes current after open, matching a fresh rebuild -- passed
-- event_sourcing/test/projections/view_catch_up_test.dart:203 the catch-up driver no catch-up transaction begins before open returns, and none after close -- passed
+- event_sourcing/test/projections/view_catch_up_test.dart:183 the catch-up driver a view added over a log becomes current after open, matching a fresh rebuild -- passed
+- event_sourcing/test/projections/view_catch_up_test.dart:250 the catch-up driver no catch-up transaction begins before open returns, and none after close -- passed
 
 **H**
 
 Code:
 
 - event_sourcing/lib/src/event_store.dart:1377
-- event_sourcing/lib/src/projections/view_catch_up.dart:345
+- event_sourcing/lib/src/projections/view_catch_up.dart:369
 - event_sourcing/lib/src/projections/view_catch_up.dart:5
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1509
 
 Tests:
 
-- event_sourcing/test/projections/view_catch_up_test.dart:203 the catch-up driver no catch-up transaction begins before open returns, and none after close -- passed
+- event_sourcing/test/projections/view_catch_up_test.dart:250 the catch-up driver no catch-up transaction begins before open returns, and none after close -- passed
 
 **I**
 
 Code:
 
 - event_sourcing/lib/src/event_store.dart:1378
-- event_sourcing/lib/src/projections/view_catch_up.dart:346
+- event_sourcing/lib/src/projections/view_catch_up.dart:370
 - event_sourcing/lib/src/projections/view_catch_up.dart:8
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1509
 
 Tests:
 
-- event_sourcing/test/projections/view_catch_up_test.dart:238 the catch-up driver close awaits the catch-up transaction in flight -- passed
+- event_sourcing/test/projections/view_catch_up_test.dart:285 the catch-up driver close awaits the catch-up transaction in flight -- passed
 
 **J**
 
 Code:
 
 - event_sourcing/lib/src/projections/view_catch_up.dart:11
-- event_sourcing/lib/src/projections/view_catch_up.dart:555
+- event_sourcing/lib/src/projections/view_catch_up.dart:426
+- event_sourcing/lib/src/projections/view_catch_up.dart:604
 - event_sourcing/lib/src/projections/view_read.dart:292
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1509
 
@@ -7537,7 +7538,8 @@ Tests:
 - event_sourcing/test/projections/candidate_reads_test.dart:285 a catch-up over a log of events its view does not fold reads none of them and reaches the head -- passed
 - event_sourcing/test/projections/candidate_reads_test.dart:320 a catch-up stopped by the step bound leaves the watermark at the last folded candidate -- passed
 - event_sourcing/test/projections/candidate_reads_test.dart:374 a held security finding makes the catch-up read every event -- passed
-- event_sourcing/test/projections/view_catch_up_test.dart:136 the catch-up driver a view added over a log becomes current after open, matching a fresh rebuild -- passed
+- event_sourcing/test/projections/view_catch_up_test.dart:183 the catch-up driver a view added over a log becomes current after open, matching a fresh rebuild -- passed
+- event_sourcing/test/projections/view_catch_up_test.dart:937 catch-up progress per transaction and per pass a behind copy that progresses gets further transactions within one pass before the current copies get theirs -- passed
 - event_sourcing/test/test_support/candidate_read_conformance.dart:283 PostgresBackend candidate windows a catch-up folds candidates on both sides of a window boundary and reaches the head -- passed
 - event_sourcing/test/test_support/candidate_read_conformance.dart:283 SembastBackend candidate windows a catch-up folds candidates on both sides of a window boundary and reaches the head -- passed
 
@@ -7553,8 +7555,8 @@ Code:
 
 Tests:
 
-- event_sourcing/test/projections/view_catch_up_test.dart:136 the catch-up driver a view added over a log becomes current after open, matching a fresh rebuild -- passed
-- event_sourcing/test/projections/view_catch_up_test.dart:166 the catch-up driver a new minor promotes through the chain -- passed
+- event_sourcing/test/projections/view_catch_up_test.dart:183 the catch-up driver a view added over a log becomes current after open, matching a fresh rebuild -- passed
+- event_sourcing/test/projections/view_catch_up_test.dart:213 the catch-up driver a new minor promotes through the chain -- passed
 - event_sourcing/test/test_support/catch_up_equivalence_conformance.dart:209 a copy caught up through the buffered catch-up equals an event-by-event replay of the log: aggregate rows, tombstones, promoted events, table rows with their producers, and outstanding-finding marks -- passed
 - event_sourcing/test/test_support/catch_up_equivalence_conformance.dart:209 catch-up equivalence a copy caught up through the buffered catch-up equals an event-by-event replay of the log: aggregate rows, tombstones, promoted events, table rows with their producers, and outstanding-finding marks -- passed
 
@@ -7582,7 +7584,7 @@ Code:
 
 Tests:
 
-- event_sourcing/test/projections/view_catch_up_test.dart:546 the catch-up driver the lock held means the transaction ends without writing -- passed
+- event_sourcing/test/projections/view_catch_up_test.dart:595 the catch-up driver the lock held means the transaction ends without writing -- passed
 - event_sourcing/test/storage/postgres/postgres_view_catch_up_test.dart:201 two instances registering one copy: while one holds the copy's advisory lock, the other's catch-up commits nothing -- passed, skipped
 - event_sourcing/test/web/view_copy_web_test.dart:185 an ifAvailable request for a held view copy lock skips without running, and runs once the holder releases -- passed
 
@@ -7600,15 +7602,16 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/projections/view_catch_up.dart:25
-- event_sourcing/lib/src/projections/view_catch_up.dart:596
+- event_sourcing/lib/src/projections/view_catch_up.dart:26
+- event_sourcing/lib/src/projections/view_catch_up.dart:657
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1509
 
 Tests:
 
-- event_sourcing/test/projections/view_catch_up_test.dart:279 the catch-up driver the 200 ms bound stops further steps, and one step always runs -- passed
-- event_sourcing/test/projections/view_catch_up_test.dart:329 the catch-up driver a transaction performs at least one step even when the clock already reads past the 200 ms bound -- passed
-- event_sourcing/test/projections/view_catch_up_test.dart:628 a catch-up fold failure a converging copy that cannot key one event records one fold_failed finding, passes over it, and becomes current -- passed
+- event_sourcing/test/projections/view_catch_up_test.dart:326 the catch-up driver the 200 ms bound stops further steps, and one step always runs -- passed
+- event_sourcing/test/projections/view_catch_up_test.dart:378 the catch-up driver a transaction performs at least one step even when the clock already reads past the 200 ms bound -- passed
+- event_sourcing/test/projections/view_catch_up_test.dart:677 a catch-up fold failure a converging copy that cannot key one event records one fold_failed finding, passes over it, and becomes current -- passed
+- event_sourcing/test/projections/view_catch_up_test.dart:880 catch-up progress per transaction and per pass a slow transaction setup does not limit the transaction's folding to one step -- passed
 
 **P**
 
@@ -7624,14 +7627,14 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/projections/view_catch_up.dart:29
-- event_sourcing/lib/src/projections/view_catch_up.dart:405
-- event_sourcing/lib/src/projections/view_catch_up.dart:417
-- event_sourcing/lib/src/projections/view_catch_up.dart:422
-- event_sourcing/lib/src/projections/view_catch_up.dart:463
-- event_sourcing/lib/src/projections/view_catch_up.dart:501
-- event_sourcing/lib/src/projections/view_catch_up.dart:742
-- event_sourcing/lib/src/projections/view_catch_up.dart:874
+- event_sourcing/lib/src/projections/view_catch_up.dart:30
+- event_sourcing/lib/src/projections/view_catch_up.dart:440
+- event_sourcing/lib/src/projections/view_catch_up.dart:457
+- event_sourcing/lib/src/projections/view_catch_up.dart:462
+- event_sourcing/lib/src/projections/view_catch_up.dart:503
+- event_sourcing/lib/src/projections/view_catch_up.dart:548
+- event_sourcing/lib/src/projections/view_catch_up.dart:808
+- event_sourcing/lib/src/projections/view_catch_up.dart:943
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1509
 
 Tests:
@@ -7639,7 +7642,7 @@ Tests:
 - event_sourcing/test/projections/marked_copy_test.dart:173 a copy marked for deletion, or whose record is gone a catch-up of a missing copy backs off on failure instead of spinning, and the view's progress reports the failure -- passed
 - event_sourcing/test/projections/marked_copy_test.dart:354 a backoff entry left under a key another instance makes stale recorded under the fingerprint while no copy existed is cleared once another instance creates the copy, so recovery never spins with a zero-duration wait -- passed
 - event_sourcing/test/projections/marked_copy_test.dart:486 a backoff entry left under a key another instance makes stale recorded under a copy id that another instance deletes before this instance discovers it marked is pruned once the discovery pass notices the copy is gone -- passed
-- event_sourcing/test/projections/view_catch_up_test.dart:375 the catch-up driver a throwing step backs off 1 s then 2 s, records the failure in the copy's progress, and other copies keep catching up -- passed
+- event_sourcing/test/projections/view_catch_up_test.dart:424 the catch-up driver a throwing step backs off 1 s then 2 s, records the failure in the copy's progress, and other copies keep catching up -- passed
 - event_sourcing/test/storage/postgres/postgres_view_catch_up_test.dart:439 a converging copy whose row write the server rejects (SQLSTATE 54000, index row too large) inside catch-up records one fold_failed finding of reason row_write_failed, passes over the event and becomes current -- passed, skipped
 
 **R**
@@ -7656,20 +7659,20 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/projections/view_catch_up.dart:38
+- event_sourcing/lib/src/projections/view_catch_up.dart:39
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1509
 
 Tests:
 
-- event_sourcing/test/projections/view_catch_up_test.dart:491 the catch-up driver a marked copy's rows are deleted 500 per step, then its record -- passed
+- event_sourcing/test/projections/view_catch_up_test.dart:540 the catch-up driver a marked copy's rows are deleted 500 per step, then its record -- passed
 
 **T**
 
 Code:
 
 - event_sourcing/lib/src/projections/rebuild.dart:19
-- event_sourcing/lib/src/projections/view_catch_up.dart:42
-- event_sourcing/lib/src/projections/view_catch_up.dart:519
+- event_sourcing/lib/src/projections/view_catch_up.dart:43
+- event_sourcing/lib/src/projections/view_catch_up.dart:566
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1509
 
 Tests:
@@ -7677,7 +7680,7 @@ Tests:
 - event_sourcing/test/projections/marked_copy_test.dart:73 a copy marked for deletion, or whose record is gone a catch-up of a missing copy backs off on failure instead of spinning, and the view's progress reports the failure -- passed
 - event_sourcing/test/projections/marked_copy_test.dart:73 a copy marked for deletion, or whose record is gone is never served as current or folded into, and a read never throws once its record is gone -- passed
 - event_sourcing/test/projections/rebuild_test.dart:329 rebuildView (fingerprinted view copies) rebuildView creates a replacement when another instance already marked the copy without creating one -- passed
-- event_sourcing/test/projections/view_catch_up_test.dart:526 the catch-up driver a copy deleted underneath the instance is re-created -- passed
+- event_sourcing/test/projections/view_catch_up_test.dart:575 the catch-up driver a copy deleted underneath the instance is re-created -- passed
 - event_sourcing/test/storage/postgres/postgres_view_catch_up_test.dart:304 a read of a view with no unmarked copy reports it converging, with no rows, instead of throwing -- the storage reader runs a read-only transaction on Postgres, so it never itself creates the replacement copy the read's currency scan reports against -- passed, skipped
 
 **U**
@@ -7717,16 +7720,21 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/projections/view_catch_up.dart:110
+- event_sourcing/lib/src/projections/view_catch_up.dart:113
 - event_sourcing/lib/src/projections/view_catch_up.dart:21
-- event_sourcing/lib/src/projections/view_catch_up.dart:464
-- event_sourcing/lib/src/projections/view_catch_up.dart:743
+- event_sourcing/lib/src/projections/view_catch_up.dart:427
+- event_sourcing/lib/src/projections/view_catch_up.dart:504
+- event_sourcing/lib/src/projections/view_catch_up.dart:683
+- event_sourcing/lib/src/projections/view_catch_up.dart:809
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1255
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1509
 - event_sourcing/lib/src/storage/storage_backend.dart:1205
 
 Tests:
 
+- event_sourcing/test/projections/view_catch_up_test.dart:1027 catch-up progress per transaction and per pass a table view prefetches the rows a chunk removes in one batched read instead of reading each key on its first touch -- passed
+- event_sourcing/test/projections/view_catch_up_test.dart:880 catch-up progress per transaction and per pass a slow transaction setup does not limit the transaction's folding to one step -- passed
+- event_sourcing/test/projections/view_catch_up_test.dart:937 catch-up progress per transaction and per pass a behind copy that progresses gets further transactions within one pass before the current copies get theirs -- passed
 - event_sourcing/test/storage/postgres/postgres_view_convergence_measured_test.dart:358 three instances of one build add a view over the measured database: the serving loop keeps its 1 s bound and the added copy converges -- passed, skipped
 - event_sourcing/test/storage/postgres/postgres_view_convergence_measured_test.dart:411 a second instance opens with a newer minor of the measured entry type: the serving loop keeps its 1 s bound and the promoted copy converges -- passed, skipped
 - event_sourcing/test/storage/postgres/postgres_view_convergence_measured_test.dart:460 the serving instance itself opens with a newer minor of the measured entry type: its own copy converges while it keeps its 1 s bound -- passed, skipped
@@ -7736,7 +7744,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/projections/view_catch_up.dart:114
+- event_sourcing/lib/src/projections/view_catch_up.dart:117
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1509
 
 Tests:
@@ -7760,19 +7768,19 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/projections/view_catch_up.dart:33
-- event_sourcing/lib/src/projections/view_catch_up.dart:539
-- event_sourcing/lib/src/projections/view_catch_up.dart:644
-- event_sourcing/lib/src/projections/view_catch_up.dart:656
-- event_sourcing/lib/src/projections/view_catch_up.dart:691
-- event_sourcing/lib/src/projections/view_catch_up.dart:767
-- event_sourcing/lib/src/projections/view_catch_up.dart:779
+- event_sourcing/lib/src/projections/view_catch_up.dart:34
+- event_sourcing/lib/src/projections/view_catch_up.dart:586
+- event_sourcing/lib/src/projections/view_catch_up.dart:710
+- event_sourcing/lib/src/projections/view_catch_up.dart:722
+- event_sourcing/lib/src/projections/view_catch_up.dart:757
+- event_sourcing/lib/src/projections/view_catch_up.dart:836
+- event_sourcing/lib/src/projections/view_catch_up.dart:848
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:1509
 
 Tests:
 
-- event_sourcing/test/projections/view_catch_up_test.dart:628 a catch-up fold failure a converging copy that cannot key one event records one fold_failed finding, passes over it, and becomes current -- passed
-- event_sourcing/test/projections/view_catch_up_test.dart:779 a catch-up fold failure when the finding's own append fails, the copy's watermark stays before the event and no pass-over happens -- passed
+- event_sourcing/test/projections/view_catch_up_test.dart:677 a catch-up fold failure a converging copy that cannot key one event records one fold_failed finding, passes over it, and becomes current -- passed
+- event_sourcing/test/projections/view_catch_up_test.dart:828 a catch-up fold failure when the finding's own append fails, the copy's watermark stays before the event and no pass-over happens -- passed
 - event_sourcing/test/storage/postgres/postgres_view_catch_up_test.dart:347 a converging copy that cannot key one event records one fold_failed finding, passes over it, and becomes current -- passed, skipped
 - event_sourcing/test/storage/postgres/postgres_view_catch_up_test.dart:439 a converging copy whose row write the server rejects (SQLSTATE 54000, index row too large) inside catch-up records one fold_failed finding of reason row_write_failed, passes over the event and becomes current -- passed, skipped
 - event_sourcing/test/test_support/destination_wedges_view_conformance.dart:1162 destination-wedges view scenarios (postgres) ingest refusals rebuild over a wedge event missing data.database_id -- passed, skipped
@@ -10166,7 +10174,7 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/projections/interpreter/aggregate_fold.dart:119
-- event_sourcing/lib/src/projections/interpreter/table_fold.dart:67
+- event_sourcing/lib/src/projections/interpreter/table_fold.dart:89
 
 Tests:
 
@@ -10240,7 +10248,7 @@ Code:
 
 Tests:
 
-- event_sourcing/test/projections/view_catch_up_test.dart:628 a catch-up fold failure a converging copy that cannot key one event records one fold_failed finding, passes over it, and becomes current -- passed
+- event_sourcing/test/projections/view_catch_up_test.dart:677 a catch-up fold failure a converging copy that cannot key one event records one fold_failed finding, passes over it, and becomes current -- passed
 - event_sourcing/test/storage/postgres/postgres_view_catch_up_test.dart:347 a converging copy that cannot key one event records one fold_failed finding, passes over it, and becomes current -- passed, skipped
 - event_sourcing/test/storage/postgres/postgres_view_catch_up_test.dart:439 a converging copy whose row write the server rejects (SQLSTATE 54000, index row too large) inside catch-up records one fold_failed finding of reason row_write_failed, passes over the event and becomes current -- passed, skipped
 - event_sourcing/test/test_support/delivery_receiver_conformance.dart:1023 receiver accept path (postgres) a delivered event a table fold cannot key is passed over; the delivery is accepted whole, the copy stays current and one fold_failed finding is recorded -- passed, skipped
