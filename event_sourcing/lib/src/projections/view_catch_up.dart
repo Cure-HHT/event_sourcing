@@ -20,8 +20,9 @@
 //   reacts to a null result by treating the attempt as lock-held.
 // Implements: EVS-DEV-view-convergence/W
 // a catch-up transaction begins no further step once the driver's clock
-//   shows 200 ms have passed since the transaction began, so the appends
-//   it holds back wait one bounded transaction at most.
+//   shows 200 ms have passed since its first step began, so the appends
+//   it holds back wait one bounded transaction at most: its setup, the
+//   bound, one further step and the flush of its rows.
 // Implements: EVS-DEV-view-convergence/O
 // the step loop is a do-while: the first step always runs, whatever the
 //   clock reads; a fold failure ends the transaction on the event it met,
@@ -51,6 +52,8 @@ import 'package:event_sourcing/src/projections/interpreter/aggregate_fold.dart'
     show AggregateFoldChange;
 import 'package:event_sourcing/src/projections/interpreter/fold_failure.dart';
 import 'package:event_sourcing/src/projections/interpreter/projection_interpreter.dart';
+import 'package:event_sourcing/src/projections/interpreter/table_fold.dart'
+    show TableFold;
 import 'package:event_sourcing/src/projections/interpreter/view_row_access.dart';
 import 'package:event_sourcing/src/projections/projection_registry.dart';
 import 'package:event_sourcing/src/projections/projection_spec.dart';
@@ -115,10 +118,31 @@ class _CatchUpFoldFailureSignal implements Exception {
 // steps repeat back to back while a copy is behind, so its watermark
 //   reaches the log head within the measured window.
 /// The step bound of one catch-up transaction, the means of
-/// EVS-DEV-view-convergence/W: no further step begins once a transaction
-/// has run this long.
+/// EVS-DEV-view-convergence/W: no further step begins once this long has
+/// passed since the transaction's first step began. Measured from the
+/// first step, not from the transaction's start, so a setup that is slow
+/// on a slow database -- the log head read, the candidate filter and the
+/// first chunk read -- leaves the transaction its folding budget rather
+/// than limiting it to the one step the floor guarantees.
 @internal
 const Duration kCatchUpStepBound = Duration(milliseconds: 200);
+
+/// How long, within one driver pass, a copy whose catch-up transaction
+/// progressed keeps getting further transactions before the pass moves on
+/// to the next view. Each of those transactions stays its own short
+/// transaction under [kCatchUpStepBound], so this bound lengthens no
+/// transaction and no wait of a serving append (EVS-DEV-view-convergence/W);
+/// it only sets how a pass shares its time. A pass gives every registered
+/// view a transaction, and one on a view with nothing to fold still costs
+/// a transaction's setup; repeating a progressing copy's transactions
+/// spreads that per-pass cost over up to this long of folding. Ten step
+/// bounds: on a fast database a behind copy gets about ten transactions a
+/// pass, on a slow one at least one. The other copies -- current ones are
+/// kept current by appends' inline folds -- wait about this long, plus one
+/// transaction, per progressing copy for their turn: about twice the idle
+/// cadence.
+@internal
+const Duration kCatchUpPassBound = Duration(seconds: 2);
 
 /// The page size a catch-up transaction reads the log in, and the most
 /// events whose folded rows it holds in memory before writing them: an
@@ -399,17 +423,33 @@ class ViewCatchUpDriver {
       // A store registering no view has nothing to wait for.
       _completeCaughtUpIfReached();
       for (final target in _targets) {
-        if (_stopping) return;
-        final outcome = await _attemptView(target, copies);
-        _completeCaughtUpIfReached();
-        // Implements: EVS-DEV-view-convergence/Q
-        // a failure other than a fold failure backs off; it is not
-        //   progress, so it must not skip the idle wait below -- a copy
-        //   that fails every attempt on a storage error would otherwise
-        //   spin the discovery loop with no delay at all. A fold failure
-        //   counts as progress (EVS-DEV-view-convergence/Z) and reschedules
-        //   at once instead.
-        if (outcome == _Outcome.progressed) progressed = true;
+        // Implements: EVS-DEV-view-convergence/J
+        // Implements: EVS-DEV-view-convergence/W
+        // a copy whose transaction progressed -- folded without reaching
+        //   the tip, or met a fold failure -- gets further transactions,
+        //   each its own bounded one, until kCatchUpPassBound has passed
+        //   since its first in this pass; then the pass moves on, so every
+        //   other view still gets its turn each pass.
+        final passStart = _effectiveClock();
+        String? copyId;
+        while (true) {
+          if (_stopping) return;
+          final attempt = await _attemptView(target, copies, copyId);
+          copyId = attempt.copyId ?? copyId;
+          _completeCaughtUpIfReached();
+          // Implements: EVS-DEV-view-convergence/Q
+          // a failure other than a fold failure backs off; it is not
+          //   progress, so it must not skip the idle wait below -- a copy
+          //   that fails every attempt on a storage error would otherwise
+          //   spin the discovery loop with no delay at all. A fold failure
+          //   counts as progress (EVS-DEV-view-convergence/Z) and
+          //   reschedules at once instead.
+          if (attempt.outcome != _Outcome.progressed) break;
+          progressed = true;
+          if (_effectiveClock().difference(passStart) >= kCatchUpPassBound) {
+            break;
+          }
+        }
       }
       for (final copyId in _deletionCopyIds.toList()) {
         if (_stopping) return;
@@ -488,16 +528,23 @@ class ViewCatchUpDriver {
     return next == null || !_effectiveClock().isBefore(next);
   }
 
-  Future<_Outcome> _attemptView(
+  /// One catch-up transaction on [target]'s copy: its outcome, and the id
+  /// of the copy it committed on, when it committed. [resolvedCopyId] is
+  /// that id from an earlier attempt in the same pass, which [discovered]
+  /// predates: a copy the pass's first attempt created keeps the lock key
+  /// of its id from then on.
+  Future<({_Outcome outcome, String? copyId})> _attemptView(
     _ViewTarget target,
-    List<ViewCopy> discovered,
-  ) async {
+    List<ViewCopy> discovered, [
+    String? resolvedCopyId,
+  ]) async {
     final existing = discovered
         .where(
           (c) => !c.markedForDeletion && c.fingerprint == target.fingerprint,
         )
         .toList();
-    final knownCopyId = existing.isEmpty ? null : existing.single.copyId;
+    final knownCopyId =
+        resolvedCopyId ?? (existing.isEmpty ? null : existing.single.copyId);
     // Implements: EVS-DEV-view-convergence/Q
     // backoff applies whether or not an unmarked copy of the fingerprint
     //   exists yet: a missing copy meeting a transient storage error before
@@ -505,7 +552,7 @@ class ViewCatchUpDriver {
     //   so this keys the check by the fingerprint instead. A fold failure
     //   does not reach this backoff (EVS-DEV-view-convergence/Z).
     final lockKey = knownCopyId ?? target.fingerprint;
-    if (!_dueNow(lockKey)) return _Outcome.idle;
+    if (!_dueNow(lockKey)) return (outcome: _Outcome.idle, copyId: null);
 
     Future<_StepResult> body(Transaction txn) async {
       final existingCopy = await _backend.readUnmarkedViewCopyInTxn(
@@ -546,7 +593,9 @@ class ViewCatchUpDriver {
       final rows = perEvent
           ? null
           : BufferedViewRowAccess(_backend, txn, copy.copyId);
-      final start = _effectiveClock();
+      // When the transaction's first step began: null until then, read
+      // only once a step has run.
+      DateTime? start;
       var watermark = copy.watermark;
       var lastRead = watermark;
       var steps = 0;
@@ -584,11 +633,23 @@ class ViewCatchUpDriver {
             eventTypes: filter.eventTypes,
             aggregateTypes: filter.aggregateTypes,
           );
-          if (rows != null && spec is AggregateProjectionSpec) {
-            await rows.prefetch(<String>{
-              for (final e in read)
-                if (spec.interest.matches(e)) e.aggregateId,
-            });
+          // The rows the chunk's folds read by key, loaded in one read: an
+          // aggregate fold reads its aggregate's row, a table fold the row
+          // a remove event deletes. A key the table's extractor cannot
+          // extract is not loaded; its fold fails on its own.
+          if (rows != null) {
+            switch (spec) {
+              case AggregateProjectionSpec():
+                await rows.prefetch(<String>{
+                  for (final e in read)
+                    if (spec.interest.matches(e)) e.aggregateId,
+                });
+              case TableProjectionSpec():
+                await rows.prefetch(<String>{
+                  for (final e in read)
+                    if (spec.interest.matches(e)) ?TableFold.readKeyOf(spec, e),
+                });
+            }
           }
           return read;
         }
@@ -607,6 +668,7 @@ class ViewCatchUpDriver {
             // Every candidate of the window is folded: the rest of it is
             // events the definition does not fold, passed over at once.
             if (windowEnd > watermark) {
+              start ??= _effectiveClock();
               watermark = windowEnd;
               steps++;
             }
@@ -618,6 +680,10 @@ class ViewCatchUpDriver {
             windowExhausted = false;
             continue;
           }
+          // Implements: EVS-DEV-view-convergence/W
+          // the step bound runs from the first step, after the setup and
+          //   the first chunk's read.
+          start ??= _effectiveClock();
           final event = chunk[index];
           index++;
           lastRead = event.sequenceNumber;
@@ -711,7 +777,7 @@ class ViewCatchUpDriver {
           watermark = event.sequenceNumber;
           steps++;
         } while (steps == 0 ||
-            _effectiveClock().difference(start) < kCatchUpStepBound);
+            _effectiveClock().difference(start!) < kCatchUpStepBound);
         await rows?.flush();
       } on RowWriteRejected {
         // Only a batched flush reaches here: the event-by-event fold above
@@ -730,7 +796,7 @@ class ViewCatchUpDriver {
       final future = _backend.catchUpTransaction(lockKey, body);
       _currentTransaction = future;
       final result = await future;
-      if (result == null) return _Outcome.lockHeld;
+      if (result == null) return (outcome: _Outcome.lockHeld, copyId: null);
       // Recorded only once the transaction that created or found the copy
       // has committed: a rolled-back attempt must not leave this instance
       // pointing at a copy id no reader can find.
@@ -760,9 +826,12 @@ class ViewCatchUpDriver {
       _atHeadByCopyId[result.copyId] = result.reachedTip;
       if (result.reachedTip) _reachedHeadCopyIds.add(result.copyId);
       if (result.reachedTip) onCaughtUp?.call(target.viewName);
-      return result.steps == 0
-          ? _Outcome.idle
-          : (result.reachedTip ? _Outcome.done : _Outcome.progressed);
+      return (
+        outcome: result.steps == 0
+            ? _Outcome.idle
+            : (result.reachedTip ? _Outcome.done : _Outcome.progressed),
+        copyId: result.copyId,
+      );
     } on _CatchUpBatchRejectedSignal catch (signal) {
       // Implements: EVS-DEV-view-convergence/Z
       // a rejected row write is a fold failure, not a storage failure: no
@@ -774,7 +843,7 @@ class ViewCatchUpDriver {
         _perEventThrough[signal.copyId] = signal.throughSequence;
       }
       _atHeadByCopyId[signal.copyId] = false;
-      return _Outcome.progressed;
+      return (outcome: _Outcome.progressed, copyId: null);
     } on _CatchUpFoldFailureSignal catch (signal) {
       // Implements: EVS-DEV-view-convergence/Z
       // Implements: EVS-DEV-security-findings/F
@@ -794,14 +863,14 @@ class ViewCatchUpDriver {
       } catch (e, st) {
         _atHeadByCopyId[lockKey] = false;
         _onFailure(lockKey, e, st);
-        return _Outcome.failed;
+        return (outcome: _Outcome.failed, copyId: null);
       }
       _atHeadByCopyId[lockKey] = false;
-      return _Outcome.progressed;
+      return (outcome: _Outcome.progressed, copyId: null);
     } catch (e, st) {
       _atHeadByCopyId[lockKey] = false;
       _onFailure(lockKey, e, st);
-      return _Outcome.failed;
+      return (outcome: _Outcome.failed, copyId: null);
     } finally {
       _currentTransaction = null;
     }

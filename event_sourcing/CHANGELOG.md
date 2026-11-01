@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.7.2
+
+Data: data format 3.0, unchanged; nothing to migrate.
+
+### Views
+
+- A catch-up transaction's 200 ms step bound runs from its first step, so
+  on a slow database a transaction whose setup alone outlasts the bound
+  still folds for the whole bound rather than folding one event.
+- Within one pass of the catch-up driver, a copy whose transaction made
+  progress gets further transactions, each still bounded, for up to 2 s
+  before the driver turns to the next view; a copy far behind no longer
+  gets one transaction for every one each other registered view gets.
+- A table view's catch-up reads the rows a page of remove events deletes
+  in one batched read, as an aggregate view's already does, rather than
+  one read per row.
+
 ## 0.7.1
 
 Data: data format 3.0, unchanged; nothing to migrate.
