@@ -4,7 +4,7 @@
 
 The library's core obligation is a truthful record. When it meets an integrity anomaly, something the log or a delivery exchange contradicts and no automatic path explains, it does not stop and it does not repair: it records the facts as one reserved security finding, stores the data it received exactly as it received it, and continues. A sender can always record locally, a delivery channel can always resume, and a receiver records every anomaly that could be tampering, including anomalies in its own log. How a finding is reviewed, and how it is cleared, is left open (`spec/roadmap/security-findings.md`).
 
-Two refusals remain, and neither is an integrity finding: a caller the deployment's authentication does not admit for a channel's sender, and a database whose stored identity disagrees with its log at open, which is the one integrity check that does not continue (`EVS-DEV-event-store-open/F`). Permanent refusals of a delivery for the application's validation or an unsupported data-format major wedge the destination's queue head with an operator or upgrade exit (`EVS-PRD-destinations`), and so does a batch the receiver cannot decode as a delivery. A delivery whose delivery hash does not recompute is refused as a transient failure with a finding, so the sender sends it again. An event a delivery or a restore carries that the library cannot store as an event (malformed, carrying the character U+0000 in a string, or a reserved event of a declared reserved entry type in a shape that type does not have) is kept in full in a finding, and the rest of the delivery is admitted.
+Two refusals remain, and neither is an integrity finding: a caller the deployment's authentication does not admit for a channel's sender, and a database whose stored identity disagrees with its log at open, which is the one integrity check that does not continue (`EVS-DEV-event-store-open/F`). Permanent refusals of a delivery for the application's validation or an unsupported data-format major wedge the destination's queue head with an operator or upgrade exit (`EVS-PRD-destinations`), and so does a batch the receiver cannot decode as a delivery. A delivery whose delivery hash does not recompute is refused as a transient failure with a finding, so the sender sends it again. An event of an application entry type whose event type the receiver does not declare is refused, and the delivery or the restore with it, and the refusal is recorded in a finding of its own unless the event store was opened not to record such findings: a newer build declares the event type, and the receiver accepts it once it runs one. An event a delivery or a restore carries that the library cannot store as an event (malformed, carrying the character U+0000 in a string, or a reserved event of a declared reserved entry type in a shape that type does not have) is kept in full in a finding, and the rest of the delivery is admitted.
 
 ### Detection points
 
@@ -51,6 +51,9 @@ parents_not_stamped
 fold_failed             fold      a view copy cannot compute or write its
                                   rows for a stored event; the copy passes
                                   over the event
+undeclared_event_type   ingest,   an event of an application entry type
+                        restore   whose event type the receiver does not
+                                  declare; the event is refused
 ```
 
 ## EVS-DEV-security-findings: Security findings
@@ -74,11 +77,11 @@ D. A finding's evidence SHALL hold only event identifiers, hashes, origin and lo
 
 E. The library SHALL append a security finding only when, read inside the appending transaction, the detecting database holds as authored no finding with the same `finding_id`.
 
-F. The library SHALL append each finding a detection point other than the chain verification operation and a view copy's catch-up records in the transaction that commits that detection point's outcome.
+F. Every finding SHALL commit in the same transaction as the outcome of the detection point that records it, unless the chain verification operation, a view copy's catch-up or an ingest refusal records it.
 
 G. Where a detection point finds an event that it cannot store because the holder holds its identifier under another sealed hash, the library SHALL record a finding of kind `identity_mismatch` whose evidence carries the received record in full, and SHALL store the rest of what it received.
 
-H. The library SHALL record a security finding only with a `kind` among `hash_mismatch`, `identity_mismatch`, `event_malformed`, `delivery_hash_mismatch`, `predecessor_break`, `fork_unrecorded`, `position_reused`, `own_event_ingested`, `foreign_event`, `channel_unexplained`, `sender_regressed`, `restore_unverified`, `succession_ahead`, `storage_link_break`, `sequence_missing`, `parent_invalid`, `parents_not_stamped` and `fold_failed`.
+H. The library SHALL record a security finding only with a `kind` among `hash_mismatch`, `identity_mismatch`, `event_malformed`, `delivery_hash_mismatch`, `predecessor_break`, `fork_unrecorded`, `position_reused`, `own_event_ingested`, `foreign_event`, `channel_unexplained`, `sender_regressed`, `restore_unverified`, `succession_ahead`, `storage_link_break`, `sequence_missing`, `parent_invalid`, `parents_not_stamped`, `fold_failed` and `undeclared_event_type`.
 
 I. Ingest SHALL store a security finding another database originated as it stores any event, whatever its kind and detector, and the library SHALL apply no idempotence rule to it beyond ingest's own.
 
@@ -106,6 +109,8 @@ T. The findings of kind `fold_failed` that a database holds as authored SHALL be
 
 U. Every received record a finding's evidence carries as its `record` SHALL be the record itself when every string of it, keys included, is free of the character U+0000, and otherwise the base64 (RFC 4648 section 4, with padding) of the UTF-8 bytes of the record's canonical JSON (RFC 8785).
 
+V. Every `undeclared_event_type` finding SHALL name, as its whole evidence, the refused event's identifier, entry type, event type and originating database (`event_id`, `entry_type`, `event_type` and `origin_database_id`).
+
 ### Rationale
 
 **Why record and continue (assertions A and F)?** A stop needs a person before anything further is recorded, and a device that cannot deliver loses nothing only until its storage is lost. Recording the anomaly in the transaction that decides what to do with it keeps the facts and the outcome together: the suspect data is in the log as it arrived, the finding says what is wrong with it, and delivery goes on. Every holder reads the same facts and can apply its own judgement later.
@@ -124,10 +129,14 @@ U. Every received record a finding's evidence carries as its `record` SHALL be t
 
 **Why a finding for a fold that fails (assertions S and T)?** An event ingest or a restore stores, a record the library appends beside it, and a security finding are stored whatever their content, so a view whose promoter, row key, row data or derived field cannot handle one, or whose row value the database rejects, would otherwise either refuse the delivery that carries it or stop folding at it. The copy passes over the event instead, keeps serving, and the finding states which view, under which definition, could not fold which event and why; it names the event's aggregate, so the default views mark it (`EVS-PRD-materializer`). The reason is one of a closed list, never an error message or a SQLSTATE, so the identity holds across releases and across servers: `row_write_failed` covers every write the database rejects for the row's value, whichever of the classes the library counts as a fold failure (`EVS-DEV-view-convergence`) it raised. The evidence names the copy's definition fingerprint, not the copy, so a copy that meets the event again -- inline in the transaction that stores it while the copy is current, in its catch-up while it is converging, or in a new copy of the same fingerprint that `rebuildView` or another instance creates -- computes the same identity and the lookup of assertion E appends nothing: one finding per fingerprint and event (assertion T). Inline, the finding is appended in the transaction that stores the event and passes over it. A catch-up appends nothing to the log, so the finding it calls for is appended in a transaction of its own and the copy passes over the event only once the finding is held (assertion S): a crash between the two leaves the finding without the pass, never the pass without the finding. A later build whose definition differs has another fingerprint and another copy, which folds the event afresh. The failed fold of a `fold_failed` finding is left out of the count: a finding about it could itself fail to fold under the same definition, and the findings about one event would chain without end, so the finding a copy cannot fold is passed over as it stands, and it already names the event whose failure it records.
 
+**Why record an undeclared event type in a transaction of its own (assertions F and V)?** The refusal rolls back everything the ingest or the restore was storing, so a finding in that transaction would roll back with it. The finding is appended once the refusal has rolled back, in a transaction of its own; a failure of that write is logged and the refusal still reaches the caller. Its evidence names the refused event, its entry type and event type and the database that originated it, so every redelivery of the event computes the same identity and the database records it once. A database that expects to meet the event types of newer builds before it upgrades, a device whose server is released first, opens its event store not to record these findings: there the refusal is the normal release order, not an anomaly.
+
 **Layer.** A finding is a Layer 1 fact: the detecting database recorded that a check failed, with the values it compared, under the hash of the event that records it. Treating an aggregate a finding names as suspect is a Layer 2 convention of the default views.
 
 ### Changelog
 
+- 2026-10-31 | 58a4280f | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-10-31 | - | - | Michael Lewis (<michael@anspar.org>) | H: add the kind `undeclared_event_type`. F: a finding an ingest refusal records commits apart from the refused outcome. Add V: the evidence of an `undeclared_event_type` finding. Overview and Detection points: the undeclared-event-type refusal
 - 2026-09-30 | 43178ed6 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-30 | - | - | Michael Lewis (<michael@anspar.org>) | O: a received or restored record a string of which, a key included, carries U+0000 is a record the library does not store as an event, kept in an event_malformed finding. R: add the event_malformed reason `unstorable_character`. Add U: a received record a finding's evidence carries is the record itself, or, when a string of it carries U+0000, the base64 of the UTF-8 bytes of its canonical JSON, whichever kind carries it. Overview: the unstorable character. Code and tests cite O and R; none cites U yet
 - 2026-09-29 | aa63cd94 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
@@ -156,4 +165,4 @@ U. Every received record a finding's evidence carries as its `record` SHALL be t
 - 2026-09-25 | 967987e3 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-25 | - | - | Michael Lewis (<michael@anspar.org>) | Add A-I: the reserved security finding with its stable identity, kind, evidence, aggregates and detector, appended once per anomaly in the transaction of the detection point's outcome, an unstorable event carried in full, and a received finding stored as any event
 
-*End* *Security findings* | **Hash**: 43178ed6
+*End* *Security findings* | **Hash**: 58a4280f

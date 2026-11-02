@@ -3,6 +3,8 @@ import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
+import '../test_support/declarations.dart';
+
 const _kType = 'boot_copy_note';
 const _kView = 'boot_copy_notes';
 const _kOtherView = 'boot_copy_notes_other';
@@ -48,6 +50,9 @@ Future<EventStore> _open(
         id: _kType,
         registeredVersion: registered,
         name: _kType,
+        declarations: <EventTypeDeclaration>[
+          const EligibleVersion('finalized'),
+        ],
       ),
     );
   final registry = ProjectionRegistry();
@@ -277,6 +282,7 @@ void main() {
             id: 'unrelated',
             registeredVersion: EntryTypeVersion(1, 0),
             name: 'unrelated',
+            declarations: <EventTypeDeclaration>[EligibleVersion('finalized')],
           ),
         )
         ..register(
@@ -284,6 +290,7 @@ void main() {
             id: _kType,
             registeredVersion: EntryTypeVersion(1, 0),
             name: _kType,
+            declarations: <EventTypeDeclaration>[EligibleVersion('finalized')],
           ),
         );
       // Reopen sharing the registry so both entry types are known, and

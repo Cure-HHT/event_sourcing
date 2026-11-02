@@ -27,6 +27,7 @@ import 'package:event_sourcing/src/testing/delivery_test_hooks.dart'
 import 'package:flutter_test/flutter_test.dart';
 
 import '../security/security_finding_conformance.dart' show expectedFindingId;
+import 'declarations.dart';
 import 'ingest_record_findings_conformance.dart' show sealedRecord;
 import 'manual_timers.dart' show neverFiringTimer, openWithCatchUpParked;
 import 'record_fixtures.dart';
@@ -236,6 +237,7 @@ Future<EventStore> openReceiverStore(
           id: kDeliveryNoteType,
           registeredVersion: EntryTypeVersion(1, 0),
           name: kDeliveryNoteType,
+          declarations: <EventTypeDeclaration>[EligibleVersion('finalized')],
         ),
       ),
     source: source,

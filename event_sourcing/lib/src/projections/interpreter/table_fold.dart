@@ -22,6 +22,32 @@ import 'package:event_sourcing/src/storage/transaction.dart';
 import 'package:meta/meta.dart' show internal;
 
 class TableFold {
+  /// The key of the row [event] inserts or removes in the table view of
+  /// [spec]; throws a [FoldFailure] when [spec]'s row key extractor cannot
+  /// extract one.
+  @internal
+  static String rowKeyOf(TableProjectionSpec spec, StoredEvent event) =>
+      guardFold(
+        FoldFailureReason.rowKeyFailed,
+        () => spec.rowKey.extract(event),
+      ).toString();
+
+  /// The key of the row [event]'s fold into the table view of [spec] reads
+  /// before it writes -- the row a remove event deletes, the only row a
+  /// table fold reads by key -- or null when the fold reads no row by key
+  /// or [spec]'s extractor cannot extract one: an insert overwrites its
+  /// row unread.
+  @internal
+  static String? readKeyOf(TableProjectionSpec spec, StoredEvent event) {
+    if (!spec.removeEventTypes.contains(event.eventType)) return null;
+    if (spec.insertEventTypes.contains(event.eventType)) return null;
+    try {
+      return rowKeyOf(spec, event);
+    } on FoldFailure {
+      return null;
+    }
+  }
+
   /// Applies one [event] to the table view of [spec], inside [txn]: an
   /// insert event upserts the row its key extracts, stamped with
   /// [integrity], the findings that mark the event's aggregate, and indexed
@@ -43,11 +69,7 @@ class TableFold {
   }) async {
     final access = rows ?? DirectViewRowAccess(backend, txn, copyId);
     if (spec.insertEventTypes.contains(event.eventType)) {
-      final key = guardFold(
-        FoldFailureReason.rowKeyFailed,
-        () => spec.rowKey.extract(event),
-      );
-      final keyStr = key.toString();
+      final keyStr = rowKeyOf(spec, event);
       final rowData = guardFold(
         FoldFailureReason.rowDataFailed,
         () => spec.rowData.extract(event),
@@ -84,11 +106,7 @@ class TableFold {
       );
     }
     if (spec.removeEventTypes.contains(event.eventType)) {
-      final key = guardFold(
-        FoldFailureReason.rowKeyFailed,
-        () => spec.rowKey.extract(event),
-      );
-      final keyStr = key.toString();
+      final keyStr = rowKeyOf(spec, event);
       // Only emit a tombstone change when the row actually existed; a
       // remove event targeting a nonexistent row is a silent no-op so
       // subscribers never receive a spurious Tombstone<T>.

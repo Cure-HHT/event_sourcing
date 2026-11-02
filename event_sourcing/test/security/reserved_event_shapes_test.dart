@@ -246,7 +246,7 @@ void main() {
         };
         expect(declared, shape.value.eventTypes, reason: shape.key);
         for (final eventType in shape.value.eventTypes) {
-          final declaration = definition.declarationFor(eventType);
+          final declaration = definition.declarationFor(eventType)!;
           expect(
             declaration.kind,
             CausalKind.annotation,

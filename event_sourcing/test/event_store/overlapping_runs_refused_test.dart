@@ -2,6 +2,8 @@ import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart' show newDatabaseFactoryMemory;
 
+import '../test_support/declarations.dart';
+
 /// A [SembastBackend] that, once [overlap] is set, runs every body twice at
 /// once inside one transaction.
 class _OverlappingSembastBackend extends SembastBackend {
@@ -34,6 +36,7 @@ void main() {
           id: 'note',
           registeredVersion: EntryTypeVersion(1, 0),
           name: 'note',
+          declarations: <EventTypeDeclaration>[EligibleVersion('created')],
         ),
       );
     final store = await EventStore.openForTest(

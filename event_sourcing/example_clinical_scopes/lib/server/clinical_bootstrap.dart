@@ -143,6 +143,13 @@ Future<BootstrapResult> bootstrap() async {
         id: 'participant',
         registeredVersion: EntryTypeVersion(1, 0),
         name: 'Participant',
+        declarations: <EventTypeDeclaration>[
+          EventTypeDeclaration(
+            eventType: 'participant_registered',
+            kind: CausalKind.version,
+            eligible: true,
+          ),
+        ],
       ),
     )
     ..register(
@@ -150,6 +157,13 @@ Future<BootstrapResult> bootstrap() async {
         id: 'site',
         registeredVersion: EntryTypeVersion(1, 0),
         name: 'Site',
+        declarations: <EventTypeDeclaration>[
+          EventTypeDeclaration(
+            eventType: 'site_registered',
+            kind: CausalKind.version,
+            eligible: true,
+          ),
+        ],
       ),
     )
     ..register(
@@ -157,6 +171,7 @@ Future<BootstrapResult> bootstrap() async {
         id: 'role_permission_grant',
         registeredVersion: EntryTypeVersion(1, 0),
         name: 'Role-Permission Grant',
+        declarations: kRolePermissionGrantDeclarations,
       ),
     )
     ..register(
@@ -164,6 +179,7 @@ Future<BootstrapResult> bootstrap() async {
         id: 'user_role_scope',
         registeredVersion: EntryTypeVersion(1, 0),
         name: 'User-Role-Scope Assignment',
+        declarations: kUserRoleScopeDeclarations,
       ),
     )
     // ActionDispatcher emits this on denial.
@@ -172,6 +188,7 @@ Future<BootstrapResult> bootstrap() async {
         id: 'action_denial',
         registeredVersion: EntryTypeVersion(1, 0),
         name: 'Action Denial',
+        declarations: kActionDenialDeclarations,
       ),
     );
 

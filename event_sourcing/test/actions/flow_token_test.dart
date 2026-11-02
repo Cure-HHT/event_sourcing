@@ -14,8 +14,9 @@
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
-import '../test_support/deliveries.dart';
 
+import '../test_support/declarations.dart';
+import '../test_support/deliveries.dart';
 import 'fixtures/test_actions.dart' show AlwaysAllowPolicy, HelloAction;
 import 'test_support/event_store_helper.dart' show bootstrapTestEventStore;
 
@@ -59,6 +60,7 @@ Future<({EventStore store, SembastBackend backend})> _openSecondStore() async {
         id: 'action_denial',
         registeredVersion: EntryTypeVersion(1, 0),
         name: 'Action denial',
+        declarations: kActionDenialDeclarations,
       ),
     )
     ..register(
@@ -66,6 +68,7 @@ Future<({EventStore store, SembastBackend backend})> _openSecondStore() async {
         id: 'greeting',
         registeredVersion: EntryTypeVersion(1, 0),
         name: 'Greeting',
+        declarations: <EventTypeDeclaration>[EligibleVersion('hello.said')],
       ),
     );
   final securityContexts = SembastSecurityContextStore(backend: backend);

@@ -3,7 +3,9 @@ import 'dart:async';
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:sembast/sembast_memory.dart';
+import 'package:sembast/sembast_memory.dart' show newDatabaseFactoryMemory;
+
+import '../test_support/declarations.dart';
 
 const _kType = 'converging_read_note';
 const _kView = 'converging_read_notes';
@@ -32,12 +34,50 @@ void _pauseCatchUp(String copyId, String eventId) =>
 
 var _dbCounter = 0;
 
+/// A [SembastBackend] that counts the events [findAllEventsInTxn] returns
+/// while [counting] is set: the log a caller read to answer one question.
+class _CountingBackend extends SembastBackend {
+  _CountingBackend({required super.database});
+
+  bool counting = false;
+  int eventsRead = 0;
+
+  @override
+  Future<List<StoredEvent>> findAllEventsInTxn(
+    Transaction txn, {
+    int? afterSequence,
+    int? limit,
+    String? entryType,
+    DateTime? clientTimestampStart,
+    DateTime? clientTimestampEnd,
+  }) async {
+    final events = await super.findAllEventsInTxn(
+      txn,
+      afterSequence: afterSequence,
+      limit: limit,
+      entryType: entryType,
+      clientTimestampStart: clientTimestampStart,
+      clientTimestampEnd: clientTimestampEnd,
+    );
+    if (counting) eventsRead += events.length;
+    return events;
+  }
+}
+
 Future<SembastBackend> _openBackend() async {
   _dbCounter += 1;
   final db = await newDatabaseFactoryMemory().openDatabase(
     'converging-view-reads-$_dbCounter.db',
   );
   return SembastBackend(database: db);
+}
+
+Future<_CountingBackend> _openCountingBackend() async {
+  _dbCounter += 1;
+  final db = await newDatabaseFactoryMemory().openDatabase(
+    'converging-view-reads-$_dbCounter.db',
+  );
+  return _CountingBackend(database: db);
 }
 
 Future<EventStore> _open(
@@ -50,6 +90,7 @@ Future<EventStore> _open(
         id: _kType,
         registeredVersion: EntryTypeVersion(1, 0),
         name: _kType,
+        declarations: <EventTypeDeclaration>[EligibleVersion('finalized')],
       ),
     );
   final registry = ProjectionRegistry();
@@ -308,7 +349,7 @@ void main() {
       await caughtUp.close();
     });
 
-    // Verifies: EVS-DEV-converging-view-reads/J
+    // Verifies: EVS-DEV-converging-view-reads/J+L
     test('viewProgress reports state, watermark, log head and last failure '
         'per registered view', () async {
       final backend = await _openBackend();
@@ -346,7 +387,60 @@ void main() {
         },
       );
     });
+
+    // Verifies: EVS-DEV-converging-view-reads/J
+    test('viewProgress of a copy far behind the log reads no event of the '
+        "log: its state is the catch-up's own record", () async {
+      final backend = await _openCountingBackend();
+      await runWithDeliveryTestHooks(
+        const DeliveryTestHooks(onCatchUpStep: _pauseCatchUp),
+        () async {
+          final store = await _open(backend);
+          final first = await _appendNote(store, 'agg-0', 'note 0');
+          var last = first;
+          for (var i = 1; i < 1200; i++) {
+            last = await _appendNote(store, 'agg-$i', 'note $i');
+          }
+          await _rewindWatermark(store, backend, _kView, 0);
+          // The catch-up's next attempt on the rewound copy meets the
+          // paused step and fails, leaving the copy behind the head.
+          await _waitUntilFailureRecorded(store, _kView);
+
+          backend.counting = true;
+          final progress = await store.reader.viewProgress();
+          backend.counting = false;
+
+          final view = progress.singleWhere((p) => p.viewName == _kView);
+          expect(view.state, ViewConvergenceState.converging);
+          expect(view.watermark, 0);
+          expect(view.logHead, last.sequenceNumber);
+          expect(
+            backend.eventsRead,
+            0,
+            reason:
+                "progress reports the catch-up driver's record of its last "
+                'attempt, so it reads no event past any watermark',
+          );
+          await store.close();
+        },
+      );
+    });
   });
+}
+
+/// Waits until [store]'s catch-up of [viewName] has recorded a failure,
+/// polling its reader's `viewProgress`.
+Future<void> _waitUntilFailureRecorded(
+  EventStore store,
+  String viewName,
+) async {
+  for (var i = 0; i < 200; i++) {
+    final progress = await store.reader.viewProgress();
+    final view = progress.singleWhere((p) => p.viewName == viewName);
+    if (view.lastFailure != null) return;
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+  }
+  throw StateError('$viewName recorded no catch-up failure in time');
 }
 
 /// Waits until [store]'s copy of [viewName] is current, polling its

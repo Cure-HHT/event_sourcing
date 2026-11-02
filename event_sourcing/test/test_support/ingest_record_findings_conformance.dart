@@ -24,6 +24,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import '../security/security_finding_conformance.dart'
     show expectedFindingId, forkEvidence;
+import 'declarations.dart';
 import 'deliveries.dart';
 import 'destination_wedges_view_conformance.dart' show wedgeData;
 import 'record_fixtures.dart';
@@ -203,6 +204,9 @@ void runIngestRecordFindingScenarios({
               id: _kType,
               registeredVersion: EntryTypeVersion(1, 0),
               name: _kType,
+              declarations: <EventTypeDeclaration>[
+                EligibleVersion('finalized'),
+              ],
             ),
           ),
         source: source,

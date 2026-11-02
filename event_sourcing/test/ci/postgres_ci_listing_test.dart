@@ -23,6 +23,13 @@
 //      job or step whose environment sets the Postgres URL. A
 //      mention in a YAML comment or in a job without the database does not
 //      count.
+//
+// CI's `postgres` job runs the Postgres targets in PG_PART slices, one per
+// value of its matrix's `part`. Each slice computes the same shard plan and
+// runs its own buckets of it, so together the slices must run every listed
+// file, and every piece of a file split into pieces, exactly once:
+// `tools/run-checks.sh target-plan postgres` prints what one slice runs, and
+// the matrix's values must be 1..n with PG_PART dividing the plan by n.
 
 @TestOn('vm')
 library;
@@ -181,6 +188,76 @@ Set<String> targetsRunWithPostgres(String workflowText) {
   return names;
 }
 
+/// The slices CI's `postgres` job cuts the Postgres plan into: the values of
+/// its matrix's `part`, and the count its `PG_PART` (`<part>/<count>`) names,
+/// null when the job, the matrix or the count is missing.
+({List<Object?> parts, int? count}) postgresSlices(String workflowText) {
+  final doc = loadYaml(workflowText);
+  final job = doc is YamlMap && doc['jobs'] is YamlMap
+      ? (doc['jobs'] as YamlMap)['postgres']
+      : null;
+  if (job is! YamlMap) return (parts: const <Object?>[], count: null);
+  final strategy = job['strategy'];
+  final matrix = strategy is YamlMap ? strategy['matrix'] : null;
+  final parts = matrix is YamlMap && matrix['part'] is YamlList
+      ? (matrix['part'] as YamlList).toList()
+      : const <Object?>[];
+  final env = job['env'];
+  final pgPart = env is YamlMap ? env['PG_PART'] : null;
+  final count = pgPart is String
+      ? int.tryParse(
+          RegExp(r'/\s*(\d+)\s*$').firstMatch(pgPart)?.group(1) ?? '',
+        )
+      : null;
+  return (parts: parts, count: count);
+}
+
+/// What is wrong with [slices], the `target-plan` output of each of n slices
+/// of one plan (`<path>\t<pieces>\t<piece index>` lines), given the files the
+/// target runs: a file no slice runs, a piece run twice or by no slice, or a
+/// path the target does not run. Empty when every file runs exactly once.
+List<String> planCoverageProblems(List<String> slices, Set<String> files) {
+  final problems = <String>[];
+  final runs = <String, int>{};
+  final pieces = <String, Set<int>>{};
+  for (final slice in slices) {
+    for (final line in slice.split('\n')) {
+      if (line.trim().isEmpty) continue;
+      final fields = line.split('\t');
+      if (fields.length != 3) {
+        problems.add('unreadable plan line: $line');
+        continue;
+      }
+      final [path, k, idx] = fields;
+      final key = '$path piece ${int.parse(idx) + 1}/$k';
+      runs[key] = (runs[key] ?? 0) + 1;
+      pieces.putIfAbsent('$path\t$k', () => <int>{}).add(int.parse(idx));
+      if (!files.contains(path)) problems.add('$path is not a listed file');
+    }
+  }
+  for (final MapEntry(:key, :value) in runs.entries) {
+    if (value > 1) problems.add('$key runs $value times');
+  }
+  final planned = <String>{};
+  for (final MapEntry(:key, :value) in pieces.entries) {
+    final [path, k] = key.split('\t');
+    planned.add(path);
+    for (var i = 0; i < int.parse(k); i++) {
+      if (!value.contains(i)) {
+        problems.add('$path piece ${i + 1}/$k runs nowhere');
+      }
+    }
+  }
+  if (pieces.keys.map((k) => k.split('\t').first).toSet().length !=
+      pieces.length) {
+    problems.add('a file is split two different ways');
+  }
+  for (final f in files.difference(planned).toList()..sort()) {
+    problems.add('$f runs in no slice');
+  }
+  return problems;
+}
+
 /// The gated files of the package at [packageDir] (repository-relative) that
 /// no Postgres target run in CI covers. [listFiles] returns the files
 /// `run-checks.sh target-files <kind>` lists for the package.
@@ -241,6 +318,90 @@ void main() {
         .where((l) => l.isNotEmpty)
         .toSet();
   };
+
+  // What slice [part] of [count] runs of the package at [packageDir], as CI's
+  // `postgres` job computes it: one given server and no local durations.
+  String scriptPlan(String packageDir, int part, int count) {
+    final result = Process.runSync(
+      'bash',
+      [script, 'target-plan', 'postgres'],
+      workingDirectory: p.join(repoRoot, packageDir),
+      environment: {
+        'CI': 'true',
+        _pgUrlVar: 'postgres://unused@localhost/unused',
+        '${_pgUrlVar}S': '',
+        'PG_PART': '$part/$count',
+      },
+    );
+    expect(result.exitCode, 0, reason: '${result.stderr}');
+    return result.stdout as String;
+  }
+
+  group("CI's Postgres slices run every gated file exactly once", () {
+    test("the matrix's parts are 1..n and PG_PART divides by n", () {
+      final slices = postgresSlices(workflowFile.readAsStringSync());
+      expect(slices.parts, isNotEmpty, reason: 'no postgres matrix parts');
+      expect(slices.count, slices.parts.length);
+      expect(slices.parts, [for (var i = 1; i <= slices.parts.length; i++) i]);
+    });
+
+    for (final packageDir in const [
+      'event_sourcing',
+      'event_sourcing/example_action_permissions',
+    ]) {
+      test("the slices together run $packageDir's files once", () {
+        final count = postgresSlices(workflowFile.readAsStringSync()).count!;
+        expect(
+          planCoverageProblems([
+            for (var part = 1; part <= count; part++)
+              scriptPlan(packageDir, part, count),
+          ], scriptListing(packageDir)('postgres')),
+          isEmpty,
+        );
+      });
+    }
+
+    test('a slice count PG_PART does not name is read as missing', () {
+      final slices = postgresSlices(
+        'jobs:\n'
+        '  postgres:\n'
+        '    strategy:\n'
+        '      matrix:\n'
+        '        part: [1, 2]\n'
+        '    env:\n'
+        '      PG_PART: x\n',
+      );
+      expect(slices.parts, [1, 2]);
+      expect(slices.count, isNull);
+      expect(postgresSlices('jobs: {}\n').parts, isEmpty);
+    });
+
+    test('a file run by two slices, or by none, is reported', () {
+      const files = {
+        'test/a_test.dart',
+        'test/b_test.dart',
+        'test/c_test.dart',
+      };
+      expect(
+        planCoverageProblems([
+          'test/a_test.dart\t1\t0\ntest/b_test.dart\t2\t0\n',
+          'test/b_test.dart\t2\t1\ntest/c_test.dart\t1\t0\n',
+        ], files),
+        isEmpty,
+      );
+      expect(
+        planCoverageProblems([
+          'test/a_test.dart\t1\t0\ntest/b_test.dart\t2\t0\n',
+          'test/a_test.dart\t1\t0\n',
+        ], files),
+        unorderedEquals([
+          'test/a_test.dart piece 1/1 runs 2 times',
+          'test/b_test.dart piece 2/2 runs nowhere',
+          'test/c_test.dart runs in no slice',
+        ]),
+      );
+    });
+  });
 
   group('Postgres-gated test files run in CI through elspais targets', () {
     test('the workflow and the elspais configuration exist', () {

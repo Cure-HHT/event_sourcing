@@ -130,9 +130,11 @@ class DeliveryTestHooks {
     this.onCatchUpTransactionBegin,
     this.onCatchUpStep,
     this.catchUpClock,
+    this.candidateWindow,
     this.afterViewStateReadBeforeRows,
     this.failFoldSavepointWithSerializationFailure,
     this.failCatchUpFoldFindingAppend,
+    this.failUndeclaredEventTypeFindingAppend,
   });
 
   /// Observes every line the library logs. An exception it throws is
@@ -429,10 +431,15 @@ class DeliveryTestHooks {
   final FutureOr<void> Function(String copyId, String eventId)? onCatchUpStep;
 
   /// Replaces the clock a `ViewCatchUpDriver` reads elapsed time from to
-  /// decide when its 200 ms per-transaction step bound
-  /// (EVS-DEV-view-convergence/N) has passed. Production reads
+  /// decide when its 200 ms per-transaction step bound (the means of
+  /// EVS-DEV-view-convergence/W) has passed. Production reads
   /// `DateTime.now()`.
   final DateTime Function()? catchUpClock;
+
+  /// Replaces the number of log positions one candidate read of a
+  /// catch-up or a currency scan covers (`kCandidateWindow`), so a test
+  /// crosses a window boundary on a short log. Production reads 5000.
+  final int? candidateWindow;
 
   /// Awaited by a consumer-facing view read, inside its storage
   /// transaction, after it reads its copy's convergence state and before
@@ -457,6 +464,14 @@ class DeliveryTestHooks {
   /// stays before the event, and no pass-over happens, until a later attempt
   /// succeeds.
   final bool Function()? failCatchUpFoldFindingAppend;
+
+  /// Consulted before an ingest entry point or the restore appends, in its
+  /// own transaction, the `undeclared_event_type` finding about an event it
+  /// refused. Returning true makes that append throw [InjectedFailure]
+  /// instead, standing in for a storage failure of the finding's own
+  /// append: the failure is logged and the refusal still reaches the
+  /// caller.
+  final bool Function()? failUndeclaredEventTypeFindingAppend;
 
   /// Read once by `SyncCycle.start`. When true, the started cycle holds its
   /// event store's trigger slot as any cycle does, but a wake runs no pass

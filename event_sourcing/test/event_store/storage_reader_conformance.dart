@@ -16,6 +16,7 @@ import 'package:event_sourcing/src/event_store.dart' show PublishCollector;
 import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../test_support/declarations.dart';
 import '../test_support/version_compatibility_conformance.dart'
     show VersionTestDatabase;
 
@@ -43,6 +44,7 @@ Future<EventStore> _openStore(VersionTestDatabase db, StorageBackend backend) {
         id: _kType,
         registeredVersion: EntryTypeVersion(1, 0),
         name: _kType,
+        declarations: <EventTypeDeclaration>[EligibleVersion('noted')],
       ),
     );
   return EventStore.openForTest(
@@ -233,7 +235,7 @@ void runStorageReaderScenarios({
         expect(byKey.rows.keys, <String>['agg-1']);
         expect(byKey.rows['agg-1']!.dataOrNull!['n'], 1);
 
-        // Verifies: EVS-DEV-converging-view-reads/J
+        // Verifies: EVS-DEV-converging-view-reads/J+L
         final progress = await reader.viewProgress();
         final viewStatus = progress.singleWhere((p) => p.viewName == _kView);
         expect(viewStatus.state, ViewConvergenceState.current);

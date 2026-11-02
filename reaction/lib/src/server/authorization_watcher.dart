@@ -172,7 +172,14 @@ class AuthorizationWatcher {
 
   void _forceLogout(String userId) {
     for (final ch in connectionRegistry.channelsFor(userId).toList()) {
-      ch.sink.close(4003, 'permissions_changed');
+      // A channel whose sink already closed is gone: nothing to log out.
+      try {
+        unawaited(ch.sink.close(4003, 'permissions_changed'));
+        // The sink reports a use after closing as a StateError.
+        // ignore: avoid_catching_errors
+      } on StateError {
+        continue;
+      }
     }
   }
 
@@ -181,7 +188,15 @@ class AuthorizationWatcher {
       SubscriptionMessages.encodeServer(StaleDataMsg(reason: reason)),
     );
     for (final ch in connectionRegistry.channelsFor(userId)) {
-      ch.sink.add(envelope);
+      // A channel whose sink already closed drops the notification and
+      // does not stop the fan-out to the remaining channels.
+      try {
+        ch.sink.add(envelope);
+        // The sink reports a use after closing as a StateError.
+        // ignore: avoid_catching_errors
+      } on StateError {
+        continue;
+      }
     }
   }
 

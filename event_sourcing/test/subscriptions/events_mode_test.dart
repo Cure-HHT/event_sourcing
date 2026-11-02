@@ -15,6 +15,8 @@ import 'package:event_sourcing/src/versions.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
+import '../test_support/declarations.dart';
+
 Future<EventStore> _openStore() async {
   final db = await newDatabaseFactoryMemory().openDatabase(
     'em-${DateTime.now().microsecondsSinceEpoch}.db',
@@ -26,6 +28,11 @@ Future<EventStore> _openStore() async {
         id: 'X',
         registeredVersion: EntryTypeVersion(1, 0),
         name: 'X',
+        declarations: <EventTypeDeclaration>[
+          EligibleVersion('before'),
+          EligibleVersion('after1'),
+          EligibleVersion('after2'),
+        ],
       ),
     );
   return EventStore.open(

@@ -158,6 +158,12 @@ const Map<String, Map<String, Object?>> _validEvidence =
         'sealed_hash': 'h-1',
         'reason': 'row_key_failed',
       },
+      'undeclared_event_type': <String, Object?>{
+        'event_id': 'e-1',
+        'entry_type': 'note',
+        'event_type': 'archived',
+        'origin_database_id': 'db-1',
+      },
     };
 
 /// The closed value lists the evidence of some kinds names: kind, key and
@@ -217,7 +223,7 @@ void main() {
       expect(definition.declarations, hasLength(1));
       final declaration = definition.declarationFor(
         'security_finding_recorded',
-      );
+      )!;
       expect(declaration.kind, CausalKind.annotation);
       expect(declaration.eligible, isFalse);
     });
@@ -245,6 +251,7 @@ void main() {
           'parent_invalid',
           'parents_not_stamped',
           'fold_failed',
+          'undeclared_event_type',
         ],
       );
       expect(_validEvidence.keys.toSet(), <String>{

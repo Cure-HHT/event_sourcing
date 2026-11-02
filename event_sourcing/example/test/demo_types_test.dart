@@ -3,6 +3,8 @@ import 'package:event_sourcing_demo/demo_types.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
+import 'test_support/test_entry_types.dart';
+
 void main() {
   group('demoNoteType (EntryTypeDefinition contract)', () {
     // demo_note declares id, registeredVersion and name. Constructor-
@@ -125,7 +127,7 @@ void main() {
           identifier: '33333333-3333-4333-8333-333333333333',
           softwareVersion: 'test',
         ),
-        entryTypes: allDemoEntryTypes,
+        entryTypes: testDemoEntryTypes,
         destinations: const <Destination>[],
         projections: projections,
       );

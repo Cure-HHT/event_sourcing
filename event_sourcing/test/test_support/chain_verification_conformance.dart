@@ -13,6 +13,7 @@ import 'package:event_sourcing/src/event_store.dart' show verifyChainsForTest;
 import 'package:flutter_test/flutter_test.dart';
 
 import '../security/security_finding_conformance.dart' show expectedFindingId;
+import 'declarations.dart';
 import 'deliveries.dart';
 import 'ingest_chain_findings_conformance.dart' show chained, originChain;
 import 'ingest_record_findings_conformance.dart' show relayedRecord, resealed;
@@ -63,6 +64,9 @@ void runChainVerificationScenarios({
               id: _kType,
               registeredVersion: EntryTypeVersion(1, 0),
               name: _kType,
+              declarations: <EventTypeDeclaration>[
+                EligibleVersion('finalized'),
+              ],
             ),
           ),
         source: _source,

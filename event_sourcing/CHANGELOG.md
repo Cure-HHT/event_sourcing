@@ -1,8 +1,8 @@
 # Changelog
 
-## 0.6.3
+## 0.7.3
 
-Data: data format 3.0, unchanged. A database written by 0.6.2 opens.
+Data: data format 3.0, unchanged; nothing to migrate.
 
 ### Views
 
@@ -28,9 +28,129 @@ Data: data format 3.0, unchanged. A database written by 0.6.2 opens.
   A consumer that bounded the seed by a deadline sized to one wait per
   grant can shorten it.
 
+## 0.7.2
+
+Data: data format 3.0, unchanged; nothing to migrate.
+
+### Views
+
+- A catch-up transaction's 200 ms step bound runs from its first step, so
+  on a slow database a transaction whose setup alone outlasts the bound
+  still folds for the whole bound rather than folding one event.
+- Within one pass of the catch-up driver, a copy whose transaction made
+  progress gets further transactions, each still bounded, for up to 2 s
+  before the driver turns to the next view; a copy far behind no longer
+  gets one transaction for every one each other registered view gets.
+- A table view's catch-up reads the rows a page of remove events deletes
+  in one batched read, as an aggregate view's already does, rather than
+  one read per row.
+
+## 0.7.1
+
+Data: data format 3.0, unchanged; nothing to migrate.
+
+### Reaction
+
+- A subscription connection that closes while a send is pending drops the
+  send: nothing is written to the closed sink, no error escapes the
+  connection's write chain, and a connection that closed while
+  authenticating is not registered.
+- A permission-change notification or forced logout aimed at a channel
+  whose sink already closed skips that channel and reaches the rest.
+
+## 0.7.0
+
+Data: data format 3.0, unchanged; the stored event format is the same. A
+database written by 0.6.3 needs two things before this build serves it: a
+Postgres database is re-provisioned at schema version 9, and the copies of
+views whose interest names entry types or event types are rebuilt once,
+because their stored fingerprints change. Unfiltered and
+aggregate-type-only views keep their copies.
+
+### Views
+
+- `StorageReader.viewsCaughtUp` completes when every registered view has
+  reached the log's head since the store opened, so an application awaits
+  its boot on it. It throws `ViewConvergenceTimeout` when the timeout
+  passes first, naming each view not yet there with its progress, and
+  throws `StateError` when the store closes first.
+- A view's fingerprint covers the entry types that carry the view's
+  events: its named entry types, else the entry types declaring a named
+  event type, else all. It always covers the security-finding and
+  sender-succession entry types, and the reserved entry types an
+  `includeSystemEvents` interest admits.
+- The catch-up, the read-path currency scans and the append-path currency
+  check read only the events that can affect the view, in windows of
+  positions. They read every event while any security finding is held.
+
+### Entry types
+
+- An application entry type declares every event type it carries.
+  `EntryTypeDefinition.declarationFor` returns null for an undeclared
+  event type, and appending one throws `UndeclaredEventTypeError`.
+- `EntryTypeDefinition.patch` is recorded in the registry audit; it is
+  never stamped on an event and never fingerprinted.
+- The declaration lists for action denials, role-permission grants and
+  user-role scopes are exported. `ActionDispatcher`, `PermissionSeedApplier`
+  and `bootstrapRoleAssignments` throw `ArgumentError` when the registered
+  `action_denial`, `role_permission_grant` or `user_role_scope` definition
+  lacks any of the matching declarations, naming the entry type and the
+  missing event types.
+
+### Ingest
+
+- Ingesting an event of an undeclared event type for a registered
+  application entry type is refused with `IngestUndeclaredEventType`, and
+  the store records an `undeclared_event_type` security finding, unless it
+  was opened with `recordUndeclaredIngestFindings: false`. `EventStore.open`
+  and `bootstrapEventStore` take that parameter.
+
+### Verification
+
+- A chain verification interrupted by a failure throws
+  `ChainWalkInterrupted`, carrying `verifiedThrough`, the cause and the
+  findings so far. `EventStore.verifyChains` records the carried findings,
+  and a caller resumes with `from: verifiedThrough + 1`.
+
+### Postgres
+
+- Postgres schema version 9 adds `events_entry_type_seq_idx`, which serves
+  the catch-up's candidate reads. A database provisioned at schema version
+  8 is re-provisioned before this build opens it.
+
+## 0.6.3
+
+Data: data format 3.0, unchanged. A database written by 0.6.2 opens.
+
+### Views
+
+- `StorageReader.viewProgress` reports each view's state as the catch-up
+  driver last found its copy: current when the instance's last catch-up
+  transaction on the copy ended with it at the log's head, converging
+  otherwise, including before the first such transaction since the store
+  opened. It reads no event past any copy's watermark, so asking costs the
+  same however far behind a copy is, and an application polling it while
+  copies fold a long log no longer slows the catch-up it is waiting for.
+  After another build appends an event a copy folds, the reported state
+  can stay current until the instance's next catch-up transaction on the
+  copy, within the catch-up's idle interval. Reads of a view's rows and
+  the library's own decisions still decide the state in their own
+  transaction, so they serve no unsettled row on its word.
+
 ## 0.6.2
 
 Data: data format 3.0, unchanged. A database written by 0.6.1 opens.
+
+### Views
+
+- `StorageReader.viewProgress` decides each copy's state at the first
+  event past its watermark that the copy folds, and reads the log's head
+  once for every view. It read every event from each copy's watermark to
+  the head, so its cost grew with how far each copy was behind: an
+  application polling it while copies caught up from far back held its
+  isolate long enough to starve the catch-up itself. Its answers are
+  unchanged. Reads of a converging view still scan past the watermark,
+  since they name the aggregates still unsettled.
 
 ### Postgres
 
@@ -47,6 +167,16 @@ Data: data format 3.0, unchanged. A database written by 0.6.1 opens.
   while idle the pool reconnects nothing.
 - A deployment behind a network path with an idle limit shorter than 5
   minutes lowers `maxConnectionAge` below that limit.
+
+### Dependencies
+
+- `sembast` is held below 3.9.0. Its 3.9.0 release changes what a web tab
+  sees when another tab has compacted the database: the write reloads and
+  succeeds rather than failing with `TransactionRerunLimitException`. The
+  library's drain lock and its handling of a handle behind a compaction
+  were built and tested against the earlier behaviour, so an application
+  resolving 3.9.0 ran untested code on the web backend. The ceiling is
+  raised once the library adopts the new behaviour.
 
 ## 0.6.1
 

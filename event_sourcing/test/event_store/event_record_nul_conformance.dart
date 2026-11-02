@@ -10,6 +10,7 @@
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../test_support/declarations.dart';
 import '../test_support/version_compatibility_conformance.dart'
     show VersionTestDatabase;
 
@@ -23,6 +24,7 @@ EntryTypeRegistry _registry() => EntryTypeRegistry()
       id: _kType,
       registeredVersion: EntryTypeVersion(1, 0),
       name: _kType,
+      declarations: <EventTypeDeclaration>[EligibleVersion('finalized')],
     ),
   );
 

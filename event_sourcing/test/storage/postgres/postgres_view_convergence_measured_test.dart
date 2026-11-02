@@ -17,6 +17,7 @@ import 'package:event_sourcing/postgres.dart';
 import 'package:event_sourcing/src/event_store.dart' show PublishCollector;
 import 'package:test/test.dart';
 
+import '../../test_support/declarations.dart';
 import 'postgres_schema_snapshot.dart';
 import 'test_postgres_url.dart';
 
@@ -46,6 +47,9 @@ EntryTypeRegistry _entryTypes(EntryTypeVersion noteVersion) {
         id: _kType,
         registeredVersion: noteVersion,
         name: _kType,
+        declarations: <EventTypeDeclaration>[
+          const EligibleVersion('finalized'),
+        ],
       ),
     )
     ..register(
@@ -53,6 +57,7 @@ EntryTypeRegistry _entryTypes(EntryTypeVersion noteVersion) {
         id: _kPing,
         registeredVersion: EntryTypeVersion(1, 0),
         name: _kPing,
+        declarations: <EventTypeDeclaration>[EligibleVersion('finalized')],
       ),
     );
 }

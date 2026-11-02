@@ -800,6 +800,68 @@ class SembastBackend extends StorageBackend {
     return records.map((r) => StoredEvent.fromMap(r.value, r.key)).toList();
   }
 
+  /// How many positions [findCandidateEventsInTxn] looks up per batch.
+  static const int _candidateLookupBatch = 256;
+
+  // Events are stored under their sequence numbers, so the range is read by
+  // key, a batch of positions at a time, and only the events the filters
+  // admit are decoded: no read visits an event outside the range.
+  @override
+  @internal
+  Future<List<StoredEvent>> findCandidateEventsInTxn(
+    Transaction txn, {
+    required int afterSequence,
+    required int throughSequence,
+    required int limit,
+    Set<String>? entryTypes,
+    Set<String>? eventTypes,
+    Set<String>? aggregateTypes,
+  }) async {
+    final t = _requireValidTxn(txn);
+    final found = <StoredEvent>[];
+    var next = afterSequence + 1;
+    while (next <= throughSequence && found.length < limit) {
+      final last = next + _candidateLookupBatch - 1 < throughSequence
+          ? next + _candidateLookupBatch - 1
+          : throughSequence;
+      final keys = <int>[for (var k = next; k <= last; k++) k];
+      final values = await _eventStore.records(keys).get(t._reads);
+      for (var i = 0; i < keys.length; i++) {
+        final value = values[i];
+        if (value == null) continue;
+        if (!isCandidateEvent(
+          entryType: value['entry_type']! as String,
+          eventType: value['event_type']! as String,
+          aggregateType: value['aggregate_type']! as String,
+          entryTypes: entryTypes,
+          eventTypes: eventTypes,
+          aggregateTypes: aggregateTypes,
+        )) {
+          continue;
+        }
+        found.add(StoredEvent.fromMap(value, keys[i]));
+        if (found.length == limit) return found;
+      }
+      next = last + 1;
+    }
+    return found;
+  }
+
+  // The sequence counter names the latest stored event: a transaction that
+  // reserved a position and has not yet stored its event has stored
+  // nothing at it, and the head is then the position below.
+  @override
+  @internal
+  Future<int> readLogHeadInTxn(Transaction txn) async {
+    final t = _requireValidTxn(txn);
+    final counter =
+        (await _backendStateStore.record(_sequenceKey).get(t._reads) as int?) ??
+        0;
+    if (counter == 0) return 0;
+    if (await _eventStore.record(counter).exists(t._reads)) return counter;
+    return counter - 1;
+  }
+
   @override
   Stream<StoredEvent> readEventsReverse({Set<String>? eventTypes}) async* {
     final db = _database();

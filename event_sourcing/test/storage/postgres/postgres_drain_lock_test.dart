@@ -26,6 +26,7 @@ import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:postgres/postgres.dart';
 import 'package:test/test.dart';
 
+import '../../test_support/declarations.dart';
 import '../../test_support/delivery_cycle_conformance.dart'
     show Receiver, until;
 import '../../test_support/drain_isolate_harness.dart';
@@ -1269,6 +1270,9 @@ void main() {
                   id: harnessNoteType,
                   registeredVersion: EntryTypeVersion(2, 0),
                   name: harnessNoteType,
+                  declarations: <EventTypeDeclaration>[
+                    EligibleVersion('noted'),
+                  ],
                 )
               : d,
         );
@@ -1322,6 +1326,9 @@ void main() {
                   id: harnessNoteType,
                   registeredVersion: EntryTypeVersion(2, 0),
                   name: harnessNoteType,
+                  declarations: <EventTypeDeclaration>[
+                    EligibleVersion('noted'),
+                  ],
                 )
               : d,
         );

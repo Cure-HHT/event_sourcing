@@ -11,6 +11,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast.dart' as sembast;
 import 'package:sembast/sembast_memory.dart' show newDatabaseFactoryMemory;
 
+import '../test_support/declarations.dart';
+
 /// Fails every catch-up step so a copy this test has rewound behind the log
 /// stays converging for as long as the hook is installed.
 void _pauseCatchUp(String copyId, String eventId) =>
@@ -55,6 +57,7 @@ EntryTypeRegistry _entryTypes() {
       id: 'patient_site_assignment',
       registeredVersion: EntryTypeVersion(1, 0),
       name: 'Patient-to-site assignment',
+      declarations: <EventTypeDeclaration>[EligibleVersion('patient_site_set')],
     ),
   );
 }

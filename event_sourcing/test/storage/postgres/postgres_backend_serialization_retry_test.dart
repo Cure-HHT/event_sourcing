@@ -11,6 +11,7 @@ import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:postgres/postgres.dart';
 import 'package:test/test.dart';
 
+import '../../test_support/declarations.dart';
 import '../../test_support/record_fixtures.dart';
 import 'test_postgres_url.dart';
 
@@ -623,6 +624,7 @@ EntryTypeDefinition _testEventDef() => const EntryTypeDefinition(
   id: 'test_event',
   registeredVersion: EntryTypeVersion(1, 0),
   name: 'test_event',
+  declarations: <EventTypeDeclaration>[EligibleVersion('created')],
 );
 
 Future<EventStore> _openStore(PostgresBackend backend, String installId) {

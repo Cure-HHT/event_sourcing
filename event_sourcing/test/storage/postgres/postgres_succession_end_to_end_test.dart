@@ -18,6 +18,7 @@ import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing/postgres.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../../test_support/declarations.dart';
 import '../../test_support/queue_test_support.dart' show cycleOnce;
 import '../../test_support/test_backends.dart';
 import 'postgres_schema_snapshot.dart';
@@ -32,6 +33,7 @@ EntryTypeRegistry _entryTypes() => EntryTypeRegistry()
       id: _noteType,
       registeredVersion: EntryTypeVersion(1, 0),
       name: _noteType,
+      declarations: <EventTypeDeclaration>[EligibleVersion('finalized')],
     ),
   );
 

@@ -36,30 +36,55 @@ void main() {
       ],
     );
 
-    // Verifies: EVS-DEV-causal-parents/C
-    test('an event type the definition does not declare is an eligible '
-        'version', () {
-      final declaration = noted.declarationFor('finalized');
-      expect(declaration.eventType, 'finalized');
-      expect(declaration.kind, CausalKind.version);
-      expect(declaration.eligible, isTrue);
+    test('an event type the definition does not declare has no '
+        'declaration', () {
+      expect(noted.declarationFor('finalized'), isNull);
 
       const bare = EntryTypeDefinition(
         id: 'bare',
         registeredVersion: EntryTypeVersion(1, 0),
         name: 'Bare',
       );
-      expect(bare.declarationFor('anything').kind, CausalKind.version);
-      expect(bare.declarationFor('anything').eligible, isTrue);
+      expect(bare.declarationFor('anything'), isNull);
     });
+
+    test(
+      'a definition carries patch 0 unless it states one, and no negative patch',
+      () {
+        const bare = EntryTypeDefinition(
+          id: 'bare',
+          registeredVersion: EntryTypeVersion(1, 0),
+          name: 'Bare',
+        );
+        expect(bare.patch, 0);
+        expect(noted.patch, 0);
+        const patched = EntryTypeDefinition(
+          id: 'patched',
+          registeredVersion: EntryTypeVersion(2, 1),
+          name: 'Patched',
+          patch: 4,
+        );
+        expect(patched.patch, 4);
+        expect(patched.registeredVersion, const EntryTypeVersion(2, 1));
+        expect(
+          () => EntryTypeDefinition(
+            id: 'negative',
+            registeredVersion: const EntryTypeVersion(1, 0),
+            name: 'Negative',
+            patch: -1,
+          ),
+          throwsA(isA<AssertionError>()),
+        );
+      },
+    );
 
     // Verifies: EVS-DEV-causal-parents/C
     test('a declared event type yields its declared kind and eligibility', () {
-      final score = noted.declarationFor('score_recorded');
+      final score = noted.declarationFor('score_recorded')!;
       expect(score.kind, CausalKind.annotation);
       expect(score.eligible, isFalse);
 
-      final draft = noted.declarationFor('draft_saved');
+      final draft = noted.declarationFor('draft_saved')!;
       expect(draft.kind, CausalKind.version);
       expect(draft.eligible, isFalse);
     });

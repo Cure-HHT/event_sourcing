@@ -12,6 +12,7 @@ import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing/postgres.dart';
 import 'package:event_sourcing/src/event_store.dart' show PublishCollector;
 
+import '../../test_support/declarations.dart';
 import '../../test_support/deliveries.dart' show ingestEventForTest;
 import 'test_postgres_url.dart';
 
@@ -48,6 +49,7 @@ EntryTypeRegistry _entryTypes() {
       id: _kEntryType,
       registeredVersion: EntryTypeVersion(1, 0),
       name: _kEntryType,
+      declarations: <EventTypeDeclaration>[EligibleVersion('measured')],
     ),
   );
 }

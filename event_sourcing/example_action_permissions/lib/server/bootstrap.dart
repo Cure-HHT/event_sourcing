@@ -145,6 +145,8 @@ Future<DemoServerComponents> bootstrapDemoServer({
                 id: d.id,
                 registeredVersion: entryTypeVersions[d.id]!,
                 name: d.name,
+                patch: d.patch,
+                declarations: d.declarations,
               )
             : d,
     ],
@@ -296,31 +298,78 @@ const List<EntryTypeDefinition> _demoEntryTypes = <EntryTypeDefinition>[
     id: 'help_request',
     registeredVersion: EntryTypeVersion(1, 0),
     name: 'Help Request',
+    declarations: <EventTypeDeclaration>[
+      EventTypeDeclaration(
+        eventType: 'help_request',
+        kind: CausalKind.version,
+        eligible: true,
+      ),
+    ],
   ),
   EntryTypeDefinition(
     id: 'demo_note',
     registeredVersion: EntryTypeVersion(1, 0),
     name: 'Demo Note',
+    declarations: <EventTypeDeclaration>[
+      EventTypeDeclaration(
+        eventType: 'demo_note',
+        kind: CausalKind.version,
+        eligible: true,
+      ),
+      EventTypeDeclaration(
+        eventType: 'note_written',
+        kind: CausalKind.version,
+        eligible: true,
+      ),
+    ],
   ),
   EntryTypeDefinition(
     id: 'green_button_press',
     registeredVersion: EntryTypeVersion(1, 0),
     name: 'Green Button Press',
+    declarations: <EventTypeDeclaration>[
+      EventTypeDeclaration(
+        eventType: 'green_button_pressed',
+        kind: CausalKind.version,
+        eligible: true,
+      ),
+    ],
   ),
   EntryTypeDefinition(
     id: 'blue_button_press',
     registeredVersion: EntryTypeVersion(1, 0),
     name: 'Blue Button Press',
+    declarations: <EventTypeDeclaration>[
+      EventTypeDeclaration(
+        eventType: 'blue_button_pressed',
+        kind: CausalKind.version,
+        eligible: true,
+      ),
+    ],
   ),
   EntryTypeDefinition(
     id: 'red_alarm',
     registeredVersion: EntryTypeVersion(1, 0),
     name: 'Red Alarm',
+    declarations: <EventTypeDeclaration>[
+      EventTypeDeclaration(
+        eventType: 'red_alarm_pressed',
+        kind: CausalKind.version,
+        eligible: true,
+      ),
+    ],
   ),
   EntryTypeDefinition(
     id: 'user_provisioned',
     registeredVersion: EntryTypeVersion(1, 0),
     name: 'User Provisioned',
+    declarations: <EventTypeDeclaration>[
+      EventTypeDeclaration(
+        eventType: 'user_provisioned',
+        kind: CausalKind.version,
+        eligible: true,
+      ),
+    ],
   ),
   // Permissions module emits these via PermissionSeedApplier on bootstrap.
   // The role_permission_grants view is projected by rolePermissionGrantsSpec
@@ -329,6 +378,7 @@ const List<EntryTypeDefinition> _demoEntryTypes = <EntryTypeDefinition>[
     id: 'role_permission_grant',
     registeredVersion: EntryTypeVersion(1, 0),
     name: 'Role-Permission Grant',
+    declarations: kRolePermissionGrantDeclarations,
   ),
   // Permissions module emits role_assigned events here via
   // bootstrapRoleAssignments; the user_role_scopes view (projected by
@@ -337,11 +387,13 @@ const List<EntryTypeDefinition> _demoEntryTypes = <EntryTypeDefinition>[
     id: 'user_role_scope',
     registeredVersion: EntryTypeVersion(1, 0),
     name: 'User-Role-Scope Assignment',
+    declarations: kUserRoleScopeDeclarations,
   ),
   // The dispatcher emits one of these for every denial stage.
   EntryTypeDefinition(
     id: 'action_denial',
     registeredVersion: EntryTypeVersion(1, 0),
     name: 'Action Denial',
+    declarations: kActionDenialDeclarations,
   ),
 ];

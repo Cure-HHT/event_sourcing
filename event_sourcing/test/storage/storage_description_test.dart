@@ -17,6 +17,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:sembast/sembast_memory.dart';
 
+import '../test_support/declarations.dart';
+
 const Source _source = Source(
   hopId: 'description-test',
   identifier: 'description-install',
@@ -27,6 +29,7 @@ const _noteType = EntryTypeDefinition(
   id: 'description_note',
   registeredVersion: EntryTypeVersion(1, 0),
   name: 'Description note',
+  declarations: <EventTypeDeclaration>[EligibleVersion('written')],
 );
 
 var _counter = 0;

@@ -13,6 +13,7 @@ import 'package:event_sourcing/src/logging.dart';
 import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'declarations.dart';
 import 'deliveries.dart';
 import 'version_compatibility_conformance.dart' show VersionTestDatabase;
 
@@ -56,6 +57,9 @@ Future<EventStore> openProgressStore(
         id: _kType,
         registeredVersion: registered,
         name: _kType,
+        declarations: <EventTypeDeclaration>[
+          const EligibleVersion('finalized'),
+        ],
       ),
     );
   final registry = ProjectionRegistry()

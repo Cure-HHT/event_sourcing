@@ -22,6 +22,7 @@ import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:postgres/postgres.dart';
 import 'package:test/test.dart';
 
+import '../../test_support/declarations.dart';
 import '../../test_support/lib_version_seed.dart';
 import 'test_postgres_url.dart';
 
@@ -130,6 +131,7 @@ Future<EventStore> _openStore(PostgresBackend backend) {
       id: _kNote,
       registeredVersion: EntryTypeVersion(1, 0),
       name: _kNote,
+      declarations: <EventTypeDeclaration>[EligibleVersion('finalized')],
     ),
   );
   return EventStore.open(

@@ -239,6 +239,13 @@ Future<ProbeOutcome> runHooksReleaseProbe() async {
           id: 'probe_event',
           registeredVersion: EntryTypeVersion(1, 0),
           name: 'Probe event',
+          declarations: <EventTypeDeclaration>[
+            EventTypeDeclaration(
+              eventType: 'finalized',
+              kind: CausalKind.version,
+              eligible: true,
+            ),
+          ],
         ),
       ],
       destinations: <Destination>[healthy, broken, refusing],

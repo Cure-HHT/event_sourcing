@@ -9,6 +9,7 @@ import 'package:sembast/sembast_memory.dart' show newDatabaseFactoryMemory;
 
 import '../actions/fixtures/test_actions.dart'
     show AlwaysAllowPolicy, MultiEventAction, OptionalKeyAction;
+import '../test_support/declarations.dart';
 import '../test_support/deliveries.dart';
 import '../test_support/manual_timers.dart' show openWithCatchUpParked;
 import '../test_support/rerunning_sembast_backend.dart';
@@ -30,6 +31,7 @@ EntryTypeRegistry _registry() {
         id: 'action_denial',
         registeredVersion: EntryTypeVersion(1, 0),
         name: 'Action denial',
+        declarations: kActionDenialDeclarations,
       ),
     )
     ..register(
@@ -37,6 +39,7 @@ EntryTypeRegistry _registry() {
         id: 'greeting',
         registeredVersion: EntryTypeVersion(1, 0),
         name: 'Greeting',
+        declarations: <EventTypeDeclaration>[EligibleVersion('hello.said')],
       ),
     );
 }

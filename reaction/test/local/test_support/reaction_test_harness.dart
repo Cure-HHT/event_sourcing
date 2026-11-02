@@ -48,6 +48,18 @@ class ReactionTestHarness {
           id: 'note',
           registeredVersion: EntryTypeVersion(1, 0),
           name: 'Note',
+          declarations: <EventTypeDeclaration>[
+            EventTypeDeclaration(
+              eventType: 'note_created',
+              kind: CausalKind.version,
+              eligible: true,
+            ),
+            EventTypeDeclaration(
+              eventType: 'note_updated',
+              kind: CausalKind.version,
+              eligible: true,
+            ),
+          ],
         ),
       )
       ..register(
@@ -55,6 +67,13 @@ class ReactionTestHarness {
           id: 'greeting',
           registeredVersion: EntryTypeVersion(1, 0),
           name: 'Greeting',
+          declarations: <EventTypeDeclaration>[
+            EventTypeDeclaration(
+              eventType: 'hello_said',
+              kind: CausalKind.version,
+              eligible: true,
+            ),
+          ],
         ),
       )
       // Required by PermissionSeedApplier when seeding the role-permission matrix.
@@ -63,6 +82,7 @@ class ReactionTestHarness {
           id: 'role_permission_grant',
           registeredVersion: EntryTypeVersion(1, 0),
           name: 'Role-Permission Grant',
+          declarations: kRolePermissionGrantDeclarations,
         ),
       )
       // Required so e2e/authz_test.dart can append role_assigned /
@@ -77,6 +97,7 @@ class ReactionTestHarness {
           id: 'user_role_scope',
           registeredVersion: EntryTypeVersion(1, 0),
           name: 'User-Role-Scope Assignment',
+          declarations: kUserRoleScopeDeclarations,
         ),
       )
       // Required by ActionDispatcher for denial-stage audit events.
@@ -85,6 +106,7 @@ class ReactionTestHarness {
           id: 'action_denial',
           registeredVersion: EntryTypeVersion(1, 0),
           name: 'Action Denial',
+          declarations: kActionDenialDeclarations,
         ),
       )
       // Generic account-level entry type so e2e/authz_test.dart can exercise
@@ -97,6 +119,13 @@ class ReactionTestHarness {
           id: 'account_disabled',
           registeredVersion: EntryTypeVersion(1, 0),
           name: 'Account Disabled',
+          declarations: <EventTypeDeclaration>[
+            EventTypeDeclaration(
+              eventType: 'account_disabled',
+              kind: CausalKind.version,
+              eligible: true,
+            ),
+          ],
         ),
       );
 

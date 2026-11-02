@@ -16,6 +16,7 @@ import 'package:event_sourcing/src/event_store.dart'
 import 'package:flutter_test/flutter_test.dart';
 
 import '../security/security_finding_conformance.dart' show forkEvidence;
+import 'declarations.dart';
 import 'deliveries.dart';
 import 'fake_destination.dart';
 import 'ingest_record_findings_conformance.dart'
@@ -152,6 +153,10 @@ void runReplayAdmissionScenarios({
               id: _noteType,
               registeredVersion: EntryTypeVersion(1, 0),
               name: _noteType,
+              declarations: <EventTypeDeclaration>[
+                EligibleVersion('noted'),
+                EligibleVersion('finalized'),
+              ],
             ),
           ),
         source: Source(

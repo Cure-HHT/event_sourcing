@@ -8,6 +8,8 @@
 import 'package:event_sourcing/src/entry_type_definition.dart';
 import 'package:event_sourcing/src/entry_type_registry.dart';
 import 'package:event_sourcing/src/event_store.dart';
+import 'package:event_sourcing/src/permissions/user_role_scopes_spec.dart'
+    show kUserRoleScopeDeclarations;
 import 'package:event_sourcing/src/projections/primitives/row_data.dart';
 import 'package:event_sourcing/src/projections/primitives/row_key.dart';
 import 'package:event_sourcing/src/projections/projection_registry.dart';
@@ -46,6 +48,7 @@ Future<EventStore> _open() async {
         id: 'user_role_scope',
         registeredVersion: EntryTypeVersion(1, 0),
         name: 'User-Role-Scope Assignment',
+        declarations: kUserRoleScopeDeclarations,
       ),
     );
   final projections = ProjectionRegistry()..register(_spec);

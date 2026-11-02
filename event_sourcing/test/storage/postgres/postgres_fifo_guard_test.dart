@@ -12,6 +12,7 @@ import 'package:event_sourcing/postgres.dart';
 import 'package:postgres/postgres.dart';
 import 'package:test/test.dart';
 
+import '../../test_support/declarations.dart';
 import '../../test_support/fake_destination.dart';
 import '../../test_support/queue_test_support.dart';
 import '../../test_support/test_backends.dart';
@@ -843,6 +844,7 @@ class _World {
         id: _noteType,
         registeredVersion: EntryTypeVersion(1, 0),
         name: _noteType,
+        declarations: <EventTypeDeclaration>[EligibleVersion('noted')],
       ),
     );
     final store = await EventStore.openForTest(

@@ -12,6 +12,8 @@ import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing/postgres.dart';
 import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 
+import 'declarations.dart';
+
 /// The entry type the spawned drainer and the tests append.
 const String harnessNoteType = 'lock_note';
 
@@ -27,6 +29,7 @@ EntryTypeRegistry harnessEntryTypes() {
       id: harnessNoteType,
       registeredVersion: EntryTypeVersion(1, 0),
       name: harnessNoteType,
+      declarations: <EventTypeDeclaration>[EligibleVersion('noted')],
     ),
   );
   return registry;

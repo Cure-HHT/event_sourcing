@@ -14,6 +14,7 @@ import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../security/security_finding_conformance.dart' show expectedFindingId;
+import 'declarations.dart';
 import 'native_destination.dart';
 import 'queue_registry_conformance.dart' show QueueTestDatabase;
 import 'queue_test_support.dart' show drainForTest, fillForTest;
@@ -66,6 +67,7 @@ class _World {
           id: _noteType,
           registeredVersion: EntryTypeVersion(1, 0),
           name: _noteType,
+          declarations: <EventTypeDeclaration>[EligibleVersion('finalized')],
         ),
       );
     store = trackTestBackend(

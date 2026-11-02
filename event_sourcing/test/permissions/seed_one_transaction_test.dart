@@ -66,6 +66,7 @@ Future<(EventStore, _CountingBackend)> _open() async {
         id: 'role_permission_grant',
         registeredVersion: EntryTypeVersion(1, 0),
         name: 'Role-permission grant',
+        declarations: kRolePermissionGrantDeclarations,
       ),
     )
     ..register(

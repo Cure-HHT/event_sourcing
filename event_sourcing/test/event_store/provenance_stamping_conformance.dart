@@ -18,8 +18,9 @@ import 'package:event_sourcing/src/security/system_entry_types.dart'
     show kIngestDuplicateReceivedEventType, kSecurityContextRedactedEntryType;
 import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:flutter_test/flutter_test.dart';
-import '../test_support/deliveries.dart';
 
+import '../test_support/declarations.dart';
+import '../test_support/deliveries.dart';
 import '../test_support/version_compatibility_conformance.dart'
     show VersionTestDatabase;
 
@@ -51,14 +52,15 @@ Source _source(String identifier) => Source(
   softwareVersion: _kAppVersion,
 );
 
-EntryTypeRegistry _registry(EntryTypeVersion noteVersion) => EntryTypeRegistry()
-  ..register(
-    EntryTypeDefinition(
-      id: _kType,
-      registeredVersion: noteVersion,
-      name: _kType,
-    ),
-  );
+EntryTypeRegistry _registry(EntryTypeVersion noteVersion) =>
+    EntryTypeRegistry()..register(
+      EntryTypeDefinition(
+        id: _kType,
+        registeredVersion: noteVersion,
+        name: _kType,
+        declarations: <EventTypeDeclaration>[const EligibleVersion('noted')],
+      ),
+    );
 
 /// Opens an event store over [backend] with `EventStore.open`, registering
 /// [_kType] at [noteVersion] (at `1.1` with the `DefaultField` step adding

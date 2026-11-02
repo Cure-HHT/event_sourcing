@@ -14,12 +14,14 @@ import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:postgres/postgres.dart';
 import 'package:test/test.dart';
 
+import '../../test_support/declarations.dart';
 import 'test_postgres_url.dart';
 
 const EntryTypeDefinition _noteDef = EntryTypeDefinition(
   id: 'concurrent_note',
   registeredVersion: EntryTypeVersion(1, 0),
   name: 'concurrent_note',
+  declarations: <EventTypeDeclaration>[EligibleVersion('noted')],
 );
 
 /// Accepts every send and records the event ids it received.

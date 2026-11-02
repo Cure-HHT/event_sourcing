@@ -25,6 +25,9 @@
 //   every transaction that appends takes.
 
 import 'package:event_sourcing/event_sourcing.dart';
+import 'package:event_sourcing/src/library_declarations_check.dart';
+import 'package:event_sourcing/src/permissions/role_permission_grants_spec.dart'
+    show kPermissionGrantedEventType;
 import 'package:event_sourcing/src/permissions/wait_for_current_views.dart';
 import 'package:meta/meta.dart';
 
@@ -45,7 +48,13 @@ class PermissionSeedApplier {
   PermissionSeedApplier({
     required this.eventStore,
     required this.seedInitiator,
-  });
+  }) {
+    requireLibraryDeclarations(
+      eventStore.entryTypes,
+      'role_permission_grant',
+      kRolePermissionGrantDeclarations,
+    );
+  }
 
   final EventStore eventStore;
   final Initiator seedInitiator;
@@ -131,7 +140,7 @@ class PermissionSeedApplier {
             entryType: 'role_permission_grant',
             aggregateType: 'role_permission_grant',
             aggregateId: id,
-            eventType: 'permission_granted',
+            eventType: kPermissionGrantedEventType,
             data: PermissionGrantedPayload(
               role: role,
               permissionName: permName,

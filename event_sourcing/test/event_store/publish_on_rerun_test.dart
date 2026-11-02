@@ -4,6 +4,7 @@
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../test_support/declarations.dart';
 import '../test_support/rerunning_sembast_backend.dart';
 
 const _viewName = 'notes_by_id';
@@ -19,6 +20,7 @@ void main() {
           id: 'note',
           registeredVersion: EntryTypeVersion(1, 0),
           name: 'note',
+          declarations: <EventTypeDeclaration>[EligibleVersion('created')],
         ),
       );
     final projections = ProjectionRegistry()

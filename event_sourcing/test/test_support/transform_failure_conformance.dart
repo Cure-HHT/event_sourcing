@@ -16,6 +16,7 @@ import 'package:event_sourcing/src/logging.dart';
 import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'declarations.dart';
 import 'queue_registry_conformance.dart' show QueueTestDatabase;
 import 'queue_test_support.dart' show drainForTest, fillForTest;
 import 'test_backends.dart';
@@ -136,6 +137,7 @@ class _World {
         id: _noteType,
         registeredVersion: EntryTypeVersion(1, 0),
         name: _noteType,
+        declarations: <EventTypeDeclaration>[EligibleVersion('finalized')],
       ),
     );
     final store = await EventStore.openForTest(

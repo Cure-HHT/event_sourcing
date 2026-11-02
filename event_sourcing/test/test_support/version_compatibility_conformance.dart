@@ -12,6 +12,7 @@ import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing/src/security/security_context_store.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'declarations.dart';
 import 'deliveries.dart';
 import 'record_fixtures.dart';
 import 'test_backends.dart';
@@ -69,6 +70,7 @@ Future<EventStore> _openStore(
       id: _kType,
       registeredVersion: registered,
       name: _kType,
+      declarations: <EventTypeDeclaration>[const EligibleVersion('finalized')],
     ),
   );
   final promoterRegistry = PromoterRegistry();

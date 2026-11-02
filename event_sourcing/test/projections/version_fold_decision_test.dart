@@ -7,6 +7,7 @@ import 'package:event_sourcing/src/projections/interpreter/projection_interprete
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
+import '../test_support/declarations.dart';
 import '../test_support/record_fixtures.dart';
 
 const _kType = 'note';
@@ -60,6 +61,7 @@ EntryTypeRegistry _registry(EntryTypeVersion registered) {
       id: _kType,
       registeredVersion: registered,
       name: _kType,
+      declarations: <EventTypeDeclaration>[const EligibleVersion('finalized')],
     ),
   );
   return r;
