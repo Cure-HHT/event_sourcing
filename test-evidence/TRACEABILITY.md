@@ -4356,8 +4356,8 @@ Tests:
 
 - event_sourcing/test/event_store/generation_record_test.dart:207 stop-then-start on one Sembast database file a major bump opens after the old build stopped, and the old build is then refused although no view names the entry type -- passed
 - event_sourcing/test/storage/postgres/postgres_generation_guard_test.dart:666 stop-then-start and the generation record a major bump runs after the old build stops; the old build is then refused although no view names the entry type -- passed, skipped
-- event_sourcing/test/test_support/boot_conformance.dart:819 EventStore.open boot (postgres) data-format compatibility an entry-type refusal leaves no library-version event -- passed, skipped
-- event_sourcing/test/test_support/boot_conformance.dart:819 EventStore.open boot (sembast (memory)) data-format compatibility an entry-type refusal leaves no library-version event -- passed
+- event_sourcing/test/test_support/boot_conformance.dart:826 EventStore.open boot (postgres) data-format compatibility an entry-type refusal leaves no library-version event -- passed, skipped
+- event_sourcing/test/test_support/boot_conformance.dart:826 EventStore.open boot (sembast (memory)) data-format compatibility an entry-type refusal leaves no library-version event -- passed
 - event_sourcing/test/test_support/version_compatibility_conformance.dart:141 version compatibility (postgres) downgrade refusal compares majors a generation record of major 2 refuses a build registering 1.5, naming both majors, and changes nothing -- passed, skipped
 - event_sourcing/test/test_support/version_compatibility_conformance.dart:141 version compatibility (postgres, runtime role) downgrade refusal compares majors a generation record of major 2 refuses a build registering 1.5, naming both majors, and changes nothing -- passed
 - event_sourcing/test/test_support/version_compatibility_conformance.dart:141 version compatibility (sembast (memory)) downgrade refusal compares majors a generation record of major 2 refuses a build registering 1.5, naming both majors, and changes nothing -- passed
@@ -5155,10 +5155,10 @@ Tests:
 - event_sourcing/test/test_support/boot_conformance.dart:505 EventStore.open boot (sembast (memory)) boot record a refused open leaves the boot record as it was -- passed
 - event_sourcing/test/test_support/boot_conformance.dart:528 EventStore.open boot (postgres) boot record an uncontended boot runs its body exactly once -- passed, skipped
 - event_sourcing/test/test_support/boot_conformance.dart:528 EventStore.open boot (sembast (memory)) boot record an uncontended boot runs its body exactly once -- passed
-- event_sourcing/test/test_support/boot_conformance.dart:819 EventStore.open boot (postgres) data-format compatibility an entry-type refusal leaves no library-version event -- passed, skipped
-- event_sourcing/test/test_support/boot_conformance.dart:819 EventStore.open boot (sembast (memory)) data-format compatibility an entry-type refusal leaves no library-version event -- passed
-- event_sourcing/test/test_support/boot_conformance.dart:850 EventStore.open boot (postgres) data-format compatibility a boot that fails after its library-version event writes nothing; a clean reopen appends exactly one change -- passed, skipped
-- event_sourcing/test/test_support/boot_conformance.dart:850 EventStore.open boot (sembast (memory)) data-format compatibility a boot that fails after its library-version event writes nothing; a clean reopen appends exactly one change -- passed
+- event_sourcing/test/test_support/boot_conformance.dart:826 EventStore.open boot (postgres) data-format compatibility an entry-type refusal leaves no library-version event -- passed, skipped
+- event_sourcing/test/test_support/boot_conformance.dart:826 EventStore.open boot (sembast (memory)) data-format compatibility an entry-type refusal leaves no library-version event -- passed
+- event_sourcing/test/test_support/boot_conformance.dart:857 EventStore.open boot (postgres) data-format compatibility a boot that fails after its library-version event writes nothing; a clean reopen appends exactly one change -- passed, skipped
+- event_sourcing/test/test_support/boot_conformance.dart:857 EventStore.open boot (sembast (memory)) data-format compatibility a boot that fails after its library-version event writes nothing; a clean reopen appends exactly one change -- passed
 - event_sourcing/test/web/stale_tab_web_test.dart:120 two tabs opening a fresh database at once share one identity -- passed
 - event_sourcing/test/web/stale_tab_web_test.dart:76 a stale tab refuses to boot below a major another tab recorded -- passed
 
