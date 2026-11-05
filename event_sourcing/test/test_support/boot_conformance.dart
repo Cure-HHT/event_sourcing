@@ -800,6 +800,13 @@ void runBootScenarios(
         );
         expect(compatible.databaseId, first.databaseId);
         expect(await _libVersionEvents(backend), hasLength(1));
+        // Stop both instances before the next build opens, as a
+        // stop-then-start deployment does. A running instance keeps its
+        // views catching up in the background, so one could still be
+        // folding the seeded event when the snapshot below is taken, and
+        // a watermark would then move under the "writes nothing" check.
+        await db!.stop(first);
+        await db!.stop(compatible);
         await seedLibVersionEventForTest(
           backend,
           eventType: LibVersionEvents.changed,
