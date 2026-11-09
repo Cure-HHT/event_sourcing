@@ -20,7 +20,7 @@
 # run against any Postgres whose PG_TEST_URL role can create roles.
 services:
   postgres:
-    image: postgres:16
+    image: postgres:18
     environment:
       POSTGRES_USER: evs
       POSTGRES_PASSWORD: evs
