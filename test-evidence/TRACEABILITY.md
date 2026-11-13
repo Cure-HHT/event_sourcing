@@ -12,7 +12,7 @@
 | EVS-DEV-sender-succession | Sender succession | DEV | Active | A-H,K (100%) | A-H,K (100%) [9P 0F 0A] | A-H,K (100%) | 0/9 (0%) | 0/9 (0%) | n/a | n/a |
 | EVS-DEV-append-stamps-registered-version | Substrate stamps entryTypeVersion on append | DEV | Active | A-D (100%) | A-D (100%) [4P 0F 0A] | A-D (100%) | 0/4 (0%) | 0/4 (0%) | n/a | n/a |
 | EVS-DEV-converging-view-reads | Reads of a converging view | DEV | Active | A-E,G-J,L-P (100%) | A-E,G-J,L-P (100%) [14P 0F 0A] | A-E,G-J,L-P (100%) | 0/14 (0%) | 0/14 (0%) | n/a | n/a |
-| EVS-DEV-destination-drain-lock | Delivery cycle mechanics | DEV | Active | A-F (100%) | A-F (100%) [6P 0F 0A] | A-F (100%) | 0/6 (0%) | 0/6 (0%) | n/a | n/a |
+| EVS-DEV-destination-drain-lock | Delivery cycle mechanics | DEV | Active | A-G (100%) | A-G (100%) [7P 0F 0A] | A-G (100%) | 0/7 (0%) | 0/7 (0%) | n/a | n/a |
 | EVS-DEV-destination-drain | Destination queue mechanics | DEV | Active | A-V,X-Z (100%) | A-V,X-Z (100%) [25P 0F 0A] | A-V,X-Z (100%) | 0/25 (0%) | 0/25 (0%) | n/a | n/a |
 | EVS-DEV-destination-retry-budget | Destination retry budget and attempt outcomes | DEV | Active | A-D (100%) | A-D (100%) [4P 0F 0A] | A-D (100%) | 0/4 (0%) | 0/4 (0%) | n/a | n/a |
 | EVS-DEV-entry-type-downgrade-refusal | Entry-type version downgrade refusal | DEV | Active | A,C (100%) | A,C (100%) [2P 0F 0A] | A,C (100%) | 0/2 (0%) | 0/2 (0%) | n/a | n/a |
@@ -2711,15 +2711,15 @@ Tests:
 - event_sourcing/test/web/drain_lock_web_test.dart:180 exclusion tabs over two databases both acquire -- passed
 - event_sourcing/test/web/drain_lock_web_test.dart:203 missing lock manager a start throws, naming the secure context, and leaves nothing started -- passed
 - event_sourcing/test/web/drain_lock_web_test.dart:246 visibility a tab whose page becomes hidden hands the drain lock over -- passed
-- event_sourcing/test/web/drain_lock_web_test.dart:340 visibility a hidden tab does not take a free drain lock -- passed
-- event_sourcing/test/web/drain_lock_web_test.dart:386 visibility a start on a hidden page stands by until visible -- passed
-- event_sourcing/test/web/drain_lock_web_test.dart:537 visibility a send that does not return bounds the hand-over -- passed
-- event_sourcing/test/web/drain_lock_web_test.dart:595 visibility a grant racing the page becoming hidden is released -- passed
-- event_sourcing/test/web/drain_lock_web_test.dart:648 visibility a page hidden during the epoch raise releases the lock -- passed
-- event_sourcing/test/web/drain_lock_web_test.dart:758 document visibility pagehide hands the drain lock over and pageshow requests it again -- passed
-- event_sourcing/test/web/drain_lock_web_test.dart:766 document visibility freeze hands the drain lock over and resume requests it again -- passed
+- event_sourcing/test/web/drain_lock_web_test.dart:381 visibility a hidden tab does not take a free drain lock -- passed
+- event_sourcing/test/web/drain_lock_web_test.dart:427 visibility a start on a hidden page stands by until visible -- passed
+- event_sourcing/test/web/drain_lock_web_test.dart:578 visibility a send that does not return bounds the hand-over -- passed
+- event_sourcing/test/web/drain_lock_web_test.dart:636 visibility a grant racing the page becoming hidden is released -- passed
+- event_sourcing/test/web/drain_lock_web_test.dart:689 visibility a page hidden during the epoch raise releases the lock -- passed
+- event_sourcing/test/web/drain_lock_web_test.dart:799 document visibility pagehide hands the drain lock over and pageshow requests it again -- passed
+- event_sourcing/test/web/drain_lock_web_test.dart:807 document visibility freeze hands the drain lock over and resume requests it again -- passed
 - event_sourcing/test/web/drain_lock_web_test.dart:89 raw lock wrapper try, release, cancel before a grant, cancel racing a grant -- passed
-- event_sourcing/test/web/drain_lock_web_test.dart:921 a backend that can no longer take the lock an in-memory database takes the Web Lock -- passed
+- event_sourcing/test/web/drain_lock_web_test.dart:989 a backend that can no longer take the lock an in-memory database takes the Web Lock -- passed
 
 **B**
 
@@ -2740,9 +2740,9 @@ Tests:
 - event_sourcing/test/storage/storage_backend_conformance.dart:4522 StorageBackend conformance (postgres) drain lock and drain records assertHeldInTxn refuses after a release; a release is no loss -- passed, skipped
 - event_sourcing/test/storage/storage_backend_conformance.dart:4522 StorageBackend conformance (postgres, runtime role) drain lock and drain records assertHeldInTxn refuses after a release; a release is no loss -- passed
 - event_sourcing/test/storage/storage_backend_conformance.dart:4522 StorageBackend conformance (sembast (memory)) drain lock and drain records assertHeldInTxn refuses after a release; a release is no loss -- passed
-- event_sourcing/test/test_support/delivery_cycle_conformance.dart:1216 delivery cycle scenarios (postgres) lock loss and stopping a loss detected during the pre-send fence starts no send -- passed, skipped
-- event_sourcing/test/test_support/delivery_cycle_conformance.dart:1216 delivery cycle scenarios (postgres, runtime role) lock loss and stopping a loss detected during the pre-send fence starts no send -- passed
-- event_sourcing/test/test_support/delivery_cycle_conformance.dart:1216 delivery cycle scenarios (sembast) lock loss and stopping a loss detected during the pre-send fence starts no send -- passed
+- event_sourcing/test/test_support/delivery_cycle_conformance.dart:1288 delivery cycle scenarios (postgres) lock loss and stopping a loss detected during the pre-send fence starts no send -- passed, skipped
+- event_sourcing/test/test_support/delivery_cycle_conformance.dart:1288 delivery cycle scenarios (postgres, runtime role) lock loss and stopping a loss detected during the pre-send fence starts no send -- passed
+- event_sourcing/test/test_support/delivery_cycle_conformance.dart:1288 delivery cycle scenarios (sembast) lock loss and stopping a loss detected during the pre-send fence starts no send -- passed
 - event_sourcing/test/test_support/delivery_cycle_conformance.dart:602 delivery cycle scenarios (postgres) close close with a timeout: the late outcome commits nothing -- passed, skipped
 - event_sourcing/test/test_support/delivery_cycle_conformance.dart:602 delivery cycle scenarios (postgres, runtime role) close close with a timeout: the late outcome commits nothing -- passed
 - event_sourcing/test/test_support/delivery_cycle_conformance.dart:602 delivery cycle scenarios (sembast) close close with a timeout: the late outcome commits nothing -- passed
@@ -2782,9 +2782,9 @@ Tests:
 - event_sourcing/test/storage/storage_backend_conformance.dart:4635 StorageBackend conformance (postgres) drain lock and drain records close releases the drain lock -- passed, skipped
 - event_sourcing/test/storage/storage_backend_conformance.dart:4635 StorageBackend conformance (postgres, runtime role) drain lock and drain records close releases the drain lock -- passed
 - event_sourcing/test/storage/storage_backend_conformance.dart:4635 StorageBackend conformance (sembast (memory)) drain lock and drain records close releases the drain lock -- passed
-- event_sourcing/test/test_support/delivery_cycle_conformance.dart:1277 delivery cycle scenarios (postgres) lock loss and stopping closing the backend under a running cycle stops it -- passed, skipped
-- event_sourcing/test/test_support/delivery_cycle_conformance.dart:1277 delivery cycle scenarios (postgres, runtime role) lock loss and stopping closing the backend under a running cycle stops it -- passed
-- event_sourcing/test/test_support/delivery_cycle_conformance.dart:1277 delivery cycle scenarios (sembast) lock loss and stopping closing the backend under a running cycle stops it -- passed
+- event_sourcing/test/test_support/delivery_cycle_conformance.dart:1349 delivery cycle scenarios (postgres) lock loss and stopping closing the backend under a running cycle stops it -- passed, skipped
+- event_sourcing/test/test_support/delivery_cycle_conformance.dart:1349 delivery cycle scenarios (postgres, runtime role) lock loss and stopping closing the backend under a running cycle stops it -- passed
+- event_sourcing/test/test_support/delivery_cycle_conformance.dart:1349 delivery cycle scenarios (sembast) lock loss and stopping closing the backend under a running cycle stops it -- passed
 - event_sourcing/test/test_support/delivery_cycle_conformance.dart:344 delivery cycle scenarios (postgres) one drainer a closed cycle gives way to a new one -- passed, skipped
 - event_sourcing/test/test_support/delivery_cycle_conformance.dart:344 delivery cycle scenarios (postgres, runtime role) one drainer a closed cycle gives way to a new one -- passed
 - event_sourcing/test/test_support/delivery_cycle_conformance.dart:344 delivery cycle scenarios (sembast) one drainer a closed cycle gives way to a new one -- passed
@@ -2812,17 +2812,17 @@ Tests:
 - event_sourcing/test/test_support/delivery_cycle_conformance.dart:966 delivery cycle scenarios (postgres) cadence, heartbeat and wakeups a heartbeat failure: standby, then re-acquisition -- passed, skipped
 - event_sourcing/test/test_support/delivery_cycle_conformance.dart:966 delivery cycle scenarios (postgres, runtime role) cadence, heartbeat and wakeups a heartbeat failure: standby, then re-acquisition -- passed
 - event_sourcing/test/test_support/delivery_cycle_conformance.dart:966 delivery cycle scenarios (sembast) cadence, heartbeat and wakeups a heartbeat failure: standby, then re-acquisition -- passed
-- event_sourcing/test/web/drain_lock_web_test.dart:1018 acquisition close during standby acquires nothing -- passed
+- event_sourcing/test/web/drain_lock_web_test.dart:1009 acquisition an acquisition that fails part-way gives the Web Lock up -- passed
+- event_sourcing/test/web/drain_lock_web_test.dart:1057 acquisition standby, then takeover when the other tab releases -- passed
+- event_sourcing/test/web/drain_lock_web_test.dart:1086 acquisition close during standby acquires nothing -- passed
 - event_sourcing/test/web/drain_lock_web_test.dart:203 missing lock manager a start throws, naming the secure context, and leaves nothing started -- passed
 - event_sourcing/test/web/drain_lock_web_test.dart:246 visibility a tab whose page becomes hidden hands the drain lock over -- passed
-- event_sourcing/test/web/drain_lock_web_test.dart:340 visibility a hidden tab does not take a free drain lock -- passed
-- event_sourcing/test/web/drain_lock_web_test.dart:413 visibility close during a hand-over awaits it -- passed
-- event_sourcing/test/web/drain_lock_web_test.dart:468 visibility a heartbeat failure during a hand-over -- passed
-- event_sourcing/test/web/drain_lock_web_test.dart:803 a backend that can no longer take the lock a drainer whose handle another opener compacted past stops, and another tab takes over -- passed
-- event_sourcing/test/web/drain_lock_web_test.dart:863 a backend that can no longer take the lock closing the backend of a standing-by cycle stops it -- passed
-- event_sourcing/test/web/drain_lock_web_test.dart:896 a backend that can no longer take the lock a close during an acquisition leaves the Web Lock free -- passed
-- event_sourcing/test/web/drain_lock_web_test.dart:941 acquisition an acquisition that fails part-way gives the Web Lock up -- passed
-- event_sourcing/test/web/drain_lock_web_test.dart:989 acquisition standby, then takeover when the other tab releases -- passed
+- event_sourcing/test/web/drain_lock_web_test.dart:381 visibility a hidden tab does not take a free drain lock -- passed
+- event_sourcing/test/web/drain_lock_web_test.dart:454 visibility close during a hand-over awaits it -- passed
+- event_sourcing/test/web/drain_lock_web_test.dart:509 visibility a heartbeat failure during a hand-over -- passed
+- event_sourcing/test/web/drain_lock_web_test.dart:844 a backend that can no longer take the lock a drainer whose handle another opener compacted past stops, and another tab takes over -- passed
+- event_sourcing/test/web/drain_lock_web_test.dart:931 a backend that can no longer take the lock closing the backend of a standing-by cycle stops it -- passed
+- event_sourcing/test/web/drain_lock_web_test.dart:964 a backend that can no longer take the lock a close during an acquisition leaves the Web Lock free -- passed
 
 **D**
 
@@ -2838,9 +2838,9 @@ Tests:
 - event_sourcing/test/sync/delivery_wake_seams_test.dart:140 handDrivenCycle a wake runs no pass of a hand-driven cycle; calling it does -- passed
 - event_sourcing/test/sync/delivery_wake_seams_test.dart:73 onDeliveryWake an observer that throws does not reach the append -- passed
 - event_sourcing/test/sync/delivery_wake_seams_test.dart:73 onDeliveryWake reports each wake and whether a started cycle held the slot -- passed
-- event_sourcing/test/test_support/delivery_cycle_conformance.dart:1322 delivery cycle scenarios (postgres) bootstrap an append through a bootstrapped store drives the cycle -- passed, skipped
-- event_sourcing/test/test_support/delivery_cycle_conformance.dart:1322 delivery cycle scenarios (postgres, runtime role) bootstrap an append through a bootstrapped store drives the cycle -- passed
-- event_sourcing/test/test_support/delivery_cycle_conformance.dart:1322 delivery cycle scenarios (sembast) bootstrap an append through a bootstrapped store drives the cycle -- passed
+- event_sourcing/test/test_support/delivery_cycle_conformance.dart:1394 delivery cycle scenarios (postgres) bootstrap an append through a bootstrapped store drives the cycle -- passed, skipped
+- event_sourcing/test/test_support/delivery_cycle_conformance.dart:1394 delivery cycle scenarios (postgres, runtime role) bootstrap an append through a bootstrapped store drives the cycle -- passed
+- event_sourcing/test/test_support/delivery_cycle_conformance.dart:1394 delivery cycle scenarios (sembast) bootstrap an append through a bootstrapped store drives the cycle -- passed
 - event_sourcing/test/test_support/delivery_cycle_conformance.dart:291 delivery cycle scenarios (postgres) one drainer a second cycle over the database in one isolate is refused -- passed, skipped
 - event_sourcing/test/test_support/delivery_cycle_conformance.dart:291 delivery cycle scenarios (postgres, runtime role) one drainer a second cycle over the database in one isolate is refused -- passed
 - event_sourcing/test/test_support/delivery_cycle_conformance.dart:291 delivery cycle scenarios (sembast) one drainer a second cycle over the database in one isolate is refused -- passed
@@ -2872,31 +2872,31 @@ Tests:
 - event_sourcing/test/storage/postgres/postgres_drain_lock_test.dart:1210 wakeups from another process a halt and an event from another backend -- passed
 - event_sourcing/test/storage/postgres/postgres_drain_lock_test.dart:507 fencing a replaced holder a replaced holder's pass start writes nothing -- passed
 - event_sourcing/test/sync/sync_cycle_test.dart:149 SyncCycle a reentrant call runs one more pass and waits for it -- passed
-- event_sourcing/test/test_support/delivery_cycle_conformance.dart:1007 delivery cycle scenarios (postgres) cadence, heartbeat and wakeups the heartbeat runs while a send is blocked -- passed, skipped
-- event_sourcing/test/test_support/delivery_cycle_conformance.dart:1007 delivery cycle scenarios (postgres, runtime role) cadence, heartbeat and wakeups the heartbeat runs while a send is blocked -- passed
-- event_sourcing/test/test_support/delivery_cycle_conformance.dart:1007 delivery cycle scenarios (sembast) cadence, heartbeat and wakeups the heartbeat runs while a send is blocked -- passed
-- event_sourcing/test/test_support/delivery_cycle_conformance.dart:1040 delivery cycle scenarios (postgres) cadence, heartbeat and wakeups a trigger during a pass runs one more -- passed, skipped
-- event_sourcing/test/test_support/delivery_cycle_conformance.dart:1040 delivery cycle scenarios (postgres, runtime role) cadence, heartbeat and wakeups a trigger during a pass runs one more -- passed
-- event_sourcing/test/test_support/delivery_cycle_conformance.dart:1040 delivery cycle scenarios (sembast) cadence, heartbeat and wakeups a trigger during a pass runs one more -- passed
-- event_sourcing/test/test_support/delivery_cycle_conformance.dart:1075 delivery cycle scenarios (postgres) cadence, heartbeat and wakeups a trigger as the last pass finishes is not lost -- passed, skipped
-- event_sourcing/test/test_support/delivery_cycle_conformance.dart:1075 delivery cycle scenarios (postgres, runtime role) cadence, heartbeat and wakeups a trigger as the last pass finishes is not lost -- passed
-- event_sourcing/test/test_support/delivery_cycle_conformance.dart:1075 delivery cycle scenarios (sembast) cadence, heartbeat and wakeups a trigger as the last pass finishes is not lost -- passed
-- event_sourcing/test/test_support/delivery_cycle_conformance.dart:1118 delivery cycle scenarios (postgres) cadence, heartbeat and wakeups a halt request wakes the cycle -- passed, skipped
-- event_sourcing/test/test_support/delivery_cycle_conformance.dart:1118 delivery cycle scenarios (postgres, runtime role) cadence, heartbeat and wakeups a halt request wakes the cycle -- passed
-- event_sourcing/test/test_support/delivery_cycle_conformance.dart:1118 delivery cycle scenarios (sembast) cadence, heartbeat and wakeups a halt request wakes the cycle -- passed
-- event_sourcing/test/test_support/delivery_cycle_conformance.dart:1147 delivery cycle scenarios (postgres) cadence, heartbeat and wakeups the cadence delivers what another process appends -- passed, skipped
-- event_sourcing/test/test_support/delivery_cycle_conformance.dart:1147 delivery cycle scenarios (postgres, runtime role) cadence, heartbeat and wakeups the cadence delivers what another process appends -- passed
-- event_sourcing/test/test_support/delivery_cycle_conformance.dart:1147 delivery cycle scenarios (sembast) cadence, heartbeat and wakeups the cadence delivers what another process appends -- passed
-- event_sourcing/test/test_support/delivery_cycle_conformance.dart:1169 delivery cycle scenarios (postgres) cadence, heartbeat and wakeups each pass writes the heartbeat record -- passed, skipped
-- event_sourcing/test/test_support/delivery_cycle_conformance.dart:1169 delivery cycle scenarios (postgres, runtime role) cadence, heartbeat and wakeups each pass writes the heartbeat record -- passed
-- event_sourcing/test/test_support/delivery_cycle_conformance.dart:1169 delivery cycle scenarios (sembast) cadence, heartbeat and wakeups each pass writes the heartbeat record -- passed
-- event_sourcing/test/test_support/delivery_cycle_conformance.dart:1188 delivery cycle scenarios (postgres) cadence, heartbeat and wakeups a failed pass start writes no heartbeat -- passed, skipped
-- event_sourcing/test/test_support/delivery_cycle_conformance.dart:1188 delivery cycle scenarios (postgres, runtime role) cadence, heartbeat and wakeups a failed pass start writes no heartbeat -- passed
-- event_sourcing/test/test_support/delivery_cycle_conformance.dart:1188 delivery cycle scenarios (sembast) cadence, heartbeat and wakeups a failed pass start writes no heartbeat -- passed
+- event_sourcing/test/test_support/delivery_cycle_conformance.dart:1079 delivery cycle scenarios (postgres) cadence, heartbeat and wakeups the heartbeat runs while a send is blocked -- passed, skipped
+- event_sourcing/test/test_support/delivery_cycle_conformance.dart:1079 delivery cycle scenarios (postgres, runtime role) cadence, heartbeat and wakeups the heartbeat runs while a send is blocked -- passed
+- event_sourcing/test/test_support/delivery_cycle_conformance.dart:1079 delivery cycle scenarios (sembast) cadence, heartbeat and wakeups the heartbeat runs while a send is blocked -- passed
+- event_sourcing/test/test_support/delivery_cycle_conformance.dart:1112 delivery cycle scenarios (postgres) cadence, heartbeat and wakeups a trigger during a pass runs one more -- passed, skipped
+- event_sourcing/test/test_support/delivery_cycle_conformance.dart:1112 delivery cycle scenarios (postgres, runtime role) cadence, heartbeat and wakeups a trigger during a pass runs one more -- passed
+- event_sourcing/test/test_support/delivery_cycle_conformance.dart:1112 delivery cycle scenarios (sembast) cadence, heartbeat and wakeups a trigger during a pass runs one more -- passed
+- event_sourcing/test/test_support/delivery_cycle_conformance.dart:1147 delivery cycle scenarios (postgres) cadence, heartbeat and wakeups a trigger as the last pass finishes is not lost -- passed, skipped
+- event_sourcing/test/test_support/delivery_cycle_conformance.dart:1147 delivery cycle scenarios (postgres, runtime role) cadence, heartbeat and wakeups a trigger as the last pass finishes is not lost -- passed
+- event_sourcing/test/test_support/delivery_cycle_conformance.dart:1147 delivery cycle scenarios (sembast) cadence, heartbeat and wakeups a trigger as the last pass finishes is not lost -- passed
+- event_sourcing/test/test_support/delivery_cycle_conformance.dart:1190 delivery cycle scenarios (postgres) cadence, heartbeat and wakeups a halt request wakes the cycle -- passed, skipped
+- event_sourcing/test/test_support/delivery_cycle_conformance.dart:1190 delivery cycle scenarios (postgres, runtime role) cadence, heartbeat and wakeups a halt request wakes the cycle -- passed
+- event_sourcing/test/test_support/delivery_cycle_conformance.dart:1190 delivery cycle scenarios (sembast) cadence, heartbeat and wakeups a halt request wakes the cycle -- passed
+- event_sourcing/test/test_support/delivery_cycle_conformance.dart:1219 delivery cycle scenarios (postgres) cadence, heartbeat and wakeups the cadence delivers what another process appends -- passed, skipped
+- event_sourcing/test/test_support/delivery_cycle_conformance.dart:1219 delivery cycle scenarios (postgres, runtime role) cadence, heartbeat and wakeups the cadence delivers what another process appends -- passed
+- event_sourcing/test/test_support/delivery_cycle_conformance.dart:1219 delivery cycle scenarios (sembast) cadence, heartbeat and wakeups the cadence delivers what another process appends -- passed
+- event_sourcing/test/test_support/delivery_cycle_conformance.dart:1241 delivery cycle scenarios (postgres) cadence, heartbeat and wakeups each pass writes the heartbeat record -- passed, skipped
+- event_sourcing/test/test_support/delivery_cycle_conformance.dart:1241 delivery cycle scenarios (postgres, runtime role) cadence, heartbeat and wakeups each pass writes the heartbeat record -- passed
+- event_sourcing/test/test_support/delivery_cycle_conformance.dart:1241 delivery cycle scenarios (sembast) cadence, heartbeat and wakeups each pass writes the heartbeat record -- passed
+- event_sourcing/test/test_support/delivery_cycle_conformance.dart:1260 delivery cycle scenarios (postgres) cadence, heartbeat and wakeups a failed pass start writes no heartbeat -- passed, skipped
+- event_sourcing/test/test_support/delivery_cycle_conformance.dart:1260 delivery cycle scenarios (postgres, runtime role) cadence, heartbeat and wakeups a failed pass start writes no heartbeat -- passed
+- event_sourcing/test/test_support/delivery_cycle_conformance.dart:1260 delivery cycle scenarios (sembast) cadence, heartbeat and wakeups a failed pass start writes no heartbeat -- passed
 - event_sourcing/test/test_support/delivery_cycle_conformance.dart:923 delivery cycle scenarios (postgres) cadence, heartbeat and wakeups a throwing resolver on a cadence tick -- passed, skipped
 - event_sourcing/test/test_support/delivery_cycle_conformance.dart:923 delivery cycle scenarios (postgres, runtime role) cadence, heartbeat and wakeups a throwing resolver on a cadence tick -- passed
 - event_sourcing/test/test_support/delivery_cycle_conformance.dart:923 delivery cycle scenarios (sembast) cadence, heartbeat and wakeups a throwing resolver on a cadence tick -- passed
-- event_sourcing/test/web/drain_lock_web_test.dart:1089 across tabs the next pass delivers another tab's appends -- passed
+- event_sourcing/test/web/drain_lock_web_test.dart:1157 across tabs the next pass delivers another tab's appends -- passed
 
 **F**
 
@@ -2909,7 +2909,21 @@ Tests:
 
 - event_sourcing/test/testing/hooks_release_probe_test.dart:113 a compiled executable ignores installed seams -- passed
 - event_sourcing/test/testing/hooks_release_probe_test.dart:96 without assertions (dart run --no-enable-asserts) no seam fires -- passed
-- event_sourcing/test/web/drain_lock_web_test.dart:775 document visibility the visibility seam cannot make a hidden page visible -- passed
+- event_sourcing/test/web/drain_lock_web_test.dart:816 document visibility the visibility seam cannot make a hidden page visible -- passed
+
+**G**
+
+Code:
+
+- event_sourcing/lib/src/sync/sync_cycle.dart:293
+
+Tests:
+
+- event_sourcing/test/test_support/delivery_cycle_conformance.dart:1009 delivery cycle scenarios (postgres) cadence, heartbeat and wakeups holding the lock is reported from detection, not from standby -- passed, skipped
+- event_sourcing/test/test_support/delivery_cycle_conformance.dart:1009 delivery cycle scenarios (postgres, runtime role) cadence, heartbeat and wakeups holding the lock is reported from detection, not from standby -- passed
+- event_sourcing/test/test_support/delivery_cycle_conformance.dart:1009 delivery cycle scenarios (sembast) cadence, heartbeat and wakeups holding the lock is reported from detection, not from standby -- passed
+- event_sourcing/test/web/drain_lock_web_test.dart:338 visibility a cycle handing the lock over does not report holding it -- passed
+- event_sourcing/test/web/drain_lock_web_test.dart:903 a backend that can no longer take the lock a cycle stopped for good does not report holding the lock -- passed
 
 </details>
 
@@ -3268,7 +3282,7 @@ Tests:
 - event_sourcing/test/test_support/queue_registry_conformance.dart:1946 queue registry scenarios (sembast) fill transaction a live batch commits its item and position together -- passed
 - event_sourcing/test/test_support/transform_failure_conformance.dart:292 transform failure scenarios (postgres) a transform failure record another process wrote between the fill's reads and its commit wins over the fill's own pending record -- passed, skipped
 - event_sourcing/test/test_support/transform_failure_conformance.dart:292 transform failure scenarios (sembast) a transform failure record another process wrote between the fill's reads and its commit wins over the fill's own pending record -- passed
-- event_sourcing/test/web/drain_lock_web_test.dart:1106 across tabs the fill's compare-and-set sees another tab's end date -- passed
+- event_sourcing/test/web/drain_lock_web_test.dart:1174 across tabs the fill's compare-and-set sees another tab's end date -- passed
 - event_sourcing/test/web/stale_tab_web_test.dart:345 a replay while another tab appends -- passed
 
 **H**
@@ -3935,7 +3949,7 @@ Tests:
 - event_sourcing/test/test_support/operator_halt_conformance.dart:881 operator halt scenarios (postgres) honour an operator-halt wedge over a recorded refusal -- passed, skipped
 - event_sourcing/test/test_support/operator_halt_conformance.dart:881 operator halt scenarios (postgres, runtime role) honour an operator-halt wedge over a recorded refusal -- passed
 - event_sourcing/test/test_support/operator_halt_conformance.dart:881 operator halt scenarios (sembast) honour an operator-halt wedge over a recorded refusal -- passed
-- event_sourcing/test/web/drain_lock_web_test.dart:1052 across tabs a halt committed in another tab stops the send -- passed
+- event_sourcing/test/web/drain_lock_web_test.dart:1120 across tabs a halt committed in another tab stops the send -- passed
 
 **O**
 
@@ -8839,7 +8853,7 @@ Tests:
 - event_sourcing/test/test_support/operator_halt_conformance.dart:779 operator halt scenarios (postgres) honour a halt during a blocked send -- passed, skipped
 - event_sourcing/test/test_support/operator_halt_conformance.dart:779 operator halt scenarios (postgres, runtime role) honour a halt during a blocked send -- passed
 - event_sourcing/test/test_support/operator_halt_conformance.dart:779 operator halt scenarios (sembast) honour a halt during a blocked send -- passed
-- event_sourcing/test/web/drain_lock_web_test.dart:1052 across tabs a halt committed in another tab stops the send -- passed
+- event_sourcing/test/web/drain_lock_web_test.dart:1120 across tabs a halt committed in another tab stops the send -- passed
 
 **V**
 
@@ -8873,11 +8887,11 @@ Tests:
 - event_sourcing/test/test_support/reconfigure_conformance.dart:956 reconfigure scenarios (postgres) a destination registered only in another process -- passed, skipped
 - event_sourcing/test/test_support/reconfigure_conformance.dart:956 reconfigure scenarios (postgres, runtime role) a destination registered only in another process -- passed
 - event_sourcing/test/test_support/reconfigure_conformance.dart:956 reconfigure scenarios (sembast) a destination registered only in another process -- passed
+- event_sourcing/test/web/drain_lock_web_test.dart:1057 acquisition standby, then takeover when the other tab releases -- passed
 - event_sourcing/test/web/drain_lock_web_test.dart:154 exclusion one tab holds the drain lock, the other is refused -- passed
 - event_sourcing/test/web/drain_lock_web_test.dart:246 visibility a tab whose page becomes hidden hands the drain lock over -- passed
-- event_sourcing/test/web/drain_lock_web_test.dart:537 visibility a send that does not return bounds the hand-over -- passed
-- event_sourcing/test/web/drain_lock_web_test.dart:803 a backend that can no longer take the lock a drainer whose handle another opener compacted past stops, and another tab takes over -- passed
-- event_sourcing/test/web/drain_lock_web_test.dart:989 acquisition standby, then takeover when the other tab releases -- passed
+- event_sourcing/test/web/drain_lock_web_test.dart:578 visibility a send that does not return bounds the hand-over -- passed
+- event_sourcing/test/web/drain_lock_web_test.dart:844 a backend that can no longer take the lock a drainer whose handle another opener compacted past stops, and another tab takes over -- passed
 
 **W**
 
