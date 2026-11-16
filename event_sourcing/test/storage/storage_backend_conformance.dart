@@ -2017,8 +2017,8 @@ void _registerFifoTests(
     // Verifies: EVS-DEV-destination-key-hold/H
     // the deletion of one key's pending items behind a position removes
     //   exactly those items, returns them in queue order, and leaves other
-    //   keys' items, keyless items, items at or before the position and
-    //   other destinations' items in place.
+    //   keys' items, keyless items, the key's terminal items, items at or
+    //   before the position and other destinations' items in place.
     test("deletePendingRowsForKeyAfter deletes only that key's pending rows "
         'after the position', () async {
       if (!initializedOf()) return;
@@ -2057,6 +2057,20 @@ void _registerFifoTests(
         eventId: 'n',
         sequenceNumber: 5,
       );
+      // A terminal item of the key behind the position is never deleted.
+      final pendingSent = await enqueueSingle(
+        backend,
+        'primary',
+        eventId: 'ks',
+        sequenceNumber: 8,
+        blockKey: 'K',
+      );
+      await seedSentRowForTest(backend, 'primary', pendingSent.entryId);
+      final sentK = (await backend.readFifoRow(
+        'primary',
+        pendingSent.entryId,
+      ))!;
+      expect(sentK.finalStatus, FinalStatus.sent);
       final k2 = await enqueueSingle(
         backend,
         'primary',
@@ -2086,6 +2100,7 @@ void _registerFifoTests(
         head,
         other,
         keyless,
+        sentK,
       ]);
       expect(await backend.listFifoEntries('secondary'), [elsewhere]);
 
@@ -2112,7 +2127,66 @@ void _registerFifoTests(
         head,
         other,
         keyless,
+        sentK,
       ]);
+    });
+
+    // Verifies: EVS-DEV-destination-key-hold/H
+    // a matching pending item of the key behind the position that carries
+    //   attempts makes the deletion throw StateError with nothing deleted.
+    test('deletePendingRowsForKeyAfter refuses an item carrying attempts and '
+        'deletes nothing', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final head = await enqueueSingle(
+        backend,
+        'primary',
+        eventId: 'h',
+        sequenceNumber: 1,
+        blockKey: 'K',
+      );
+      await enqueueSingle(
+        backend,
+        'primary',
+        eventId: 'k1',
+        sequenceNumber: 2,
+        blockKey: 'K',
+      );
+      final attempted = await enqueueSingle(
+        backend,
+        'primary',
+        eventId: 'k2',
+        sequenceNumber: 3,
+        blockKey: 'K',
+      );
+      await backend.transaction(
+        (txn) => backend.appendAttemptTxn(
+          txn,
+          'primary',
+          attempted.entryId,
+          AttemptResult(
+            attemptedAt: DateTime.utc(2026, 4, 22),
+            outcome: 'transient',
+            errorMessage: 'unavailable',
+            httpStatus: 503,
+          ),
+        ),
+      );
+      final before = await backend.listFifoEntries('primary');
+      expect(before.last.attempts, hasLength(1));
+
+      await expectLater(
+        backend.transaction(
+          (txn) => backend.deletePendingRowsForKeyAfterTxn(
+            txn,
+            'primary',
+            'K',
+            head.sequenceInQueue,
+          ),
+        ),
+        throwsStateError,
+      );
+      expect(await backend.listFifoEntries('primary'), before);
     });
 
     // Verifies: EVS-DEV-destination-key-hold/I

@@ -20,6 +20,10 @@ destination is opened only by a build of 3.1 or later
   `system.destination_held`, `system.destination_hold_released` and
   `system.destination_hold_cleared` are declared
   (EVS-DEV-destination-key-hold).
+- `Destination` gains two members with defaults, `keyed` and
+  `blockKeyOf`. A class that writes `implements Destination` rather than
+  `extends Destination` inherits neither and must declare both (`keyed =>
+  false` and a `blockKeyOf` that returns null keep its behaviour).
 
 ## 0.7.3
 
