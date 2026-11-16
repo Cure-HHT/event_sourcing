@@ -761,10 +761,15 @@ void runReplayAdmissionScenarios({
         source: testFillSource,
         databaseId: store.databaseId,
         alreadyQueuedChannelWide: const <String>{},
+        keyLists: const <String, KeyList>{},
+        policy: SyncPolicy.defaults,
+        cadence: const Duration(seconds: 15),
         channel: channel,
       );
       expect(
-        admitted.map((i) => i.batch.map((e) => e.eventId)).expand((e) => e),
+        admitted.items
+            .map((i) => i.batch.map((e) => e.eventId))
+            .expand((e) => e),
         <String>[finding.eventId],
         reason:
             "EVS-DEV-destination-drain/X: the gap replay's own "
@@ -783,10 +788,13 @@ void runReplayAdmissionScenarios({
         source: testFillSource,
         databaseId: store.databaseId,
         alreadyQueuedChannelWide: <String>{finding.eventId},
+        keyLists: const <String, KeyList>{},
+        policy: SyncPolicy.defaults,
+        cadence: const Duration(seconds: 15),
         channel: channel,
       );
       expect(
-        deduped,
+        deduped.items,
         isEmpty,
         reason:
             'already covered by the currently queued items: not built '

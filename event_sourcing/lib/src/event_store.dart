@@ -74,6 +74,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:canonical_json_jcs/canonical_json_jcs.dart';
+import 'package:collection/collection.dart' show MapEquality;
 import 'package:crypto/crypto.dart';
 import 'package:event_sourcing/src/actions/action_context.dart';
 import 'package:event_sourcing/src/actions/action_registry.dart';
