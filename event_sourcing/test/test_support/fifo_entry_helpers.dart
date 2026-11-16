@@ -66,6 +66,8 @@ Future<FifoEntry> enqueueSingle(
   String wireFormat = 'json-v1',
   String? transformVersion = 'json-v1',
   int? resendsDeliveryNumber,
+  String? blockKey,
+  String? releasedHoldId,
 }) => backend.transaction(
   (txn) => backend.enqueueFifoTxn(
     txn,
@@ -77,6 +79,8 @@ Future<FifoEntry> enqueueSingle(
       transformVersion: transformVersion,
     ),
     resendsDeliveryNumber: resendsDeliveryNumber,
+    blockKey: blockKey,
+    releasedHoldId: releasedHoldId,
   ),
 );
 

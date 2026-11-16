@@ -64,6 +64,8 @@ class FifoEntry {
     this.transformFailed = false,
     this.transformFailures,
     this.resendsDeliveryNumber,
+    this.blockKey,
+    this.releasedHoldId,
   }) {
     // Explicit ArgumentError rather than assert so the invariant is
     // enforced in release builds too, not just debug.
@@ -228,6 +230,18 @@ class FifoEntry {
         'FifoEntry: "resends_delivery_number" must be an int when present',
       );
     }
+    final blockKey = json['block_key'];
+    if (blockKey != null && blockKey is! String) {
+      throw const FormatException(
+        'FifoEntry: "block_key" must be a String when present',
+      );
+    }
+    final releasedHoldId = json['released_hold_id'];
+    if (releasedHoldId != null && releasedHoldId is! String) {
+      throw const FormatException(
+        'FifoEntry: "released_hold_id" must be a String when present',
+      );
+    }
 
     final attempts = List<AttemptResult>.unmodifiable(
       attemptsRaw.map(
@@ -261,6 +275,8 @@ class FifoEntry {
       transformFailed: (transformFailedRaw as bool?) ?? false,
       transformFailures: transformFailures as int?,
       resendsDeliveryNumber: resendsDeliveryNumber as int?,
+      blockKey: blockKey as String?,
+      releasedHoldId: releasedHoldId as String?,
     );
   }
 
@@ -370,6 +386,24 @@ class FifoEntry {
   //   adoption can retire exactly those items.
   final int? resendsDeliveryNumber;
 
+  /// The block key of every event this item carries, which a keyed
+  /// destination computed when the item was enqueued; null for an item of a
+  /// destination that is not keyed, and for an item whose events' key could
+  /// not be told apart in the holds view. Set only at enqueue time and held
+  /// immutable thereafter.
+  // Implements: EVS-DEV-destination-key-hold/B+D
+  // a keyed destination's queue item stores its events' block key; an item
+  //   of a destination that is not keyed stores none.
+  final String? blockKey;
+
+  /// The hold id of the key list a release enqueued this item from; null
+  /// for an item no release enqueued. Set only at enqueue time and held
+  /// immutable thereafter.
+  // Implements: EVS-DEV-destination-key-hold/R+S
+  // a released item records the hold id it was released under; every other
+  //   item records none.
+  final String? releasedHoldId;
+
   /// Encode to snake_case JSON. Optional fields emit explicit null.
   Map<String, Object?> toJson() => <String, Object?>{
     'entry_id': entryId,
@@ -393,6 +427,8 @@ class FifoEntry {
     'transform_failed': transformFailed,
     'transform_failures': transformFailures,
     'resends_delivery_number': resendsDeliveryNumber,
+    'block_key': blockKey,
+    'released_hold_id': releasedHoldId,
   };
 
   @override
@@ -419,7 +455,9 @@ class FifoEntry {
           deliveryHash == other.deliveryHash &&
           transformFailed == other.transformFailed &&
           transformFailures == other.transformFailures &&
-          resendsDeliveryNumber == other.resendsDeliveryNumber;
+          resendsDeliveryNumber == other.resendsDeliveryNumber &&
+          blockKey == other.blockKey &&
+          releasedHoldId == other.releasedHoldId;
 
   @override
   int get hashCode => Object.hash(
@@ -441,6 +479,8 @@ class FifoEntry {
     transformFailed,
     transformFailures,
     resendsDeliveryNumber,
+    blockKey,
+    releasedHoldId,
   );
 
   /// Renders every field `==` compares. A conformance failure on whole-value
@@ -461,7 +501,8 @@ class FifoEntry {
       'deliveryNumber: $deliveryNumber, deliveryHash: $deliveryHash, '
       'transformFailed: $transformFailed, '
       'transformFailures: $transformFailures, '
-      'resendsDeliveryNumber: $resendsDeliveryNumber)';
+      'resendsDeliveryNumber: $resendsDeliveryNumber, '
+      'blockKey: $blockKey, releasedHoldId: $releasedHoldId)';
 }
 
 const DeepCollectionEquality _deepEquals = DeepCollectionEquality();

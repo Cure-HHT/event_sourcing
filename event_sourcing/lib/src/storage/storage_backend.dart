@@ -745,6 +745,15 @@ abstract class StorageBackend {
   /// (`EVS-DEV-delivery-resume/M`): the delivery number it resends, held
   /// immutable thereafter. Null (the default) for an ordinary item the
   /// fill enqueues.
+  /// [blockKey], when given, is the block key of every event in [batch],
+  /// stored on the row as `block_key`; null (the default) for an item with
+  /// no block key. [releasedHoldId], when given, is the hold id of the key
+  /// list a release enqueued the row from, stored as `released_hold_id`;
+  /// null (the default) for an item no release enqueued. Both are held
+  /// immutable thereafter.
+  // Implements: EVS-DEV-destination-key-hold/B+D+R+S
+  // the enqueue stores the item's block key and the hold id a release
+  //   enqueued it under, each null when not given.
   @internal
   Future<FifoEntry> enqueueFifoTxn(
     Transaction txn,
@@ -757,6 +766,8 @@ abstract class StorageBackend {
     String? wireFormat,
     String? transformVersion,
     int? resendsDeliveryNumber,
+    String? blockKey,
+    String? releasedHoldId,
   });
 
   /// Return the head row of [destinationId]'s FIFO — the first row in
@@ -1058,6 +1069,52 @@ abstract class StorageBackend {
   Future<void> clearTransformFailureRecordTxn(
     Transaction txn,
     String destinationId,
+  );
+
+  // -------- Key lists and release failure records --------
+
+  /// Read [destinationId]'s key lists inside [txn], keyed by block key; an
+  /// empty map when the destination holds no key.
+  ///
+  /// Persisted under `backend_state` key `keylists_<destinationId>`.
+  // Implements: EVS-DEV-destination-key-hold/H+L
+  // the key lists are kept per destination and per block key, read inside
+  //   the transaction that changes them.
+  @internal
+  Future<Map<String, KeyList>> readKeyListsTxn(
+    Transaction txn,
+    String destinationId,
+  );
+
+  /// Write [lists] as [destinationId]'s key lists inside [txn], replacing
+  /// every earlier one; an empty [lists] removes them all.
+  @internal
+  Future<void> writeKeyListsTxn(
+    Transaction txn,
+    String destinationId,
+    Map<String, KeyList> lists,
+  );
+
+  /// Read [destinationId]'s release failure records inside [txn], keyed by
+  /// block key; an empty map when no release is failing.
+  ///
+  /// Persisted under `backend_state` key `release_failures_<destinationId>`.
+  // Implements: EVS-DEV-destination-key-hold/W
+  // the release failure records are kept per destination and per block key.
+  @internal
+  Future<Map<String, ReleaseFailureRecord>> readReleaseFailuresTxn(
+    Transaction txn,
+    String destinationId,
+  );
+
+  /// Write [records] as [destinationId]'s release failure records inside
+  /// [txn], replacing every earlier one; an empty [records] removes them
+  /// all.
+  @internal
+  Future<void> writeReleaseFailuresTxn(
+    Transaction txn,
+    String destinationId,
+    Map<String, ReleaseFailureRecord> records,
   );
 
   // -------- Halt requests --------
@@ -1476,6 +1533,36 @@ abstract class StorageBackend {
     String destinationId,
     int afterSequenceInQueue,
   );
+
+  /// Delete inside [txn] every pending item of [destinationId] whose block
+  /// key is [key] and whose `sequence_in_queue` is strictly greater than
+  /// [afterSequenceInQueue], and return the deleted items in
+  /// `sequence_in_queue` order.
+  ///
+  /// A hold reads and removes the held key's items behind the head in its
+  /// own transaction, so their events join the key's list. Items of other
+  /// keys, items with no block key and terminal items are left untouched.
+  /// Implementations SHALL throw [StateError] and change nothing when a
+  /// matching item carries attempts: only the head is attempted, and an
+  /// item carrying attempts is never deleted.
+  // Implements: EVS-DEV-destination-key-hold/H
+  // the hold deletes the held key's pending items behind the head, in the
+  //   hold's transaction, and reads their events.
+  @internal
+  Future<List<FifoEntry>> deletePendingRowsForKeyAfterTxn(
+    Transaction txn,
+    String destinationId,
+    String key,
+    int afterSequenceInQueue,
+  );
+
+  /// Whether a pending item of [destinationId] carries no block key, read
+  /// inside [txn].
+  // Implements: EVS-DEV-destination-key-hold/I
+  // the read that tells the drainer whether a pending item carries no block
+  //   key, which makes a key-scoped refusal a wedge.
+  @internal
+  Future<bool> hasPendingKeylessRowTxn(Transaction txn, String destinationId);
 
   // -------- Reverse event scan --------
 

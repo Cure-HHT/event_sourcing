@@ -1972,6 +1972,199 @@ void _registerFifoTests(
       expect(head, equals(resend));
     });
 
+    // Verifies: EVS-DEV-destination-key-hold/B+D+R+S
+    // the enqueue stores the block key and the release hold id it is given
+    //   and reads them back; an item enqueued with neither reads both as
+    //   null.
+    test('enqueue stores block_key and released_hold_id', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final plain = await enqueueSingle(
+        backend,
+        'primary',
+        eventId: 'e1',
+        sequenceNumber: 1,
+      );
+      expect(plain.blockKey, isNull);
+      expect(plain.releasedHoldId, isNull);
+      final keyed = await enqueueSingle(
+        backend,
+        'primary',
+        eventId: 'e2',
+        sequenceNumber: 2,
+        blockKey: 'p-1',
+      );
+      final released = await enqueueSingle(
+        backend,
+        'primary',
+        eventId: 'e3',
+        sequenceNumber: 3,
+        blockKey: 'p-2',
+        releasedHoldId: 'hold-9',
+      );
+      expect(keyed.blockKey, 'p-1');
+      expect(keyed.releasedHoldId, isNull);
+      expect(released.blockKey, 'p-2');
+      expect(released.releasedHoldId, 'hold-9');
+      final rows = await backend.listFifoEntries('primary');
+      expect(rows, [plain, keyed, released]);
+      final inTxn = await backend.transaction(
+        (txn) => backend.listFifoEntriesTxn(txn, 'primary'),
+      );
+      expect(inTxn, [plain, keyed, released]);
+    });
+
+    // Verifies: EVS-DEV-destination-key-hold/H
+    // the deletion of one key's pending items behind a position removes
+    //   exactly those items, returns them in queue order, and leaves other
+    //   keys' items, keyless items, items at or before the position and
+    //   other destinations' items in place.
+    test("deletePendingRowsForKeyAfter deletes only that key's pending rows "
+        'after the position', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final before = await enqueueSingle(
+        backend,
+        'primary',
+        eventId: 'b',
+        sequenceNumber: 1,
+        blockKey: 'K',
+      );
+      final head = await enqueueSingle(
+        backend,
+        'primary',
+        eventId: 'h',
+        sequenceNumber: 2,
+        blockKey: 'K',
+      );
+      final k1 = await enqueueSingle(
+        backend,
+        'primary',
+        eventId: 'k1',
+        sequenceNumber: 3,
+        blockKey: 'K',
+      );
+      final other = await enqueueSingle(
+        backend,
+        'primary',
+        eventId: 'o',
+        sequenceNumber: 4,
+        blockKey: 'L',
+      );
+      final keyless = await enqueueSingle(
+        backend,
+        'primary',
+        eventId: 'n',
+        sequenceNumber: 5,
+      );
+      final k2 = await enqueueSingle(
+        backend,
+        'primary',
+        eventId: 'k2',
+        sequenceNumber: 6,
+        blockKey: 'K',
+      );
+      final elsewhere = await enqueueSingle(
+        backend,
+        'secondary',
+        eventId: 'k3',
+        sequenceNumber: 7,
+        blockKey: 'K',
+      );
+
+      final deleted = await backend.transaction(
+        (txn) => backend.deletePendingRowsForKeyAfterTxn(
+          txn,
+          'primary',
+          'K',
+          head.sequenceInQueue,
+        ),
+      );
+      expect(deleted, [k1, k2]);
+      expect(await backend.listFifoEntries('primary'), [
+        before,
+        head,
+        other,
+        keyless,
+      ]);
+      expect(await backend.listFifoEntries('secondary'), [elsewhere]);
+
+      final none = await backend.transaction(
+        (txn) => backend.deletePendingRowsForKeyAfterTxn(
+          txn,
+          'primary',
+          'K',
+          head.sequenceInQueue,
+        ),
+      );
+      expect(none, isEmpty);
+
+      // The deletion rolls back with its transaction.
+      await expectLater(
+        backend.transaction((txn) async {
+          await backend.deletePendingRowsForKeyAfterTxn(txn, 'primary', 'L', 0);
+          throw StateError('simulated failure');
+        }),
+        throwsStateError,
+      );
+      expect(await backend.listFifoEntries('primary'), [
+        before,
+        head,
+        other,
+        keyless,
+      ]);
+    });
+
+    // Verifies: EVS-DEV-destination-key-hold/I
+    // the keyless-item read is true exactly while a pending item of the
+    //   destination carries no block key; terminal items and other
+    //   destinations' items do not count.
+    test('hasPendingKeylessRow', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      Future<bool> read(String dest) => backend.transaction(
+        (txn) => backend.hasPendingKeylessRowTxn(txn, dest),
+      );
+
+      expect(await read('primary'), isFalse);
+      await enqueueSingle(
+        backend,
+        'primary',
+        eventId: 'k',
+        sequenceNumber: 1,
+        blockKey: 'K',
+      );
+      expect(await read('primary'), isFalse);
+
+      final keyless = await enqueueSingle(
+        backend,
+        'primary',
+        eventId: 'n',
+        sequenceNumber: 2,
+      );
+      expect(await read('primary'), isTrue);
+      expect(await read('secondary'), isFalse);
+
+      // A keyless item that is no longer pending does not count.
+      await backend.transaction(
+        (txn) => backend.deleteFifoEntryTxn(txn, 'primary', keyless.entryId),
+      );
+      expect(await read('primary'), isFalse);
+      final wedged = await enqueueSingle(
+        backend,
+        'secondary',
+        eventId: 'w',
+        sequenceNumber: 3,
+      );
+      await setStatusForTest(
+        backend,
+        'secondary',
+        wedged.entryId,
+        FinalStatus.wedged,
+      );
+      expect(await read('secondary'), isFalse);
+    });
+
     test('enqueueFifoTxn rejects an empty batch with ArgumentError', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
@@ -3882,6 +4075,125 @@ void _registerQueueRecordTests(
         expect(await read('dest'), isNull);
       },
     );
+
+    // Verifies: EVS-DEV-destination-key-hold/H+L+M
+    // the key lists round-trip per destination and per key, each list's
+    //   events in sequence order and each event once, whatever order and
+    //   repetition they were written with; they are overwritten, roll back
+    //   with their transaction and are removed by writing none.
+    test('keyLists round-trip sorted and deduplicated', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final list = KeyList(
+        holdId: 'hold-1',
+        state: KeyListState.held,
+        cause: 'permanent_refusal',
+        events: const [
+          KeyListEvent(eventId: 'e30', sequenceNumber: 30),
+          KeyListEvent(eventId: 'e10', sequenceNumber: 10),
+          KeyListEvent(eventId: 'e10', sequenceNumber: 10),
+        ],
+      );
+      expect(list.events.map((e) => e.sequenceNumber), [10, 30]);
+      final releasing = KeyList(
+        holdId: 'hold-2',
+        state: KeyListState.releasing,
+        cause: 'transform_failed',
+        events: const [KeyListEvent(eventId: 'e5', sequenceNumber: 5)],
+      );
+      Future<Map<String, KeyList>> read(String dest) =>
+          backend.transaction((txn) => backend.readKeyListsTxn(txn, dest));
+
+      expect(await read('dest'), isEmpty);
+      final sameTxn = await backend.transaction((txn) async {
+        await backend.writeKeyListsTxn(txn, 'dest', {'K': list});
+        return backend.readKeyListsTxn(txn, 'dest');
+      });
+      expect(sameTxn, {'K': list});
+      final stored = await read('dest');
+      expect(stored, {'K': list});
+      expect(stored['K']!.events.map((e) => e.sequenceNumber), [10, 30]);
+      expect(stored['K']!.events.map((e) => e.eventId), ['e10', 'e30']);
+      expect(await read('other'), isEmpty);
+
+      await backend.transaction(
+        (txn) => backend.writeKeyListsTxn(txn, 'dest', {
+          'K': list.withInserted(
+            const KeyListEvent(eventId: 'e20', sequenceNumber: 20),
+          ),
+          'L': releasing,
+        }),
+      );
+      final both = await read('dest');
+      expect(both.keys.toSet(), {'K', 'L'});
+      expect(both['K']!.events.map((e) => e.sequenceNumber), [10, 20, 30]);
+      expect(both['L'], releasing);
+
+      await expectLater(
+        backend.transaction((txn) async {
+          await backend.writeKeyListsTxn(txn, 'dest', const {});
+          throw StateError('simulated failure');
+        }),
+        throwsStateError,
+      );
+      expect((await read('dest')).keys.toSet(), {'K', 'L'});
+
+      await backend.transaction(
+        (txn) => backend.writeKeyListsTxn(txn, 'dest', const {}),
+      );
+      expect(await read('dest'), isEmpty);
+    });
+
+    // Verifies: EVS-DEV-destination-key-hold/W
+    // the release failure records round-trip per destination and per key,
+    //   are overwritten, roll back with their transaction and are removed by
+    //   writing none.
+    test('release failures write, overwrite, rollback and clear', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final first = ReleaseFailureRecord(
+        failures: 1,
+        failedAt: [DateTime.utc(2026, 1, 1)],
+        lastEventId: 'e1',
+      );
+      final second = ReleaseFailureRecord(
+        failures: 2,
+        failedAt: [DateTime.utc(2026, 1, 1), DateTime.utc(2026, 1, 1, 0, 1)],
+      );
+      Future<Map<String, ReleaseFailureRecord>> read(String dest) => backend
+          .transaction((txn) => backend.readReleaseFailuresTxn(txn, dest));
+
+      expect(await read('dest'), isEmpty);
+      final sameTxn = await backend.transaction((txn) async {
+        await backend.writeReleaseFailuresTxn(txn, 'dest', {'K': first});
+        return backend.readReleaseFailuresTxn(txn, 'dest');
+      });
+      expect(sameTxn, {'K': first});
+      expect(await read('dest'), {'K': first});
+      expect(await read('other'), isEmpty);
+
+      await backend.transaction(
+        (txn) => backend.writeReleaseFailuresTxn(txn, 'dest', {
+          'K': second,
+          'L': first,
+        }),
+      );
+      expect(await read('dest'), {'K': second, 'L': first});
+
+      await expectLater(
+        backend.transaction((txn) async {
+          await backend.writeReleaseFailuresTxn(txn, 'dest', {'K': first});
+          throw StateError('simulated failure');
+        }),
+        throwsStateError,
+      );
+      expect(await read('dest'), {'K': second, 'L': first});
+
+      await backend.transaction(
+        (txn) => backend.writeReleaseFailuresTxn(txn, 'dest', const {}),
+      );
+      expect(await read('dest'), isEmpty);
+    });
 
     // Verifies: EVS-DEV-destination-drain/N
     // the halt request round-trips every

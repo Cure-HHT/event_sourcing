@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.8.0
+
+Data: data format 3.1, a minor step: keyed destinations. Postgres schema
+version 10 adds the queue item's block key and release hold id and raises
+the minimum compatible schema version to 10, so deploying it is
+stop-then-start. A persisted Sembast database that holds a keyed
+destination is opened only by a build of 3.1 or later
+(EVS-DEV-version-compatibility/C).
+
+### Destinations
+
+- A destination may declare itself keyed (`Destination.keyed`,
+  `Destination.blockKeyOf`), and `SendPermanent.scope` states whether a
+  permanent failure concerns the destination or only the refused item's
+  key. The queue item records its block key and the hold id a release
+  enqueued it under, and the backends keep per-key key lists and release
+  failure records beside the queue. The reserved entry types
+  `system.destination_held`, `system.destination_hold_released` and
+  `system.destination_hold_cleared` are declared
+  (EVS-DEV-destination-key-hold).
+
 ## 0.7.3
 
 Data: data format 3.0, unchanged; nothing to migrate.

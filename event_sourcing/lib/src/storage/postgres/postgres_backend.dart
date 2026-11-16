@@ -2446,6 +2446,8 @@ class PostgresBackend extends StorageBackend {
     String? wireFormat,
     String? transformVersion,
     int? resendsDeliveryNumber,
+    String? blockKey,
+    String? releasedHoldId,
   }) async {
     if (batch.isEmpty) {
       throw ArgumentError.value(
@@ -2572,7 +2574,7 @@ class PostgresBackend extends StorageBackend {
           attempts, final_status, sent_at,
           wire_payload, envelope_metadata,
           transform_failed, transform_failures,
-          resends_delivery_number
+          resends_delivery_number, block_key, released_hold_id
         ) VALUES (
           @dest, @seq, @entryId,
           @eventIds:jsonb, @firstSeq, @lastSeq,
@@ -2580,7 +2582,7 @@ class PostgresBackend extends StorageBackend {
           '[]'::jsonb, NULL, NULL,
           @wirePayload:jsonb, @envelope:jsonb,
           @transformFailed, @transformFailures,
-          @resendsDeliveryNumber
+          @resendsDeliveryNumber, @blockKey, @releasedHoldId
         )
       '''),
       parameters: {
@@ -2598,6 +2600,8 @@ class PostgresBackend extends StorageBackend {
         'transformFailed': transformFailed,
         'transformFailures': transformFailed ? transformFailures : null,
         'resendsDeliveryNumber': resendsDeliveryNumber,
+        'blockKey': blockKey,
+        'releasedHoldId': releasedHoldId,
       },
     );
 
@@ -2619,6 +2623,8 @@ class PostgresBackend extends StorageBackend {
       transformFailed: transformFailed,
       transformFailures: transformFailed ? transformFailures : null,
       resendsDeliveryNumber: resendsDeliveryNumber,
+      blockKey: blockKey,
+      releasedHoldId: releasedHoldId,
     );
   }
 
@@ -3082,6 +3088,80 @@ class PostgresBackend extends StorageBackend {
     );
   }
 
+  // The held key's pending items behind the head are read and checked for
+  // attempts before the DELETE, so a matching item carrying attempts raises
+  // StateError with nothing deleted, as on Sembast, rather than the guard's
+  // refusal.
+  @override
+  @internal
+  Future<List<FifoEntry>> deletePendingRowsForKeyAfterTxn(
+    Transaction txn,
+    String destinationId,
+    String key,
+    int afterSequenceInQueue,
+  ) async {
+    final session = _asPgTxn(txn)._session;
+    final selected = await session.execute(
+      Sql.named('''
+        SELECT * FROM fifo_entries
+        WHERE destination_id = @dest
+          AND block_key = @key
+          AND sequence_in_queue > @afterSeq
+          AND final_status IS NULL
+        ORDER BY sequence_in_queue ASC
+        FOR UPDATE
+      '''),
+      parameters: {
+        'dest': destinationId,
+        'key': key,
+        'afterSeq': afterSequenceInQueue,
+      },
+    );
+    final entries = selected.map(_fifoEntryFromRow).toList(growable: false);
+    for (final entry in entries) {
+      if (entry.attempts.isNotEmpty) {
+        throw StateError(
+          'deletePendingRowsForKeyAfterTxn($destinationId, $key): item '
+          '${entry.entryId} carries attempts; an item carrying attempts is '
+          'never deleted.',
+        );
+      }
+    }
+    if (entries.isEmpty) return entries;
+    await session.execute(
+      Sql.named('''
+        DELETE FROM fifo_entries
+        WHERE destination_id = @dest
+          AND entry_id = ANY(@ids::text[])
+      '''),
+      parameters: {
+        'dest': destinationId,
+        'ids': [for (final e in entries) e.entryId],
+      },
+    );
+    return entries;
+  }
+
+  @override
+  @internal
+  Future<bool> hasPendingKeylessRowTxn(
+    Transaction txn,
+    String destinationId,
+  ) async {
+    final result = await _asPgTxn(txn)._session.execute(
+      Sql.named('''
+        SELECT EXISTS (
+          SELECT 1 FROM fifo_entries
+          WHERE destination_id = @dest
+            AND final_status IS NULL
+            AND block_key IS NULL
+        )
+      '''),
+      parameters: {'dest': destinationId},
+    );
+    return result.first[0]! as bool;
+  }
+
   // Implements: EVS-DEV-destination-drain/A
   // retire a deleted destination's queue:
   //   refuse a pending head; tombstone a wedged head; delete the pending rows
@@ -3208,6 +3288,74 @@ class PostgresBackend extends StorageBackend {
     Transaction txn,
     String destinationId,
   ) => _deleteStateTxn(txn, 'transform_failure_$destinationId');
+
+  // -------- Key lists and release failure records --------
+
+  /// The per-key map stored under [key] inside [txn], each value decoded by
+  /// [decode]; an empty map when none is stored.
+  Future<Map<String, T>> _readKeyedStateTxn<T>(
+    Transaction txn,
+    String key,
+    T Function(Map<String, Object?> json) decode,
+  ) async {
+    final value = await _readStateTxn(txn, key);
+    return <String, T>{
+      for (final MapEntry(key: k, value: v) in _asJsonMap(value).entries)
+        k: decode(_asJsonMap(v)),
+    };
+  }
+
+  /// Store [encoded] under [key] inside [txn], or remove the row when it is
+  /// empty.
+  Future<void> _writeKeyedStateTxn(
+    Transaction txn,
+    String key,
+    Map<String, Map<String, Object?>> encoded,
+  ) => encoded.isEmpty
+      ? _deleteStateTxn(txn, key)
+      : _writeStateTxn(txn, key, encoded);
+
+  @override
+  @internal
+  Future<Map<String, KeyList>> readKeyListsTxn(
+    Transaction txn,
+    String destinationId,
+  ) => _readKeyedStateTxn(txn, 'keylists_$destinationId', KeyList.fromJson);
+
+  @override
+  @internal
+  Future<void> writeKeyListsTxn(
+    Transaction txn,
+    String destinationId,
+    Map<String, KeyList> lists,
+  ) => _writeKeyedStateTxn(
+    txn,
+    'keylists_$destinationId',
+    lists.map((k, v) => MapEntry(k, v.toJson())),
+  );
+
+  @override
+  @internal
+  Future<Map<String, ReleaseFailureRecord>> readReleaseFailuresTxn(
+    Transaction txn,
+    String destinationId,
+  ) => _readKeyedStateTxn(
+    txn,
+    'release_failures_$destinationId',
+    ReleaseFailureRecord.fromJson,
+  );
+
+  @override
+  @internal
+  Future<void> writeReleaseFailuresTxn(
+    Transaction txn,
+    String destinationId,
+    Map<String, ReleaseFailureRecord> records,
+  ) => _writeKeyedStateTxn(
+    txn,
+    'release_failures_$destinationId',
+    records.map((k, v) => MapEntry(k, v.toJson())),
+  );
 
   // -------- Drain lock and drain records --------
 
@@ -4543,6 +4691,8 @@ class PostgresBackend extends StorageBackend {
       transformFailed: (m['transform_failed'] as bool?) ?? false,
       transformFailures: m['transform_failures'] as int?,
       resendsDeliveryNumber: m['resends_delivery_number'] as int?,
+      blockKey: m['block_key'] as String?,
+      releasedHoldId: m['released_hold_id'] as String?,
     );
   }
 

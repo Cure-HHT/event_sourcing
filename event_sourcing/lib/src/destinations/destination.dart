@@ -106,6 +106,28 @@ abstract class Destination {
   //   outcomes.
   ChannelPull? get channelPull => null;
 
+  /// Whether this destination names, for each event, the subject whose
+  /// events must stay in order (its block key, [blockKeyOf]). A keyed
+  /// destination's delivery implementation may report a permanent failure
+  /// scoped to the refused item's key (`SendPermanent.scope`), on which the
+  /// library holds that key's events back and keeps delivering every other
+  /// key's. When `false` (the default) every queue item carries no block key
+  /// and the destination behaves as every destination did before keys.
+  // Implements: EVS-PRD-destination-key-hold/A
+  // a destination declares whether it names a key for each event it
+  //   queues; one that does not behaves as before keys.
+  bool get keyed => false;
+
+  /// The block key of [event] on a keyed destination: the subject whose
+  /// events must reach the receiver in order. The library evaluates it
+  /// beside [transform], outside any transaction, and treats a throw as a
+  /// failure of the transform on the event. Null for an event with no key.
+  /// A destination that is not [keyed] keeps the default, which returns
+  /// null.
+  // Implements: EVS-PRD-destination-key-hold/A
+  // a keyed destination declares the key of each event it queues.
+  Future<String?> blockKeyOf(StoredEvent event) async => null;
+
   /// Destination-owned batching rule. Invoked by `fillBatch` once per
   /// candidate event under consideration: returning `true` adds
   /// [candidate] to [currentBatch]; returning `false` ends the current

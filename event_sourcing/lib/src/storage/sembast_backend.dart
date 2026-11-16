@@ -1941,6 +1941,89 @@ class SembastBackend extends StorageBackend {
         .delete(t._sembastTxn);
   }
 
+  // -------- Key lists and release failure records --------
+
+  static String _keyListsKey(String destinationId) => 'keylists_$destinationId';
+
+  static String _releaseFailuresKey(String destinationId) =>
+      'release_failures_$destinationId';
+
+  /// The per-key map stored under [key] inside [t], each value decoded by
+  /// [decode]; an empty map when none is stored.
+  Future<Map<String, T>> _readKeyedStateTxn<T>(
+    _SembastTxn t,
+    String key,
+    T Function(Map<String, Object?> json) decode,
+  ) async {
+    final value = await _backendStateStore.record(key).get(t._sembastTxn);
+    if (value == null) return <String, T>{};
+    return <String, T>{
+      for (final MapEntry(key: k, value: v) in (value as Map).entries)
+        k as String: decode(Map<String, Object?>.from(v as Map)),
+    };
+  }
+
+  /// Store [encoded] under [key] inside [t], or remove the record when it
+  /// is empty.
+  Future<void> _writeKeyedStateTxn(
+    _SembastTxn t,
+    String key,
+    Map<String, Map<String, Object?>> encoded,
+  ) async {
+    final record = _backendStateStore.record(key);
+    if (encoded.isEmpty) {
+      await record.delete(t._sembastTxn);
+    } else {
+      await record.put(t._sembastTxn, encoded);
+    }
+  }
+
+  @override
+  @internal
+  Future<Map<String, KeyList>> readKeyListsTxn(
+    Transaction txn,
+    String destinationId,
+  ) => _readKeyedStateTxn(
+    _requireValidTxn(txn),
+    _keyListsKey(destinationId),
+    KeyList.fromJson,
+  );
+
+  @override
+  @internal
+  Future<void> writeKeyListsTxn(
+    Transaction txn,
+    String destinationId,
+    Map<String, KeyList> lists,
+  ) => _writeKeyedStateTxn(
+    _requireValidTxn(txn),
+    _keyListsKey(destinationId),
+    lists.map((k, v) => MapEntry(k, v.toJson())),
+  );
+
+  @override
+  @internal
+  Future<Map<String, ReleaseFailureRecord>> readReleaseFailuresTxn(
+    Transaction txn,
+    String destinationId,
+  ) => _readKeyedStateTxn(
+    _requireValidTxn(txn),
+    _releaseFailuresKey(destinationId),
+    ReleaseFailureRecord.fromJson,
+  );
+
+  @override
+  @internal
+  Future<void> writeReleaseFailuresTxn(
+    Transaction txn,
+    String destinationId,
+    Map<String, ReleaseFailureRecord> records,
+  ) => _writeKeyedStateTxn(
+    _requireValidTxn(txn),
+    _releaseFailuresKey(destinationId),
+    records.map((k, v) => MapEntry(k, v.toJson())),
+  );
+
   // -------- Halt requests --------
 
   static String _haltRequestKey(String destinationId) =>
@@ -2893,6 +2976,8 @@ class SembastBackend extends StorageBackend {
     String? wireFormat,
     String? transformVersion,
     int? resendsDeliveryNumber,
+    String? blockKey,
+    String? releasedHoldId,
   }) async {
     if (batch.isEmpty) {
       throw ArgumentError.value(
@@ -3028,6 +3113,8 @@ class SembastBackend extends StorageBackend {
       transformFailed: transformFailed,
       transformFailures: transformFailed ? transformFailures : null,
       resendsDeliveryNumber: resendsDeliveryNumber,
+      blockKey: blockKey,
+      releasedHoldId: releasedHoldId,
     );
     await store.record(assigned).put(t._sembastTxn, entry.toJson());
     await _registerFifoDestinationSembast(t._sembastTxn, destinationId);
@@ -3551,6 +3638,65 @@ class SembastBackend extends StorageBackend {
       deletedCount: matching.length,
       minFirstSeq: minFirstSeq,
     );
+  }
+
+  @override
+  @internal
+  Future<List<FifoEntry>> deletePendingRowsForKeyAfterTxn(
+    Transaction txn,
+    String destinationId,
+    String key,
+    int afterSequenceInQueue,
+  ) async {
+    final t = _requireValidTxn(txn);
+    final store = _fifoStore(destinationId);
+    final matching = await store.find(
+      t._sembastTxn,
+      finder: Finder(
+        filter: Filter.and([
+          Filter.isNull('final_status'),
+          Filter.equals('block_key', key),
+          Filter.greaterThan('sequence_in_queue', afterSequenceInQueue),
+        ]),
+        sortOrders: [SortOrder('sequence_in_queue')],
+      ),
+    );
+    final entries = <FifoEntry>[
+      for (final record in matching)
+        FifoEntry.fromJson(Map<String, Object?>.from(record.value)),
+    ];
+    for (final entry in entries) {
+      if (entry.attempts.isNotEmpty) {
+        throw StateError(
+          'deletePendingRowsForKeyAfterTxn($destinationId, $key): item '
+          '${entry.entryId} carries attempts; an item carrying attempts is '
+          'never deleted.',
+        );
+      }
+    }
+    if (matching.isEmpty) return entries;
+    await store.records(matching.map((r) => r.key)).delete(t._sembastTxn);
+    t._fifoChanged.add(destinationId);
+    return entries;
+  }
+
+  @override
+  @internal
+  Future<bool> hasPendingKeylessRowTxn(
+    Transaction txn,
+    String destinationId,
+  ) async {
+    final t = _requireValidTxn(txn);
+    final record = await _fifoStore(destinationId).findFirst(
+      t._sembastTxn,
+      finder: Finder(
+        filter: Filter.and([
+          Filter.isNull('final_status'),
+          Filter.isNull('block_key'),
+        ]),
+      ),
+    );
+    return record != null;
   }
 
   // -------- Event lookup by event_id --------

@@ -1,3 +1,5 @@
+import 'package:event_sourcing/src/storage/send_result.dart';
+
 /// One historical send attempt for a FifoEntry.
 ///
 /// Attempts accumulate on the entry across the drain loop's retries; they
@@ -17,6 +19,7 @@ class AttemptResult {
     this.httpStatus,
     this.deliveryNumber,
     this.deliveryHash,
+    this.scope,
   });
 
   /// Decode from snake_case JSON; throws [FormatException] on missing
@@ -58,6 +61,19 @@ class AttemptResult {
         'AttemptResult: "delivery_hash" must be a String when present',
       );
     }
+    final scopeRaw = json['scope'];
+    if (scopeRaw != null && scopeRaw is! String) {
+      throw const FormatException(
+        'AttemptResult: "scope" must be a String when present',
+      );
+    }
+    WedgeScope? scope;
+    if (scopeRaw != null) {
+      scope = WedgeScope.values.asNameMap()[scopeRaw];
+      if (scope == null) {
+        throw FormatException('AttemptResult: unknown "scope" $scopeRaw');
+      }
+    }
     return AttemptResult(
       attemptedAt: DateTime.parse(attemptedAtRaw),
       outcome: outcome,
@@ -65,6 +81,7 @@ class AttemptResult {
       httpStatus: httpStatus as int?,
       deliveryNumber: deliveryNumber as int?,
       deliveryHash: deliveryHash as String?,
+      scope: scope,
     );
   }
 
@@ -92,9 +109,17 @@ class AttemptResult {
   /// channel; null for a destination that is no channel.
   final String? deliveryHash;
 
+  /// What the permanent failure the attempt reported concerns, for an
+  /// attempt whose outcome is `"permanent"`; null for every other outcome.
+  // Implements: EVS-DEV-destination-key-hold/J
+  // the attempt records whether its permanent failure was scoped to the
+  //   item's block key.
+  final WedgeScope? scope;
+
   /// Encode to snake_case JSON. `error_message` and `http_status` are
   /// emitted with explicit null; `delivery_number` and `delivery_hash` are
-  /// emitted only for an attempt that sent a delivery on a channel.
+  /// emitted only for an attempt that sent a delivery on a channel, and
+  /// `scope` only for an attempt that reported a permanent failure.
   Map<String, Object?> toJson() => <String, Object?>{
     'attempted_at': attemptedAt.toIso8601String(),
     'outcome': outcome,
@@ -102,6 +127,7 @@ class AttemptResult {
     'http_status': httpStatus,
     if (deliveryNumber != null) 'delivery_number': deliveryNumber,
     if (deliveryHash != null) 'delivery_hash': deliveryHash,
+    if (scope != null) 'scope': scope!.name,
   };
 
   @override
@@ -113,7 +139,8 @@ class AttemptResult {
           errorMessage == other.errorMessage &&
           httpStatus == other.httpStatus &&
           deliveryNumber == other.deliveryNumber &&
-          deliveryHash == other.deliveryHash;
+          deliveryHash == other.deliveryHash &&
+          scope == other.scope;
 
   @override
   int get hashCode => Object.hash(
@@ -123,6 +150,7 @@ class AttemptResult {
     httpStatus,
     deliveryNumber,
     deliveryHash,
+    scope,
   );
 
   @override
@@ -130,5 +158,5 @@ class AttemptResult {
       'AttemptResult(attemptedAt: ${attemptedAt.toIso8601String()}, '
       'outcome: $outcome, errorMessage: $errorMessage, '
       'httpStatus: $httpStatus, deliveryNumber: $deliveryNumber, '
-      'deliveryHash: $deliveryHash)';
+      'deliveryHash: $deliveryHash, scope: ${scope?.name})';
 }

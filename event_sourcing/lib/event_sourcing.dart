@@ -397,6 +397,12 @@ export 'src/security/system_entry_types.dart'
         kDestinationHaltCancelledEventType,
         kDestinationHaltRequestedEntryType,
         kDestinationHaltRequestedEventType,
+        kDestinationHeldEntryType,
+        kDestinationHeldEventType,
+        kDestinationHoldClearedEntryType,
+        kDestinationHoldClearedEventType,
+        kDestinationHoldReleasedEntryType,
+        kDestinationHoldReleasedEventType,
         kDestinationRegisteredEntryType,
         kDestinationRegisteredEventType,
         kDestinationSenderSucceededEntryType,
@@ -466,8 +472,12 @@ export 'src/storage/initiator.dart'
 export 'src/storage/queue_records.dart'
     show
         HaltRequest,
+        KeyList,
+        KeyListEvent,
+        KeyListState,
         QueueRetirement,
         RegistryCheck,
+        ReleaseFailureRecord,
         ReplayRequest,
         SendFence,
         SenderChannelRecord,
@@ -483,7 +493,8 @@ export 'src/storage/send_result.dart'
         SendAnswered,
         SendTransient,
         SendPermanent,
-        SendNotAttempted;
+        SendNotAttempted,
+        WedgeScope;
 export 'src/storage/source.dart' show Source;
 export 'src/storage/storage_backend.dart' show StorageBackend;
 export 'src/storage/storage_description.dart'

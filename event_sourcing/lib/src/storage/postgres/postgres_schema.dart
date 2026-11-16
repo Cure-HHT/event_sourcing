@@ -15,7 +15,10 @@
 //   and raises the minimum to itself; version 8 adds
 //   `fifo_entries.resends_delivery_number`, rewrites the guard to hold it
 //   immutable, and raises the minimum to itself; version 9 adds the index
-//   on the events' entry type and position and keeps the minimum.
+//   on the events' entry type and position and keeps the minimum; version
+//   10 adds `fifo_entries.block_key` and `fifo_entries.released_hold_id`,
+//   rewrites the guard to hold both immutable, and raises the minimum to
+//   itself.
 // Implements: EVS-DEV-chain-verification/A
 // the chain lookups on Postgres: columns of the events table holding the
 //   originating database, sealed hash and origin position each stored copy
@@ -26,7 +29,12 @@
 //   in which provisioning records the declared runtime and lock roles.
 // Implements: EVS-DEV-destination-drain/S
 // the queue table's status check and the `fifo_entries_guard` triggers,
-//   created by provisioning with the table they guard.
+//   created by provisioning with the table they guard; the guard holds a
+//   queue item's block key and release hold id unchanged.
+// Implements: EVS-DEV-version-compatibility/C
+// schema version 10 raises the minimum compatible schema version to
+//   itself, so a build before keyed destinations refuses a Postgres
+//   database this build provisioned.
 
 import 'package:event_sourcing/src/security/system_entry_types.dart'
     show kSecurityFindingEntryType;
@@ -43,13 +51,13 @@ import 'package:meta/meta.dart' show internal;
 /// and keeps [postgresMinCompatibleSchemaVersion]; a data-format major is
 /// provisioned only after every instance of the old major has stopped,
 /// which the incompatible-generation guard enforces.
-const int postgresSchemaVersion = 9;
+const int postgresSchemaVersion = 10;
 
 /// The minimum compatible schema version this build records when it
 /// provisions: the last migration step's `minCompatibleVersion`. A build
 /// whose [postgresSchemaVersion] is below the minimum stored in a database
 /// refuses to open it.
-const int postgresMinCompatibleSchemaVersion = 8;
+const int postgresMinCompatibleSchemaVersion = 10;
 
 /// The ordered migration steps of this build. Step `n` brings a schema at
 /// the previous step's version to its `toVersion`.
@@ -165,6 +173,15 @@ const List<PostgresMigrationStep> postgresMigrations = <PostgresMigrationStep>[
     toVersion: 9,
     minCompatibleVersion: 8,
     ddl: <String>[_eventsEntryTypeSeqIdx],
+  ),
+  // A build before this step has no block_key/released_hold_id columns: it
+  // would enqueue a held key's events and deliver them out of order, and
+  // its guard does not hold the columns immutable, so the step raises the
+  // minimum.
+  PostgresMigrationStep(
+    toVersion: 10,
+    minCompatibleVersion: 10,
+    ddl: <String>[_fifoEntriesKeyHoldColumns, _fifoEntriesGuardFunction],
   ),
 ];
 
@@ -434,6 +451,17 @@ ALTER TABLE fifo_entries
   ADD COLUMN IF NOT EXISTS resends_delivery_number BIGINT
 ''';
 
+// The block key a keyed destination's fill stores on a queue item
+// (EVS-DEV-destination-key-hold/B), and the hold id of the key list a
+// release enqueued it from (EVS-DEV-destination-key-hold/R); each null when
+// absent. Set only by the insert, held immutable by the guard like every
+// other column the item is enqueued with.
+const String _fifoEntriesKeyHoldColumns = '''
+ALTER TABLE fifo_entries
+  ADD COLUMN IF NOT EXISTS block_key        TEXT,
+  ADD COLUMN IF NOT EXISTS released_hold_id TEXT
+''';
+
 // The retained-delivery read: the sent item at a number under a
 // generation, the latest first.
 const String _fifoEntriesDeliveryIdx = '''
@@ -545,6 +573,8 @@ BEGIN
      OR NEW.transform_failed IS DISTINCT FROM OLD.transform_failed
      OR NEW.transform_failures IS DISTINCT FROM OLD.transform_failures
      OR NEW.resends_delivery_number IS DISTINCT FROM OLD.resends_delivery_number
+     OR NEW.block_key IS DISTINCT FROM OLD.block_key
+     OR NEW.released_hold_id IS DISTINCT FROM OLD.released_hold_id
      OR NEW.enqueued_at IS DISTINCT FROM OLD.enqueued_at THEN
     RAISE EXCEPTION 'fifo_entries_guard: queue item % changes a column it was enqueued with',
       OLD.entry_id USING ERRCODE = 'check_violation';

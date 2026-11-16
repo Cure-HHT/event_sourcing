@@ -12,6 +12,9 @@ import 'package:event_sourcing/src/ingest/delivery_channel.dart';
 import 'package:event_sourcing/src/security/system_entry_types.dart'
     show
         kDestinationChannelResumedEntryType,
+        kDestinationHeldEntryType,
+        kDestinationHoldClearedEntryType,
+        kDestinationHoldReleasedEntryType,
         kDestinationSenderSucceededEntryType;
 import 'package:event_sourcing/src/storage/drain_lock.dart';
 import 'package:event_sourcing/src/storage/drain_records.dart';
@@ -440,12 +443,16 @@ Future<void> fillWithScheduleForTest(
   );
 }
 
-/// Not yet built: the destination audit kind no operation of this build
-/// appends (the restore's succession event), so no fixture can append one.
-/// Fixtures that append one audit of every kind leave it out; delete this
+/// Not yet built: the destination audit kinds no operation of this build
+/// appends (the restore's succession event, and a keyed destination's hold,
+/// release and clearing events), so no fixture can append one. Fixtures that
+/// append one audit of every kind leave them out; remove each kind from this
 /// set when it has an emitter.
 const Set<String> destinationAuditsWithoutEmitter = <String>{
   kDestinationSenderSucceededEntryType,
+  kDestinationHeldEntryType,
+  kDestinationHoldReleasedEntryType,
+  kDestinationHoldClearedEntryType,
 };
 
 /// Appends a resume event the supported way, through the drainer: registers
