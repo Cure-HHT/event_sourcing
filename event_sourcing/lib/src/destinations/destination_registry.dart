@@ -260,7 +260,8 @@ class DestinationRegistry {
   ///
   /// Throws `ArgumentError` before anything is written, the registry check
   /// record included, when [destination] serializes natively and implements
-  /// no pull ([Destination.channelPull] is null).
+  /// no pull ([Destination.channelPull] is null), or when it is both keyed
+  /// ([Destination.keyed]) and natively serializing.
   ///
   /// A destination deleted and registered again under the same id starts a
   /// new registration. Its refill may send again events that the prior
@@ -285,6 +286,19 @@ class DestinationRegistry {
         'destination',
         'destination $id serializes natively and implements no pull; a '
             'delivery channel needs its pull',
+      );
+    }
+    // Implements: EVS-DEV-destination-key-hold/F
+    // a destination that is both keyed and natively serializing is refused
+    //   before anything is written.
+    if (destination.keyed && serializesNatively) {
+      throw ArgumentError.value(
+        id,
+        'destination',
+        'destination $id is keyed and serializes natively; a keyed '
+            'destination holds one block key while the rest of its queue '
+            'goes on, and a natively serializing destination delivers its '
+            'queue in order',
       );
     }
     final filterEntryTypes = destination.filter.entryTypes?.toList();

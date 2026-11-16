@@ -1129,6 +1129,39 @@ void runQueueRegistryScenarios(
         expect(await w.channelRecord('x'), SenderChannelRecord.initial);
       });
 
+      // Verifies: EVS-DEV-destination-key-hold/F
+      // a destination that is both keyed and natively serializing is refused
+      //   before anything is written.
+      test('addDestination refuses a keyed destination that '
+          'serializesNatively', () async {
+        if (!available) return;
+        await expectLater(
+          w.registry.addDestination(
+            _KeyedNativeDestination(id: 'kn'),
+            initiator: _init,
+          ),
+          throwsA(
+            isA<ArgumentError>().having(
+              (e) => e.toString(),
+              'message',
+              allOf(contains('keyed'), contains('serializes natively')),
+            ),
+          ),
+        );
+        expect(w.registry.byId('kn'), isNull);
+      });
+
+      // Verifies: EVS-DEV-destination-key-hold/F
+      // a keyed destination that does not serialize natively registers.
+      test('addDestination accepts a keyed destination', () async {
+        if (!available) return;
+        await w.registry.addDestination(
+          _KeyedDestination(id: 'k'),
+          initiator: _init,
+        );
+        expect(w.registry.byId('k'), isNotNull);
+      });
+
       // Verifies: EVS-DEV-delivery-channel/E
       // no registry operation but the registration and the deletion changes
       //   a sender channel record: date changes, a halt request and its
@@ -2209,4 +2242,18 @@ void runQueueRegistryScenarios(
       );
     });
   });
+}
+
+class _KeyedNativeDestination extends NativeDestination {
+  _KeyedNativeDestination({super.id});
+
+  @override
+  bool get keyed => true;
+}
+
+class _KeyedDestination extends FakeDestination {
+  _KeyedDestination({super.id});
+
+  @override
+  bool get keyed => true;
 }
