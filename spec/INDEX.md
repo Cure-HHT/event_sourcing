@@ -14,8 +14,8 @@
 | EVS-PRD-canonical-json                | Canonical JSON Serialization      | prd-canonical-json.md                | 14bb1343 |
 | EVS-PRD-cross-process-event-transport | Cross-Process Event Transport     | prd-reaction.md                      | 3a77adea |
 | EVS-PRD-delivery-channel              | Delivery channel continuity       | delivery-continuity.md               | f6230ffe |
-| EVS-PRD-destination-key-hold          | Key-scoped holds on a destination | prd-destination-key-hold.md          | 7101747f |
-| EVS-PRD-destinations                  | Destinations                      | prd-destinations.md                  | 7554f4bd |
+| EVS-PRD-destination-key-hold          | Key-scoped holds on a destination | prd-destination-key-hold.md          | 6f55d2e0 |
+| EVS-PRD-destinations                  | Destinations                      | prd-destinations.md                  | cddc4d9c |
 | EVS-PRD-event-log                     | Event Log                         | prd-event-log.md                     | e50ef232 |
 | EVS-PRD-hash-chain-integrity          | Hash-Chain Integrity              | prd-hash-chain-integrity.md          | 5e9d9d6e |
 | EVS-PRD-ingest                        | Ingest Path                       | prd-ingest.md                        | 8ad47c04 |
@@ -48,10 +48,10 @@
 | EVS-DEV-delivery-channel                   | Delivery channel sender mechanics                            | delivery-continuity.md                  | 29357550 |
 | EVS-DEV-delivery-receiver                  | Delivery channel receiver mechanics                          | delivery-continuity.md                  | d37b43bb |
 | EVS-DEV-delivery-resume                    | Channel resume and new generation                            | delivery-continuity.md                  | ae74fe21 |
-| EVS-DEV-destination-drain                  | Destination queue mechanics                                  | dev-destination-drain.md                | 451d2126 |
+| EVS-DEV-destination-drain                  | Destination queue mechanics                                  | dev-destination-drain.md                | c6646eef |
 | EVS-DEV-destination-drain-lock             | Delivery cycle mechanics                                     | dev-destination-drain-lock.md           | c8a491db |
-| EVS-DEV-destination-key-hold               | Key-scoped holds on a destination queue                      | dev-destination-key-hold.md             | 89202f70 |
-| EVS-DEV-destination-retry-budget           | Destination retry budget and attempt outcomes                | dev-destination-retry-budget.md         | a5ab9bc1 |
+| EVS-DEV-destination-key-hold               | Key-scoped holds on a destination queue                      | dev-destination-key-hold.md             | 311c31aa |
+| EVS-DEV-destination-retry-budget           | Destination retry budget and attempt outcomes                | dev-destination-retry-budget.md         | 03cce550 |
 | EVS-DEV-effective-permissions-shape        | effectivePermissionsFor surface                              | scoped-permissions.md                   | c6cee772 |
 | EVS-DEV-entry-type-downgrade-refusal       | Entry-type version downgrade refusal                         | dev-entry-type-downgrade-refusal.md     | 3adaac55 |
 | EVS-DEV-event-record                       | The event record as read, stored and sent                    | dev-event-record.md                     | b1c1b22f |

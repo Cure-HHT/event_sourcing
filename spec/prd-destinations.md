@@ -57,7 +57,7 @@ V. Within the scope its storage backend supports, the library SHALL let at most 
 
 W. A destination's retry policy SHALL bound how long retryable failures may hold an item at the head of its queue, as well as how many attempts the item gets, and the library SHALL wedge an item whose retryable failures have held it at the head for that time.
 
-X. If a destination's transform fails on events the library would queue, the library SHALL retry the transform within the destination's retry budget and, once that budget is exhausted, queue those events as one item and wedge it with a cause of its own.
+X. If a destination's transform fails on events the library would queue, other than events a release of a held key would queue, the library SHALL retry the transform within the destination's retry budget and, once that budget is exhausted, queue those events as one item and wedge it with a cause of its own.
 
 Y. The library SHALL accept from a delivery implementation an outcome stating that it did not attempt delivery, and SHALL leave the item pending with no attempt recorded and no part of its retry budget spent.
 
@@ -154,12 +154,13 @@ Reserved system events are records of the library's own operations: the destinat
 
 **Why dynamic registration?** A user of a running deployment starts sharing data with a new downstream consumer after the deployment has been operating for some time. Adding that consumer's destination at that point must work without restarting the deployment or invalidating its log. The same property supports linking and unlinking destinations as the set of downstream consumers changes.
 
-**Why amend I, L, N and Q for keyed destinations?** A destination that declares a key per event holds one key's items out of the queue when its delivery implementation reports a permanent failure scoped to that key, and keeps delivering the other keys (`EVS-PRD-destination-key-hold`). The held item therefore leaves the head (assertion I), the key lists and release failure records join the persisted state the precondition names (assertion L), a recovery's rewind leaves out the items a release queued, whose events go back to their key (assertion N), and a hold records its cause as a wedge does (assertion Q). A destination that declares no key behaves as before.
+**Why amend I, L, N, Q and X for keyed destinations?** A destination that declares a key per event holds one key's items out of the queue when its delivery implementation reports a permanent failure scoped to that key, and keeps delivering the other keys (`EVS-PRD-destination-key-hold`). The held item therefore leaves the head (assertion I), the key lists and release failure records join the persisted state the precondition names (assertion L), a recovery's rewind leaves out the items a release queued, whose events go back to their key (assertion N), a hold records its cause as a wedge does (assertion Q), and a transform failure on events a release would queue holds the key again instead of queuing a wedged item (assertion X). A destination that declares no key behaves as before.
 
 ## Changelog
 
+- 2026-11-16 | cddc4d9c | - | muhammadU-anspar (<muhammad@anspar.org>) | Auto-fix: update hash
 - 2026-11-16 | 7554f4bd | - | muhammadU-anspar (<muhammad@anspar.org>) | Auto-fix: update hash
-- 2026-11-16 | - | - | muhammadU-anspar (<muhammad@anspar.org>) | Amend I (a held item leaves the head), N (the rewind excludes released items), Q (hold causes beside wedge causes) and L (key lists and release failure records join the persisted state). The keyed-destination obligations are stated in EVS-PRD-destination-key-hold. I, L, N and Q are cited by code and tests; each keeps its meaning for a destination that declares no key
+- 2026-11-16 | - | - | muhammadU-anspar (<muhammad@anspar.org>) | Amend I (a held item leaves the head), X (a transform failure of a release is not wedged), N (the rewind excludes released items), Q (hold causes beside wedge causes) and L (key lists and release failure records join the persisted state). The keyed-destination obligations are stated in EVS-PRD-destination-key-hold. I, L, N, Q and X are cited by code and tests; each keeps its meaning for a destination that declares no key
 - 2026-09-26 | 4f6634d8 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-26 | - | - | Michael Lewis (<michael@anspar.org>) | L: the persisted state names, on Sembast, the record of whether the database holds a security finding. Code and tests cite L; the precondition widens to a record the Sembast backend now keeps
 - 2026-09-26 | 941dee91 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: sync changelog hash
@@ -205,4 +206,4 @@ Reserved system events are records of the library's own operations: the destinat
 - 2026-08-10 | 872fc0dc | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-07-02 | ec656743 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
-*End* *Destinations* | **Hash**: 7554f4bd
+*End* *Destinations* | **Hash**: cddc4d9c
