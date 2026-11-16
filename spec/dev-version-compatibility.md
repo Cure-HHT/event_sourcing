@@ -13,7 +13,7 @@ A. The library SHALL identify each entry-type version by a major and a minor num
 
 B. The library SHALL refuse to register a promoter step within one major unless it leads to the next minor and every transform in it is a `DefaultField`, and SHALL refuse a step across majors unless it leads to minor 0 of the next major; a minor step with no registered promoter SHALL leave the payload unchanged.
 
-C. The library SHALL declare a data-format version, a major and a minor number distinct from its package version, SHALL stamp it on every event it appends, and SHALL treat builds with the same data-format major as compatible.
+C. The library SHALL declare a data-format version, a major and a minor number distinct from its package version, SHALL stamp it on every event it appends, and SHALL treat builds with the same data-format major as compatible, except that it SHALL state, as a precondition the consumer keeps, that a persisted Sembast database, on the web included, that holds a keyed destination is opened only by a build of data-format 3.1 or later.
 
 D. On every ingest entry point the library SHALL refuse, before any write, an event whose data-format major differs from its own, whose entry-type major is above the registered major, whose event type its registered application entry type does not declare, or whose entry-type version is below the registered version with no registered promoter path from it for a view the event folds into; SHALL accept an event of the registered entry-type major at any minor, folding it unchanged when its minor is not below the registered minor; and SHALL accept an event of an entry type it does not register at any version.
 
@@ -35,7 +35,7 @@ L. <RETIRED> A view a build does not register is a copy that build does not fold
 
 M. <RETIRED> An older minor is a different view definition and folds into a copy of its own (EVS-DEV-view-convergence).
 
-N. The library SHALL declare data-format version 3.0.
+N. The library SHALL declare data-format version 3.1.
 
 O. `EventStore.open` SHALL refuse, before any write and with `DatabaseResetRequiredError`, a database holding an event that a build of data-format major 2 or below appended.
 
@@ -67,7 +67,7 @@ R. <RETIRED> A changed declaration of kind or eligibility is no entry-type major
 
 **Why record every major and minor, and the declarations, in the registry audit (assertion K)?** The registry audit is how the log records which entry-type versions a database was opened with. Recording the minor as well as the major means a minor raise is recorded as a major raise is, and an unchanged registry appends nothing. The kind and eligibility an entry type declares for each event type decide the causal parents the library stamps, so recording them lets the log show which declarations were in force when each event was appended. The library compares them with no other build's: each event carries its own. The audit also records each entry type's patch beside its major and minor, so a patch, which no event carries, is still recorded in the log.
 
-**Why data format 3.0 (assertion N)?** Data format 3.0 is one major step that carries every stored and sent shape the library adds with it:
+**Why data format 3.1 (assertion N)?** Data format 3.0 was one major step that carries every stored and sent shape the library adds with it:
 
 - the database identity and the library version on every provenance entry, and the storage-chain link on the last entry of every stored event (EVS-DEV-event-record/D and E, EVS-DEV-chain-verification/C);
 - the causal record on every event, covered by the event hash, and the kind and eligibility declarations the registry audit records (EVS-DEV-event-record/J and K, EVS-DEV-causal-parents);
@@ -78,10 +78,14 @@ R. <RETIRED> A changed declaration of kind or eligibility is no entry-type major
 
 A field the library requires, and refuses a record without, cannot be added in a minor: every event an earlier minor of the major appended lacks it, so the later minor would refuse its own major's events. The library's own ingest keeps earlier provenance entries as the record carries them, so a field added only as optional would survive a receiver of an older minor storing the record and serving it back in a restore pull. Code outside the library that decodes an entry into the provenance package's value type of an earlier release and encodes it again can drop such a field (EVS-PRD-provenance/E). The version numbers are a Layer 2 convention (the library's major.minor rule); the refusals they decide are checked.
 
+Data format 3.1 is a minor step that adds keyed destinations: the block key and the release hold id on a queue item, the key lists and release failure records kept beside the queue, the default destination-holds view, and three reserved entry types in the reserved namespace (`system.destination_held`, `system.destination_hold_released` and `system.destination_hold_cleared`) (`EVS-DEV-destination-drain`). The rule admits a minor only for a change an older build of the major reads correctly. Every database with no keyed destination meets it: an older build finds no key list and no key that decides anything, and stores the new reserved events as received, as it stores every reserved entry type of its major that it does not declare. A database that holds a keyed destination does not meet it, because an older build would queue a held key's events and deliver them out of order. On Postgres the schema keeps such a build off: schema version 10 adds the queue item's block key and release hold id and raises the minimum compatible schema version to 10, so a build of an earlier schema refuses to open the database, and deploying a keyed consumer is stop-then-start. A persisted Sembast database, on the web or not, has no such minimum, so the exception in assertion C records the consumer's obligation: such a database is opened only by a build of 3.1 or later. A major step is not available instead: ingest refuses another data-format major (assertion D), so every 3.x peer of a 4.0 build, a diary client among them, would stop syncing. When the step was made no consumer held a persisted Sembast database with a keyed destination -- the clients register none, and a server's Sembast store is in memory -- so the obligation was then met by every consumer.
+
 **What an older database and an older peer meet (assertions O to Q).** A build of data format 3 opens only a database of its own major. A database a 2.x build wrote is refused before any write: its latest event lacks `library_version`, which the first read of the boot refuses as malformed, so the open refuses it as a database that must be reset (assertion O; EVS-DEV-event-store-open/F, which takes precedence over D). The two refusals agree that no 3.x build opens the database, and no release reads an older data-format major (`spec/roadmap/versions.md`). A 3.x build cannot open beside a live 2.x instance, because its generation conflicts (assertion F). A 2.x peer sends batches in the envelope format of its data format; ingest refuses such a batch before decoding it, naming the envelope format and the data-format major it implies (assertion P), and the peer's drainer records a permanent failure. A 2.x record carried in a 3.x envelope is refused by its data-format major before any check of the record's shape (assertion Q), so the reason names the version and not a missing field. Deploying data format 3.0 is therefore stop-then-start across every database and every peer that exchange events, and it starts from empty databases: a device holding events a 2.x build appended, sent or not, is reset (EVS-DEV-storage-capability/L deletes a Sembast database by its description).
 
 ## Changelog
 
+- 2026-11-16 | 8de1eacb | - | muhammadU-anspar (<muhammad@anspar.org>) | Auto-fix: update hash
+- 2026-11-16 | - | - | muhammadU-anspar (<muhammad@anspar.org>) | Amend N: the library declares data-format version 3.1, a minor step adding keyed destinations. Amend C: the consumer precondition that a persisted Sembast database holding a keyed destination is opened only by a build of 3.1 or later. Rationale of N: why a minor, the Postgres schema minimum 10, and the recorded exception. C and N are cited by code and tests; N changes meaning (3.0 to 3.1) and C narrows compatibility for one case
 - 2026-10-31 | 11364d97 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: sync changelog hash
 - 2026-10-31 | - | - | Michael Lewis (<michael@anspar.org>) | Rationale: an event of an unregistered entry type folds into any view whose interest names it. No assertion changes
 - 2026-10-31 | 11364d97 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: sync changelog hash
@@ -115,4 +119,4 @@ A field the library requires, and refuses a record without, cannot be added in a
 - 2026-09-23 | b1c77f28 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-23 | - | - | Michael Lewis (<michael@anspar.org>) | Add A-E, J, K: entry-type and data-format versions are major.minor; promoter step rule; ingest compares majors, refuses an unpromotable lower version and accepts an unregistered entry type; a fold under an older minor lowers the stored target; versions are hashed; the registry audit records every major and minor
 
-*End* *Entry-type and data-format versions* | **Hash**: 11364d97
+*End* *Entry-type and data-format versions* | **Hash**: 8de1eacb
