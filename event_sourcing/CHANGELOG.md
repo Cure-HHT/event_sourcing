@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.7.4
+
+Data: data format 3.0, unchanged; nothing to migrate.
+
+### Delivery
+
+- `SyncCycle.holdsDrainLock` reports whether the cycle holds the drain
+  lock and has not detected its loss, a hand-over or a close
+  (EVS-DEV-destination-drain-lock/G). `state` stays `running` after the
+  cycle detects a loss, until the pass in flight settles; this getter
+  turns false from the moment of detection. An application that admits
+  work other than delivery to the one process holding the drain lock reads
+  this rather than `state`. It cannot reflect a loss the cycle has not yet
+  detected (the cycle checks once per cadence), so work it admits still
+  checks the lock inside its transaction.
+
 ## 0.7.3
 
 Data: data format 3.0, unchanged; nothing to migrate.

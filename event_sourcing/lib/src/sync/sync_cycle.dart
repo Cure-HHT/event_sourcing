@@ -281,6 +281,25 @@ final class SyncCycle {
   /// Where the cycle is in its life.
   SyncCycleState get state => _state;
 
+  /// Whether this cycle holds the drain lock and has not detected its loss.
+  ///
+  /// [state] stays [SyncCycleState.running] after the cycle detects that it
+  /// lost the lock, until the pass in flight settles and the cycle stands by;
+  /// this answers false from the moment of detection, and while a hand-over
+  /// or a close is under way. An application that admits work to one process
+  /// per database by the drain lock reads this, not [state]. A loss the cycle
+  /// has not yet detected (it checks every cadence) is not reflected here;
+  /// only the lock check inside a transaction is authoritative.
+  // Implements: EVS-DEV-destination-drain-lock/G
+  bool get holdsDrainLock {
+    final lock = _lock;
+    return _state == SyncCycleState.running &&
+        !_stopping &&
+        lock != null &&
+        !lock.stopsWork &&
+        !lock.isReleased;
+  }
+
   /// Completes when the cycle is stopped: closed, or stopped for good
   /// because its storage backend was fenced or closed, or its database
   /// handle cannot commit. A stopped cycle holds no registration in this

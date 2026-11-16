@@ -220,6 +220,7 @@ StoredEvent.toString: String toString()
 StoredEvent.withData: StoredEvent withData(Map<String, Object?> newData)
 SyncCycle.call: Future<void> call({bool flushHeld = false})
 SyncCycle.close: Future<void> close({Duration? timeout})
+SyncCycle.holdsDrainLock: bool get holdsDrainLock
 SyncCycle.maxConfigurationVersionLength: static field int maxConfigurationVersionLength
 SyncCycle.pollInbound: Future<void> pollInbound()
 SyncCycle.start: static Future<SyncCycle> start({required DestinationRegistry registry, DateTime Function()? clock, SyncPolicy? policy, SyncPolicy? Function()? policyResolver, Duration cadence = const Duration(seconds: 15), String? configurationVersion})
