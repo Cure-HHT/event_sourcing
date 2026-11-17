@@ -2,8 +2,9 @@
 // the library's default destination-holds view TREATS a key of a
 //   destination of a database as held from the hold event that names it,
 //   as releasing from the release event that names that hold, and as no
-//   longer held from the clearing event that names that hold, deriving its
-//   rows solely from those events, other than those whose originating
+//   longer held from the clearing event that names that hold or from a
+//   deletion event that names that key list, deriving its rows solely from
+//   those events, other than those whose originating
 //   database is the holding database and that it does not hold as
 //   authored.
 // Implements: EVS-DEV-destination-drain/M

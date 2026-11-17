@@ -9,7 +9,7 @@ This requirement holds the implementation mechanics of a destination's queue: ho
 
 ## Assertions
 
-A. Deleting a destination SHALL read the queue head inside the deletion's transaction, refuse a pending head, tombstone a wedged head, delete the pending items behind it, remove every per-destination record the library keeps (the fill position, the schedule, the replay request, the transform failure record, the wedge record, the halt request, the send fence, the refill guard, the sender channel record, the key lists and the release failure records), name the key lists it removes in the deletion event, and retain the terminal items and the queue-sequence counter; registering a destination SHALL write its hard-delete opt-in as the opt-in in effect, and a deletion SHALL act on, and record, the opt-in in effect; the registry's date, recovery and deletion operations SHALL act on persisted state, SHALL need no destination registered in the calling process, and SHALL refuse an unknown destination with nothing written but the database-wide check record.
+A. Deleting a destination SHALL read the queue head inside the deletion's transaction, refuse a pending head, tombstone a wedged head, delete the pending items behind it, remove every per-destination record the library keeps (the fill position, the schedule, the replay request, the transform failure record, the wedge record, the halt request, the send fence, the refill guard, the sender channel record, the key lists and the release failure records), name each key list it removes, by its block key and hold id, in the deletion event's `key_lists` field, and retain the terminal items and the queue-sequence counter; registering a destination SHALL write its hard-delete opt-in as the opt-in in effect, and a deletion SHALL act on, and record, the opt-in in effect; the registry's date, recovery and deletion operations SHALL act on persisted state, SHALL need no destination registered in the calling process, and SHALL refuse an unknown destination with nothing written but the database-wide check record.
 
 B. The library SHALL change a queue item's status only from pending to sent, from pending to wedged, from wedged to tombstoned, and, in a resume or a new generation of its delivery channel or in a hold, from pending to tombstoned for an item that carries attempts.
 
@@ -123,6 +123,8 @@ The guard checks the shape of a change, not who makes it, so it cannot tell a ha
 
 ## Changelog
 
+- 2026-11-16 | 1e1e4047 | - | muhammadU-anspar (<muhammad@anspar.org>) | Auto-fix: update hash
+- 2026-11-16 | - | - | muhammadU-anspar (<muhammad@anspar.org>) | Amend A: the deletion event names each key list it removes by block key and hold id in its `key_lists` field. Code and tests cite A
 - 2026-11-16 | c6646eef | - | muhammadU-anspar (<muhammad@anspar.org>) | Auto-fix: update hash
 - 2026-11-16 | 451d2126 | - | muhammadU-anspar (<muhammad@anspar.org>) | Auto-fix: update hash
 - 2026-11-16 | - | - | muhammadU-anspar (<muhammad@anspar.org>) | Amend A (deletion removes and names key lists and removes release failure records), B (a hold tombstones a pending item carrying attempts), C and D (a hold commits with its attempt; hold events), E (a release enqueues at or below the fill position), F (recovery returns released items to lists and rewinds below the others only), G (key lists in the compare-and-set), J (a key-scoped permanent failure holds instead of wedging, in the status derivation too), M (the default destination-holds view), S (the guard keeps the block key and release hold id), T (key lists in the delivery-status read) and Y (a block-key evaluation failure, and a failure in a gap, historical or first-activation replay, is recorded in the transform failure record). The new keyed-destination mechanics are stated in EVS-DEV-destination-key-hold. A to J, M, S, T and Y are cited by code and tests; each widens and keeps its meaning for a destination that is not keyed, except Y, whose replay transform-failure handling applies to every destination; J also decides that a key-scoped permanent failure holds the key even when its attempt spends the retry budget
@@ -171,4 +173,4 @@ The guard checks the shape of a change, not who makes it, so it cannot tell a ha
 - 2026-09-23 | c29a506a | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-23 | - | - | Michael Lewis (<michael@anspar.org>) | Add A-G and U: queue deletion and re-registration, status changes, attempt and outcome atomicity, drainer-only enqueue, recovery, fill compare-and-set, registry decisions in writing transactions
 
-*End* *Destination queue mechanics* | **Hash**: c6646eef
+*End* *Destination queue mechanics* | **Hash**: 1e1e4047

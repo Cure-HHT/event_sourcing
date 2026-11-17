@@ -1474,10 +1474,12 @@ void runQueueRegistryScenarios(
       });
 
       // Verifies: EVS-DEV-destination-key-hold/Z
-      // the in-transaction read returns, inside a caller's transaction, the
-      //   records the standalone read returns, read from that transaction
-      //   (a key list the caller wrote earlier in it included); a handle the
-      //   event store did not issue, or whose body has returned, is refused.
+      // the in-transaction read returns, inside a caller's transaction (of
+      //   the event store or of its storage reader), the records the
+      //   standalone read returns, read from that transaction (a key list
+      //   the caller wrote earlier in it included); a handle the event store
+      //   or its reader did not issue, or whose body has returned, is
+      //   refused.
       test('readDeliveryStatusInTxn returns the same inside a caller '
           'transaction', () async {
         if (!available) return;
@@ -1507,6 +1509,20 @@ void runQueueRegistryScenarios(
           'B',
           'C',
         });
+        // A storage reader's transaction is a caller transaction too.
+        final viaReader = await w.store.reader.transaction(
+          w.registry.readDeliveryStatusInTxn,
+        );
+        expect(
+          viaReader.toString(),
+          (await w.registry.readDeliveryStatus()).toString(),
+        );
+        // A handle from another store's reader is refused.
+        final other = await w.openProcess();
+        await expectLater(
+          other.store.reader.transaction(w.registry.readDeliveryStatusInTxn),
+          throwsA(isA<StateError>()),
+        );
         await expectLater(
           w.registry.readDeliveryStatusInTxn(carried),
           throwsA(isA<StateError>()),

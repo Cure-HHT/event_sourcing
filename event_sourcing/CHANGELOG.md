@@ -9,6 +9,15 @@ stop-then-start. A persisted Sembast database that holds a keyed
 destination is opened only by a build of 3.1 or later
 (EVS-DEV-version-compatibility/C).
 
+Breaking: `EventStore.open` now refuses a sealed projection registry that
+holds `defaultDestinationWedgesSpec` but not `defaultDestinationHoldsSpec`;
+register `defaultDestinationHoldsSpec` before sealing. The sealed
+`RowDataExtractor` gains four subclasses (`CombinedRowData`,
+`ConstantFields`, `ListLengthField`, `EventTimestampField`), so an
+exhaustive `switch` over it no longer compiles; add arms for the new
+row-data types. Every deletion event now carries `key_lists`, `[]` for a
+destination that holds no key.
+
 ### Destinations
 
 - A destination may declare itself keyed (`Destination.keyed`,
