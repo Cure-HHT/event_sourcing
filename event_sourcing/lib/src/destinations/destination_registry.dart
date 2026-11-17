@@ -1577,6 +1577,10 @@ class DestinationRegistry {
   /// them as `drainer_epoch`, `configuration` and
   /// `configuration_fingerprint`, and the wedge record keeps the epoch and
   /// the fingerprint.
+  // Implements: EVS-DEV-destination-key-hold/Y
+  // wedging the head, for any cause including an honoured halt, writes the
+  //   wedge record and event only, leaving every key list and every release
+  //   failure record as it stands.
   Future<({StoredEvent wedgeEvent, String? discardedHaltRequestEventId})>
   _wedgeHeadInTxn(
     Transaction txn,
