@@ -1519,12 +1519,16 @@ abstract class StorageBackend {
 
   /// Delete every FIFO row on [destinationId] whose `sequence_in_queue`
   /// is strictly greater than [afterSequenceInQueue] AND whose
-  /// `final_status IS null`. Returns the count of rows deleted and the
-  /// lowest `event_id_range.first_seq` among them, both computed in [txn].
+  /// `final_status IS null`. Returns the count of rows deleted, the
+  /// lowest `event_id_range.first_seq` among the deleted rows that record
+  /// no released hold id, and the deleted rows that record one in
+  /// `sequence_in_queue` order, all computed in [txn].
   ///
   /// Used by `tombstoneAndRefill` to sweep the trail behind a
   /// tombstoned target in one transaction; the recovery rewinds the fill
-  /// cursor below the lowest event the sweep removed. Rows whose
+  /// cursor below the lowest event the sweep removed from a row no release
+  /// enqueued, and returns the released rows' events to their key lists.
+  /// Rows whose
   /// `final_status` is terminal (any of {sent, wedged, tombstoned})
   /// are left untouched regardless of their `sequence_in_queue`.
   @internal

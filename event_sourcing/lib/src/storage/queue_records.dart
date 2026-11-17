@@ -28,34 +28,53 @@ import 'package:collection/collection.dart'
 import 'package:event_sourcing/src/destinations/halt_purpose.dart';
 import 'package:event_sourcing/src/destinations/wedge_cause.dart';
 import 'package:event_sourcing/src/ingest/delivery_channel.dart';
-import 'package:event_sourcing/src/storage/fifo_entry.dart' show SequenceRange;
+import 'package:event_sourcing/src/storage/fifo_entry.dart'
+    show FifoEntry, SequenceRange;
 
 /// What a trail sweep removed from a destination's queue: the number of
-/// pending items it deleted and the lowest event sequence number any of them
-/// carried (`null` when it deleted none).
+/// pending items it deleted, the lowest event sequence number carried by a
+/// deleted item that records no released hold id (`null` when it deleted
+/// none), and the deleted items that record one.
+// Implements: EVS-DEV-destination-drain/F
+// the sweep reports the lowest event of the removed items no release
+//   enqueued, which bounds the recovery's rewind, and the removed items a
+//   release enqueued, whose events the recovery returns to their lists.
 class TrailSweepResult {
-  const TrailSweepResult({required this.deletedCount, this.minFirstSeq});
+  const TrailSweepResult({
+    required this.deletedCount,
+    this.minFirstSeq,
+    this.released = const <FifoEntry>[],
+  });
 
   /// Number of pending items deleted.
   final int deletedCount;
 
-  /// Lowest `event_id_range.first_seq` among the deleted items, or `null`
-  /// when none was deleted.
+  /// Lowest `event_id_range.first_seq` among the deleted items that record
+  /// no released hold id, or `null` when none was deleted.
   final int? minFirstSeq;
+
+  /// The deleted items that record a released hold id, in
+  /// `sequence_in_queue` order.
+  final List<FifoEntry> released;
 
   @override
   bool operator ==(Object other) =>
       other is TrailSweepResult &&
       other.deletedCount == deletedCount &&
-      other.minFirstSeq == minFirstSeq;
+      other.minFirstSeq == minFirstSeq &&
+      const ListEquality<FifoEntry>().equals(other.released, released);
 
   @override
-  int get hashCode => Object.hash(deletedCount, minFirstSeq);
+  int get hashCode => Object.hash(
+    deletedCount,
+    minFirstSeq,
+    const ListEquality<FifoEntry>().hash(released),
+  );
 
   @override
   String toString() =>
       'TrailSweepResult(deletedCount: $deletedCount, '
-      'minFirstSeq: $minFirstSeq)';
+      'minFirstSeq: $minFirstSeq, released: $released)';
 }
 
 /// What retiring a destination's queue on deletion did: the wedged head it

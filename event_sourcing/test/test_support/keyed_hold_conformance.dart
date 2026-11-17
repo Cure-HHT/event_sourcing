@@ -1506,6 +1506,457 @@ void runKeyedHoldScenarios(
         hasLength(1),
       );
     });
+
+    // Verifies: EVS-DEV-destination-key-hold/X
+    // Verifies: EVS-DEV-destination-drain/F
+    // Verifies: EVS-PRD-destinations/N
+    test('a recovery returns swept released items to their key lists and does '
+        'not rewind for them', () async {
+      if (!available) return;
+      final d = FakeDestination(
+        id: 'keyed',
+        keyOf: noteKey,
+        script: <SendResult>[
+          _keyRefusal,
+          const SendOk(),
+          const SendPermanent(error: 'refused'),
+        ],
+      );
+      await w.activateResolved(d);
+      final a1 = await w.note('a1', key: 'A');
+      final b1 = await w.note('b1', key: 'B');
+      final a2 = await w.note('a2', key: 'A');
+      final holdId = await w.holdA(d);
+      final c1 = await w.note('c1', key: 'C');
+      await w.fill(d);
+      await w.release(d, 'A', holdId);
+      await w.fill(d);
+      await w.fill(d);
+      expect(await w.releasedItems(d.id), hasLength(2));
+      expect(await w.keyLists(d.id), isEmpty);
+      await w.drain(d);
+      final head = (await w.items(
+        d.id,
+      )).firstWhere((i) => i.finalStatus == FinalStatus.wedged);
+      expect(head.eventIds, <String>[c1.eventId]);
+
+      final result = await w.registry.tombstoneAndRefill(
+        d.id,
+        head.entryId,
+        initiator: _init,
+      );
+      expect(result.deletedTrailCount, 2);
+      expect(result.rewoundTo, c1.sequenceNumber - 1);
+      expect(await w.backend.readFillCursor(d.id), c1.sequenceNumber - 1);
+      expect(await w.keyLists(d.id), <String, KeyList>{
+        'A': KeyList(
+          holdId: holdId,
+          state: KeyListState.releasing,
+          cause: 'permanent_refusal',
+          events: <KeyListEvent>[listEventOf(a1), listEventOf(a2)],
+        ),
+      });
+      expect(
+        (await w.items(d.id)).where((i) => i.finalStatus == null),
+        isEmpty,
+      );
+
+      await w.fillAll(d);
+      final pending = <FifoEntry>[
+        for (final i in await w.items(d.id))
+          if (i.finalStatus == null) i,
+      ];
+      expect(
+        pending.where((i) => i.releasedHoldId != null).map((i) => i.eventIds),
+        <List<String>>[
+          <String>[a1.eventId],
+          <String>[a2.eventId],
+        ],
+      );
+      expect(
+        pending.where((i) => i.eventIds.contains(c1.eventId)),
+        hasLength(1),
+      );
+      expect(
+        (await w.items(d.id)).where((i) => i.eventIds.contains(b1.eventId)),
+        hasLength(1),
+        reason: "the other key's delivered event is not queued again",
+      );
+      expect(await w.keyLists(d.id), isEmpty);
+    });
+
+    // Verifies: EVS-DEV-destination-key-hold/X
+    // Verifies: EVS-DEV-destination-drain/F
+    // Verifies: EVS-PRD-destinations/N
+    test('a recovery whose wedged head was itself released returns it to its '
+        'list', () async {
+      if (!available) return;
+      final d = FakeDestination(
+        id: 'keyed',
+        keyOf: noteKey,
+        script: <SendResult>[
+          _keyRefusal,
+          const SendOk(),
+          const SendPermanent(error: 'refused'),
+        ],
+      );
+      await w.activateResolved(d);
+      final a1 = await w.note('a1', key: 'A');
+      final b1 = await w.note('b1', key: 'B');
+      final a2 = await w.note('a2', key: 'A');
+      final holdId = await w.holdA(d);
+      await w.release(d, 'A', holdId);
+      final c1 = await w.note('c1', key: 'C');
+      await w.fill(d);
+      final head = (await w.releasedItems(d.id)).single;
+      expect(head.eventIds, <String>[a1.eventId]);
+      expect((await w.keyLists(d.id))['A']!.events, <KeyListEvent>[
+        listEventOf(a2),
+      ]);
+      await w.drain(d);
+      expect(
+        (await w.backend.readFifoRow(d.id, head.entryId))!.finalStatus,
+        FinalStatus.wedged,
+      );
+
+      final result = await w.registry.tombstoneAndRefill(
+        d.id,
+        head.entryId,
+        initiator: _init,
+      );
+      expect(result.rewoundTo, c1.sequenceNumber - 1);
+      expect(await w.keyLists(d.id), <String, KeyList>{
+        'A': KeyList(
+          holdId: holdId,
+          state: KeyListState.releasing,
+          cause: 'permanent_refusal',
+          events: <KeyListEvent>[listEventOf(a1), listEventOf(a2)],
+        ),
+      });
+
+      await w.fillAll(d);
+      final pending = <FifoEntry>[
+        for (final i in await w.items(d.id))
+          if (i.finalStatus == null) i,
+      ];
+      expect(
+        pending.where((i) => i.releasedHoldId != null).map((i) => i.eventIds),
+        <List<String>>[
+          <String>[a1.eventId],
+          <String>[a2.eventId],
+        ],
+      );
+      expect(
+        pending.where((i) => i.eventIds.contains(c1.eventId)),
+        hasLength(1),
+      );
+      expect(
+        (await w.items(d.id)).where((i) => i.eventIds.contains(b1.eventId)),
+        hasLength(1),
+      );
+    });
+
+    // Verifies: EVS-DEV-destination-key-hold/X
+    // Verifies: EVS-DEV-destination-drain/F
+    test('with only released items swept, the cursor is not rewound', () async {
+      if (!available) return;
+      final d = FakeDestination(
+        id: 'keyed',
+        keyOf: noteKey,
+        script: <SendResult>[
+          _keyRefusal,
+          const SendOk(),
+          const SendPermanent(error: 'refused'),
+        ],
+      );
+      await w.activateResolved(d);
+      final a1 = await w.note('a1', key: 'A');
+      final b1 = await w.note('b1', key: 'B');
+      final a2 = await w.note('a2', key: 'A');
+      final holdId = await w.holdA(d);
+      await w.release(d, 'A', holdId);
+      await w.fill(d);
+      await w.fill(d);
+      final released = await w.releasedItems(d.id);
+      expect(released, hasLength(2));
+      await w.drain(d);
+      final cursorBefore = await w.backend.readFillCursor(d.id);
+
+      final result = await w.registry.tombstoneAndRefill(
+        d.id,
+        released.first.entryId,
+        initiator: _init,
+      );
+      expect(result.deletedTrailCount, 1);
+      expect(result.rewoundTo, cursorBefore);
+      expect(await w.backend.readFillCursor(d.id), cursorBefore);
+      final recovered = (await w.backend.findAllEvents(
+        entryType: kDestinationWedgeRecoveredEntryType,
+      )).single;
+      expect(recovered.data['rewound_to'], cursorBefore);
+      expect((await w.keyLists(d.id))['A']!.events, <KeyListEvent>[
+        listEventOf(a1),
+        listEventOf(a2),
+      ]);
+      await w.fillAll(d);
+      expect(
+        (await w.items(d.id)).where((i) => i.eventIds.contains(b1.eventId)),
+        hasLength(1),
+      );
+    });
+
+    // Verifies: EVS-DEV-destination-drain/F
+    // Verifies: EVS-PRD-destinations/N
+    test(
+      'keyless and gap-replay items still count toward the rewind',
+      () async {
+        if (!available) return;
+        final d = FakeDestination(
+          id: 'keyed',
+          keyOf: noteKey,
+          script: <SendResult>[
+            _keyRefusal,
+            const SendPermanent(error: 'refused'),
+          ],
+        );
+        // The window opens after the first note, which a start date moved
+        // earlier later lets in through a gap replay.
+        await w.activate(d, startDate: DateTime.utc(2026, 3, 1, 0, 1, 30));
+        await w.fill(d);
+        final x1 = await w.note('x1', key: 'X');
+        final a1 = await w.note('a1', key: 'A');
+        final a2 = await w.note('a2', key: 'A');
+        final holdId = await w.holdA(d);
+        await w.release(d, 'A', holdId);
+        final n1 = await w.note('n1');
+        await w.fill(d);
+        await w.registry.setStartDate(
+          d.id,
+          DateTime.utc(2026, 1, 1),
+          initiator: _init,
+        );
+        await w.fill(d);
+        final pendingBefore = <FifoEntry>[
+          for (final i in await w.items(d.id))
+            if (i.finalStatus == null) i,
+        ];
+        expect(pendingBefore.map((i) => i.eventIds), <List<String>>[
+          <String>[a1.eventId],
+          <String>[n1.eventId],
+          <String>[x1.eventId],
+          <String>[a2.eventId],
+        ]);
+        expect(pendingBefore[1].blockKey, isNull);
+        expect(pendingBefore[2].releasedHoldId, isNull);
+        expect(pendingBefore[3].releasedHoldId, holdId);
+        await w.drain(d);
+
+        final result = await w.registry.tombstoneAndRefill(
+          d.id,
+          pendingBefore.first.entryId,
+          initiator: _init,
+        );
+        expect(result.rewoundTo, x1.sequenceNumber - 1);
+        expect((await w.keyLists(d.id))['A']!.events, <KeyListEvent>[
+          listEventOf(a1),
+          listEventOf(a2),
+        ]);
+        await w.fillAll(d);
+        final pending = <FifoEntry>[
+          for (final i in await w.items(d.id))
+            if (i.finalStatus == null) i,
+        ];
+        for (final e in <StoredEvent>[x1, a1, a2, n1]) {
+          expect(
+            pending.where((i) => i.eventIds.contains(e.eventId)),
+            hasLength(1),
+            reason: '${e.data['id']} is queued again once',
+          );
+        }
+      },
+    );
+
+    // Verifies: EVS-DEV-destination-key-hold/L+M+Q
+    test("a rewind below a list's front inserts the older event in sorted "
+        'position and the release waits for the re-walk', () async {
+      if (!available) return;
+      final d = FakeDestination(
+        id: 'keyed',
+        keyOf: noteKey,
+        script: <SendResult>[
+          _keyRefusal,
+          const SendOk(),
+          const SendPermanent(error: 'refused'),
+        ],
+      );
+      await w.activate(d, startDate: DateTime.utc(2026, 3, 1, 0, 1, 30));
+      await w.fill(d);
+      final x1 = await w.note('x1', key: 'X');
+      final a1 = await w.note('a1', key: 'A');
+      final a2 = await w.note('a2', key: 'A');
+      final holdId = await w.holdA(d);
+      await w.release(d, 'A', holdId);
+      await w.fill(d);
+      await w.drain(d);
+      final sent = (await w.releasedItems(d.id)).single;
+      expect(sent.eventIds, <String>[a1.eventId]);
+      expect(sent.finalStatus, FinalStatus.sent);
+      await w.registry.setStartDate(
+        d.id,
+        DateTime.utc(2026, 1, 1),
+        initiator: _init,
+      );
+      await w.fill(d);
+      expect(await w.keyLists(d.id), isEmpty);
+      expect((await w.releasedItems(d.id)).last.eventIds, <String>[a2.eventId]);
+      await w.drain(d);
+      final head = (await w.items(
+        d.id,
+      )).firstWhere((i) => i.finalStatus == FinalStatus.wedged);
+      expect(head.eventIds, <String>[x1.eventId]);
+      expect(head.finalStatus, FinalStatus.wedged);
+
+      final result = await w.registry.tombstoneAndRefill(
+        d.id,
+        head.entryId,
+        initiator: _init,
+      );
+      expect(result.rewoundTo, x1.sequenceNumber - 1);
+      // The re-walk reaches a1 over several fills, routing it into the list
+      // ahead of a2; until it has, the release queues nothing.
+      for (var pass = 0; pass < 10; pass++) {
+        if (await w.backend.readFillCursor(d.id) >= a1.sequenceNumber) break;
+        await w.fill(d);
+        expect(
+          await w.releasedItems(d.id),
+          hasLength(1),
+          reason: 'the release waits until the walk has passed the front',
+        );
+      }
+      expect(await w.keyLists(d.id), <String, KeyList>{
+        'A': KeyList(
+          holdId: holdId,
+          state: KeyListState.releasing,
+          cause: 'permanent_refusal',
+          events: <KeyListEvent>[listEventOf(a1), listEventOf(a2)],
+        ),
+      });
+      await w.fillAll(d);
+      expect(
+        (await w.releasedItems(d.id)).map((i) => i.eventIds),
+        <List<String>>[
+          <String>[a1.eventId],
+          <String>[a1.eventId],
+          <String>[a2.eventId],
+        ],
+      );
+      expect(await w.keyLists(d.id), isEmpty);
+      expect(await w.clearedEvents(), hasLength(1));
+    });
+
+    // Verifies: EVS-DEV-destination-key-hold/T+U+X
+    test(
+      'an existing list keeps its state and hold id; a missing list is '
+      "created releasing under the item's released_hold_id; emptying it "
+      'appends a cleared event only if none exists for that hold id',
+      () async {
+        if (!available) return;
+        final d = FakeDestination(
+          id: 'keyed',
+          keyOf: noteKey,
+          script: <SendResult>[
+            _keyRefusal,
+            const SendOk(),
+            const SendPermanent(error: 'refused'),
+            const SendPermanent(error: 'refused'),
+            const SendPermanent(error: 'refused'),
+          ],
+        );
+        await w.activateResolved(d);
+        final a1 = await w.note('a1', key: 'A');
+        await w.note('b1', key: 'B');
+        final a2 = await w.note('a2', key: 'A');
+        final holdId = await w.holdA(d);
+        await w.release(d, 'A', holdId);
+        await w.fill(d);
+
+        // An existing list keeps its state and hold id.
+        final other = KeyList(
+          holdId: 'hold-2',
+          state: KeyListState.held,
+          cause: 'transform_failed',
+          events: <KeyListEvent>[listEventOf(a2)],
+        );
+        await w.writeKeyLists(d.id, <String, KeyList>{'A': other});
+        await w.drain(d);
+        var head = (await w.releasedItems(d.id)).single;
+        await w.registry.tombstoneAndRefill(
+          d.id,
+          head.entryId,
+          initiator: _init,
+        );
+        expect(await w.keyLists(d.id), <String, KeyList>{
+          'A': KeyList(
+            holdId: 'hold-2',
+            state: KeyListState.held,
+            cause: 'transform_failed',
+            events: <KeyListEvent>[listEventOf(a1), listEventOf(a2)],
+          ),
+        });
+
+        // A missing list whose hold has no cleared event: re-created
+        // releasing, and its emptying appends one.
+        await w.writeKeyLists(d.id, <String, KeyList>{
+          'A': KeyList(
+            holdId: holdId,
+            state: KeyListState.releasing,
+            cause: 'permanent_refusal',
+            events: <KeyListEvent>[listEventOf(a1), listEventOf(a2)],
+          ),
+        });
+        await w.fill(d);
+        await w.writeKeyLists(d.id, <String, KeyList>{});
+        await w.drain(d);
+        head = (await w.releasedItems(d.id)).last;
+        expect(head.eventIds, <String>[a1.eventId]);
+        expect(head.finalStatus, FinalStatus.wedged);
+        await w.registry.tombstoneAndRefill(
+          d.id,
+          head.entryId,
+          initiator: _init,
+        );
+        expect(await w.keyLists(d.id), <String, KeyList>{
+          'A': KeyList(
+            holdId: holdId,
+            state: KeyListState.releasing,
+            cause: 'permanent_refusal',
+            events: <KeyListEvent>[listEventOf(a1)],
+          ),
+        });
+        expect(await w.clearedEvents(), isEmpty);
+        await w.fill(d);
+        expect(await w.keyLists(d.id), isEmpty);
+        expect((await w.clearedEvents()).single.data['hold_id'], holdId);
+
+        // A missing list whose hold was cleared: re-created releasing, and its
+        // emptying appends no second cleared event.
+        await w.drain(d);
+        head = (await w.releasedItems(d.id)).last;
+        expect(head.finalStatus, FinalStatus.wedged);
+        await w.registry.tombstoneAndRefill(
+          d.id,
+          head.entryId,
+          initiator: _init,
+        );
+        expect((await w.keyLists(d.id))['A'], isNotNull);
+        expect((await w.keyLists(d.id))['A']!.state, KeyListState.releasing);
+        expect((await w.keyLists(d.id))['A']!.holdId, holdId);
+        await w.fillAll(d);
+        expect(await w.keyLists(d.id), isEmpty);
+        expect(await w.clearedEvents(), hasLength(1));
+        expect((await w.releasedItems(d.id)).last.releasedHoldId, holdId);
+      },
+    );
   });
 }
 

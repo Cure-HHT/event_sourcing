@@ -3599,7 +3599,9 @@ class SembastBackend extends StorageBackend {
   /// Delete every FIFO row on [destinationId] whose `sequence_in_queue`
   /// is strictly greater than [afterSequenceInQueue] AND whose
   /// `final_status IS null`. Returns a [TrailSweepResult]: the count of
-  /// rows deleted and the lowest first event sequence they carried.
+  /// rows deleted, the lowest first event sequence carried by a deleted
+  /// row that records no released hold id, and the deleted rows that
+  /// record one.
   ///
   /// Used by `tombstoneAndRefill` to sweep the trail behind a
   /// tombstoned target in one transaction. Rows whose
@@ -3623,20 +3625,25 @@ class SembastBackend extends StorageBackend {
     );
     final matching = await store.find(t._sembastTxn, finder: finder);
     int? minFirstSeq;
+    final released = <FifoEntry>[];
     for (final record in matching) {
-      final range = Map<String, Object?>.from(
-        record.value['event_id_range']! as Map,
-      );
-      final firstSeq = range['first_seq']! as int;
+      final entry = FifoEntry.fromJson(Map<String, Object?>.from(record.value));
+      if (entry.releasedHoldId != null) {
+        released.add(entry);
+        continue;
+      }
+      final firstSeq = entry.sequenceRange.firstSeq;
       if (minFirstSeq == null || firstSeq < minFirstSeq) {
         minFirstSeq = firstSeq;
       }
     }
     await store.records(matching.map((r) => r.key)).delete(t._sembastTxn);
     t._fifoChanged.add(destinationId);
+    released.sort((a, b) => a.sequenceInQueue.compareTo(b.sequenceInQueue));
     return TrailSweepResult(
       deletedCount: matching.length,
       minFirstSeq: minFirstSeq,
+      released: released,
     );
   }
 

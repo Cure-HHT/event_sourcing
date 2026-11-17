@@ -3319,10 +3319,11 @@ void _registerFifoTests(
 
     // Verifies: EVS-DEV-destination-drain/F
     // the trail sweep deletes only the
-    //   pending items behind the given position and reports the lowest event
-    //   any of them carried.
-    test('deleteNullRowsAfterSequenceInQueueTxn reports count and lowest '
-        'first_seq', () async {
+    //   pending items behind the given position, reports the lowest event
+    //   any of them carried that no release enqueued, and returns the items
+    //   a release enqueued.
+    test('deleteNullRowsAfterSequenceInQueueTxn reports count, lowest '
+        'first_seq and released items', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
       final head = await enqueueSingle(
@@ -3345,6 +3346,16 @@ void _registerFifoTests(
       );
       // A later item carrying a lower event (a gap replay's item).
       await enqueueSingle(backend, 'primary', eventId: 't2', sequenceNumber: 4);
+      // A released item carrying a still lower event, which does not count
+      // toward the lowest and is returned whole.
+      final released = await enqueueSingle(
+        backend,
+        'primary',
+        eventId: 't3',
+        sequenceNumber: 2,
+        blockKey: 'K',
+        releasedHoldId: 'hold-k',
+      );
       final sweep = await backend.transaction(
         (txn) => backend.deleteNullRowsAfterSequenceInQueueTxn(
           txn,
@@ -3352,7 +3363,14 @@ void _registerFifoTests(
           head.sequenceInQueue,
         ),
       );
-      expect(sweep, const TrailSweepResult(deletedCount: 2, minFirstSeq: 4));
+      expect(
+        sweep,
+        TrailSweepResult(
+          deletedCount: 3,
+          minFirstSeq: 4,
+          released: <FifoEntry>[released],
+        ),
+      );
       final rows = await backend.listFifoEntries('primary');
       expect(rows.map((r) => r.entryId), [head.entryId]);
 

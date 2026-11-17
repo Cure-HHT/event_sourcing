@@ -3057,8 +3057,9 @@ class PostgresBackend extends StorageBackend {
   //   strictly greater than [afterSequenceInQueue] AND whose
   //   final_status IS null. Terminal rows are retained for the database's
   //   lifetime as audit records and never touched here. Returns a
-  //   TrailSweepResult (the deleted count and lowest first sequence, read
-  //   through DELETE ... RETURNING).
+  //   TrailSweepResult (the deleted count, the lowest first sequence of a
+  //   deleted row no release enqueued, and the deleted rows a release
+  //   enqueued, read through DELETE ... RETURNING).
   @override
   @internal
   Future<TrailSweepResult> deleteNullRowsAfterSequenceInQueueTxn(
@@ -3073,18 +3074,26 @@ class PostgresBackend extends StorageBackend {
         WHERE destination_id = @dest
           AND sequence_in_queue > @afterSeq
           AND final_status IS NULL
-        RETURNING event_id_first_seq
+        RETURNING *
       '''),
       parameters: {'dest': destinationId, 'afterSeq': afterSequenceInQueue},
     );
     int? minFirstSeq;
+    final released = <FifoEntry>[];
     for (final row in result) {
-      final firstSeq = row[0]! as int;
+      final entry = _fifoEntryFromRow(row);
+      if (entry.releasedHoldId != null) {
+        released.add(entry);
+        continue;
+      }
+      final firstSeq = entry.sequenceRange.firstSeq;
       if (minFirstSeq == null || firstSeq < minFirstSeq) minFirstSeq = firstSeq;
     }
+    released.sort((a, b) => a.sequenceInQueue.compareTo(b.sequenceInQueue));
     return TrailSweepResult(
       deletedCount: result.length,
       minFirstSeq: minFirstSeq,
+      released: released,
     );
   }
 

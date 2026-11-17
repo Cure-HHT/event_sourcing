@@ -5,9 +5,9 @@
 // operating lifetime (F).
 // Implements: EVS-PRD-destinations/M+N+O
 // recovery requires a wedged head and
-//   rewinds below every item it removes; deletion is refused on a pending
-//   head, retains the delivery record, and a destination registered again
-//   under the same id delivers.
+//   rewinds below every item it removes that no release enqueued; deletion
+//   is refused on a pending head, retains the delivery record, and a
+//   destination registered again under the same id delivers.
 // Implements: EVS-DEV-destination-drain/A+E+F+U
 // the registry's operations act on the
 //   persisted schedule, decide every outcome (refusals and no-op outcomes
@@ -796,13 +796,22 @@ class DestinationRegistry {
   /// set (null when it set none).
   ///
   /// The fill position is rewound below the lowest event carried by any
-  /// item the recovery removes — the head and every swept item, including
-  /// a gap replay's items, whose events can lie below the head's — so the
-  /// next fill re-evaluates each of those events against the filter and
-  /// schedule of the destination the drainer registers. Events carried by
-  /// `sent` items above that point are enqueued again and delivered again
-  /// (at-least-once). A pending replay request survives and is bounded by
-  /// the rewound position. The refill is performed by the drainer's fill.
+  /// item the recovery removes that no release enqueued — the head and
+  /// every swept item, including a gap replay's items, whose events can lie
+  /// below the head's — so the next fill re-evaluates each of those events
+  /// against the filter and schedule of the destination the drainer
+  /// registers. Events carried by `sent` items above that point are
+  /// enqueued again and delivered again (at-least-once). A pending replay
+  /// request survives and is bounded by the rewound position. The refill is
+  /// performed by the drainer's fill.
+  ///
+  /// A removed item that a release enqueued (the head included) does not
+  /// count in the rewind: its events return to its block key's list at
+  /// their sequence positions, where the next release queues them again in
+  /// order. An existing list keeps its state and hold id; a missing one is
+  /// created releasing under the hold id the item records. When every
+  /// removed item was enqueued by a release, the fill position is left
+  /// where it was and `rewoundTo` reports it.
   ///
   /// Returns a [TombstoneAndRefillResult].
   Future<TombstoneAndRefillResult> tombstoneAndRefill(
@@ -935,12 +944,27 @@ class DestinationRegistry {
       destinationId,
       head.sequenceInQueue,
     );
-    final swept = sweep.minFirstSeq;
-    final lowest = swept != null && swept < targetFirstSeq
-        ? swept
-        : targetFirstSeq;
-    final rewoundTo = lowest - 1;
-    await _backend.writeFillCursorTxn(txn, destinationId, rewoundTo);
+    // Implements: EVS-DEV-destination-key-hold/X
+    // Implements: EVS-DEV-destination-drain/F
+    // Implements: EVS-PRD-destinations/N
+    // the head and every swept item a release enqueued return their events
+    //   to their key's list; the rewind counts only the removed items no
+    //   release enqueued, and leaves the fill position where it was when
+    //   there are none.
+    await _returnReleasedInTxn(txn, destinationId, <FifoEntry>[
+      if (head.releasedHoldId != null) head,
+      ...sweep.released,
+    ]);
+    final lows = <int>[
+      if (head.releasedHoldId == null) targetFirstSeq,
+      ?sweep.minFirstSeq,
+    ];
+    final rewoundTo = lows.isEmpty
+        ? cursorBefore
+        : lows.reduce((a, b) => a < b ? a : b) - 1;
+    if (lows.isNotEmpty) {
+      await _backend.writeFillCursorTxn(txn, destinationId, rewoundTo);
+    }
     await _backend.clearWedgeRecordTxn(txn, destinationId);
     // Implements: EVS-DEV-destination-drain/F
     // recovery removes the destination's transform failure record along
@@ -1812,6 +1836,9 @@ class DestinationRegistry {
   // Implements: EVS-PRD-destination-key-hold/J
   // a clearing event is appended when a released key's held events have
   //   all been queued.
+  // Implements: EVS-DEV-destination-key-hold/U
+  // no clearing event is appended for a hold that already has one, as for
+  //   a list a recovery created again under a hold already cleared.
   Future<void> _clearHoldInTxn(
     Transaction txn,
     PublishCollector collector, {
@@ -1819,6 +1846,16 @@ class DestinationRegistry {
     required String key,
     required String holdId,
   }) async {
+    if (await _holdEventInTxn(
+          txn,
+          entryType: kDestinationHoldClearedEntryType,
+          eventType: kDestinationHoldClearedEventType,
+          destinationId: destinationId,
+          holdId: holdId,
+        ) !=
+        null) {
+      return;
+    }
     _consultAuditAppendSeam(kDestinationHoldClearedEntryType);
     await _emitDestinationAuditInTxn(
       txn,
@@ -1837,6 +1874,99 @@ class DestinationRegistry {
       //   transaction, an always-stored event.
       mode: ApplyEventMode.alwaysStored,
     );
+  }
+
+  /// Returns, inside [txn], the events of each of [items], queue items a
+  /// release enqueued that an operator recovery removes, to [destinationId]'s
+  /// list of the item's block key, at their sequence positions and each
+  /// event once. An existing list keeps its state, hold id and cause; a
+  /// missing one is created in state releasing under the hold id the item
+  /// records, with the cause of that hold's event.
+  ///
+  /// Throws [StateError] when an item carries no block key, when one of its
+  /// events is not in the log, or when the log holds no hold event for the
+  /// hold id of a list it must create.
+  // Implements: EVS-DEV-destination-key-hold/X
+  // a recovery returns each removed released item's events to its key's
+  //   list at sequence position, keeping an existing list's state and hold
+  //   id and creating a missing list releasing under the item's hold id.
+  Future<void> _returnReleasedInTxn(
+    Transaction txn,
+    String destinationId,
+    List<FifoEntry> items,
+  ) async {
+    if (items.isEmpty) return;
+    final lists = <String, KeyList>{
+      ...await _backend.readKeyListsTxn(txn, destinationId),
+    };
+    for (final item in items) {
+      final key = item.blockKey;
+      final holdId = item.releasedHoldId!;
+      if (key == null) {
+        throw StateError(
+          'tombstoneAndRefill($destinationId): released item '
+          '${item.entryId} carries no block key.',
+        );
+      }
+      var list = lists[key];
+      if (list == null) {
+        final held = await _holdEventInTxn(
+          txn,
+          entryType: kDestinationHeldEntryType,
+          eventType: kDestinationHeldEventType,
+          destinationId: destinationId,
+          holdId: holdId,
+        );
+        if (held == null) {
+          throw StateError(
+            'tombstoneAndRefill($destinationId): the log holds no hold event '
+            'for hold $holdId, which released item ${item.entryId} records.',
+          );
+        }
+        list = KeyList(
+          holdId: holdId,
+          state: KeyListState.releasing,
+          cause: held.data['cause']! as String,
+          events: const <KeyListEvent>[],
+        );
+      }
+      for (final eventId in item.eventIds) {
+        final event = await _backend.findEventByIdInTxn(txn, eventId);
+        if (event == null) {
+          throw StateError(
+            'tombstoneAndRefill($destinationId): event $eventId of released '
+            'item ${item.entryId} is not in the log.',
+          );
+        }
+        list = list!.withInserted(
+          KeyListEvent(eventId: eventId, sequenceNumber: event.sequenceNumber),
+        );
+      }
+      lists[key] = list!;
+    }
+    await _backend.writeKeyListsTxn(txn, destinationId, lists);
+  }
+
+  /// The latest event of [entryType] and [eventType] the log holds, read
+  /// inside [txn], for [destinationId] and hold id [holdId]; null when none.
+  Future<StoredEvent?> _holdEventInTxn(
+    Transaction txn, {
+    required String entryType,
+    required String eventType,
+    required String destinationId,
+    required String holdId,
+  }) async {
+    await for (final event in _backend.readEventsReverseInTxn(
+      txn,
+      eventTypes: <String>{eventType},
+    )) {
+      if (event.entryType == entryType &&
+          event.data['id'] == destinationId &&
+          event.data['hold_id'] == holdId) {
+        return event;
+      }
+    }
+    return null;
   }
 
   /// Consults the `failRegistryAuditAppend` test seam for an audit of
