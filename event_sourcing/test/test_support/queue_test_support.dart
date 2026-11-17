@@ -12,7 +12,6 @@ import 'package:event_sourcing/src/ingest/delivery_channel.dart';
 import 'package:event_sourcing/src/security/system_entry_types.dart'
     show
         kDestinationChannelResumedEntryType,
-        kDestinationHeldEntryType,
         kDestinationHoldClearedEntryType,
         kDestinationHoldReleasedEntryType,
         kDestinationSenderSucceededEntryType;
@@ -406,6 +405,50 @@ Future<String> wedgeHeadForTest(
   return head.entryId;
 }
 
+/// Hold the block key of [destinationId]'s pending head the supported way:
+/// one drain pass, through [registry], whose delivery reports a permanent
+/// failure scoped to the head's key (so the hold event and the key list are
+/// written with the hold). The head must carry a block key, every pending
+/// item must carry one, and every event it carries must be in the log.
+/// Returns the new hold id. Throws when no hold was made.
+Future<String> holdKeyForTest(
+  DestinationRegistry registry,
+  String destinationId,
+) async {
+  final reader = registry.eventStore.reader;
+  final head = await reader.readFifoHead(destinationId);
+  final key = head?.blockKey;
+  if (head == null || head.finalStatus != null || key == null) {
+    throw StateError(
+      'holdKeyForTest($destinationId): the head is not a pending item '
+      'carrying a block key',
+    );
+  }
+  await drainForTest(
+    FakeDestination(
+      id: destinationId,
+      script: <SendResult>[
+        const SendPermanent(
+          error: 'refused for this key by the test receiver',
+          scope: WedgeScope.key,
+        ),
+      ],
+    ),
+    registry: registry,
+    clock: () => DateTime.utc(2100),
+  );
+  final after = await reader.readFifoRow(destinationId, head.entryId);
+  final lists = await testBackendOf(registry.eventStore).transaction(
+    (txn) =>
+        testBackendOf(registry.eventStore).readKeyListsTxn(txn, destinationId),
+  );
+  final holdId = lists[key]?.holdId;
+  if (after?.finalStatus != FinalStatus.tombstoned || holdId == null) {
+    throw StateError('holdKeyForTest($destinationId): the key was not held');
+  }
+  return holdId;
+}
+
 /// Persist [schedule] (see [persistScheduleForTest]) and run one fill over
 /// it: the fill reads the persisted schedule, so a test that describes the
 /// window in memory persists it first. For a destination that serializes
@@ -444,13 +487,12 @@ Future<void> fillWithScheduleForTest(
 }
 
 /// Not yet built: the destination audit kinds no operation of this build
-/// appends (the restore's succession event, and a keyed destination's hold,
+/// appends (the restore's succession event, and a keyed destination's
 /// release and clearing events), so no fixture can append one. Fixtures that
 /// append one audit of every kind leave them out; remove each kind from this
 /// set when it has an emitter.
 const Set<String> destinationAuditsWithoutEmitter = <String>{
   kDestinationSenderSucceededEntryType,
-  kDestinationHeldEntryType,
   kDestinationHoldReleasedEntryType,
   kDestinationHoldClearedEntryType,
 };

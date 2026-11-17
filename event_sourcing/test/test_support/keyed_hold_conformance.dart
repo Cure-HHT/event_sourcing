@@ -1,20 +1,22 @@
 // Backend-agnostic scenarios for a keyed destination's queue: the block key
 // the fill and every replay evaluate and store on each queue item, the
-// routing of a listed key's events into its key list, and the failure path
-// of a block-key evaluation that throws. Sembast runs them from
+// routing of a listed key's events into its key list, the failure path
+// of a block-key evaluation that throws, and the hold a key-scoped
+// permanent failure commits. Sembast runs them from
 // test/sync/keyed_hold_sembast_test.dart and Postgres from
 // test/storage/postgres/postgres_keyed_hold_test.dart.
 //
 // This file exposes one function, [runKeyedHoldScenarios], and registers no
 // `main()` of its own. Traceability lives on the individual tests.
 import 'package:event_sourcing/event_sourcing.dart';
+import 'package:event_sourcing/src/event_store.dart' show holdKeyInTxnForTest;
 import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'declarations.dart';
 import 'fake_destination.dart';
 import 'queue_registry_conformance.dart' show QueueTestDatabase;
-import 'queue_test_support.dart' show fillForTest;
+import 'queue_test_support.dart' show drainForTest, fillForTest;
 import 'test_backends.dart';
 
 const Initiator _init = AutomationInitiator(service: 'keyed-hold-scenarios');
@@ -153,7 +155,51 @@ class _World {
 
   Future<ReplayRequest?> replayRequest(String id) =>
       backend.transaction((txn) => backend.readReplayRequestTxn(txn, id));
+
+  Future<WedgeRecord?> wedgeRecord(String id) =>
+      backend.transaction((txn) => backend.readWedgeRecordTxn(txn, id));
+
+  /// One drain pass of [d] through the current process, at a time after
+  /// every backoff.
+  Future<void> drain(Destination d, {SyncPolicy? policy}) => drainForTest(
+    d,
+    registry: registry,
+    clock: () => DateTime.utc(2100),
+    policy: policy ?? _policy(),
+  );
+
+  /// Fills [d] until every event of the log is queued or listed.
+  Future<void> fillAll(Destination d, {int passes = 10}) async {
+    for (var i = 0; i < passes; i++) {
+      await fill(d);
+    }
+  }
+
+  Future<List<StoredEvent>> heldEvents() =>
+      backend.findAllEvents(entryType: kDestinationHeldEntryType);
+
+  Future<List<StoredEvent>> wedgeEvents() =>
+      backend.findAllEvents(entryType: kDestinationWedgedEntryType);
 }
+
+/// The data keys of a hold event.
+const Set<String> _holdEventKeys = <String>{
+  'id',
+  'database_id',
+  'key',
+  'hold_id',
+  'row_id',
+  'failed_event_id',
+  'event_ids',
+  'cause',
+  'attempt_count',
+};
+
+/// A key-scoped permanent failure.
+const SendPermanent _keyRefusal = SendPermanent(
+  error: 'refused for this key',
+  scope: WedgeScope.key,
+);
 
 /// Run every keyed-hold scenario against a database [databaseFactory]
 /// builds fresh for each test (a null database skips the test).
@@ -536,6 +582,384 @@ void runKeyedHoldScenarios(
       expect(item.transformFailed, isFalse);
       expect(await w.replayRequest(d.id), isNull);
       expect(await w.failureRecord(d.id), isNull);
+    });
+
+    // ------------------------------------------------------------------
+    // The hold a key-scoped permanent failure commits
+    // ------------------------------------------------------------------
+
+    // Verifies: EVS-DEV-destination-key-hold/H+J+K
+    // Verifies: EVS-DEV-destination-drain/B+C+D
+    test('SendPermanent(scope: key) holds the key', () async {
+      if (!available) return;
+      final d = FakeDestination(
+        id: 'keyed',
+        keyOf: noteKey,
+        script: <SendResult>[_keyRefusal, const SendOk()],
+      );
+      await w.activateResolved(d);
+      final a1 = await w.note('a1', key: 'A');
+      final b1 = await w.note('b1', key: 'B');
+      final a2 = await w.note('a2', key: 'A');
+      await w.fillAll(d);
+      final queued = await w.items(d.id);
+      expect(queued.map((i) => i.blockKey), <String?>['A', 'B', 'A']);
+      await w.drain(d);
+      final items = await w.items(d.id);
+      expect(
+        items.map((i) => i.entryId),
+        <String>[queued[0].entryId, queued[1].entryId],
+        reason: "K's pending item behind the head is deleted",
+      );
+      final head = items.first;
+      expect(head.finalStatus, FinalStatus.tombstoned);
+      expect(head.attempts, hasLength(1));
+      expect(head.attempts.single.outcome, 'permanent');
+      expect(head.attempts.single.scope, WedgeScope.key);
+      final held = (await w.heldEvents()).single;
+      expect(held.data.keys.toSet(), _holdEventKeys);
+      expect(held.data['id'], d.id);
+      expect(held.data['database_id'], w.a.store.databaseId);
+      expect(held.data['key'], 'A');
+      expect(held.data['row_id'], head.entryId);
+      expect(held.data['failed_event_id'], isNull);
+      expect(held.data['event_ids'], <String>[a1.eventId, a2.eventId]);
+      expect(held.data['cause'], 'permanent_refusal');
+      expect(held.data['attempt_count'], 1);
+      final holdId = held.data['hold_id']! as String;
+      expect(await w.keyLists(d.id), <String, KeyList>{
+        'A': KeyList(
+          holdId: holdId,
+          state: KeyListState.held,
+          cause: 'permanent_refusal',
+          events: <KeyListEvent>[listEventOf(a1), listEventOf(a2)],
+        ),
+      });
+      expect(await w.wedgeRecord(d.id), isNull);
+      expect(await w.wedgeEvents(), isEmpty);
+      expect(items.last.eventIds, <String>[b1.eventId]);
+    });
+
+    // Verifies: EVS-DEV-destination-key-hold/H
+    test("another key's next item is sent after a hold", () async {
+      if (!available) return;
+      final d = FakeDestination(
+        id: 'keyed',
+        keyOf: noteKey,
+        script: <SendResult>[_keyRefusal, const SendOk(), const SendOk()],
+      );
+      await w.activateResolved(d);
+      await w.note('a1', key: 'A');
+      final b1 = await w.note('b1', key: 'B');
+      final c1 = await w.note('c1', key: 'C');
+      await w.fillAll(d);
+      await w.drain(d);
+      expect(d.sent, hasLength(3), reason: 'the pass goes on after the hold');
+      final items = await w.items(d.id);
+      expect(items.map((i) => i.finalStatus), <FinalStatus?>[
+        FinalStatus.tombstoned,
+        FinalStatus.sent,
+        FinalStatus.sent,
+      ]);
+      expect(items[1].eventIds, <String>[b1.eventId]);
+      expect(items[2].eventIds, <String>[c1.eventId]);
+    });
+
+    // Verifies: EVS-DEV-destination-key-hold/H+L
+    test("the held key's later events go to its list", () async {
+      if (!available) return;
+      final d = FakeDestination(
+        id: 'keyed',
+        keyOf: noteKey,
+        script: <SendResult>[_keyRefusal],
+      );
+      await w.activateResolved(d);
+      final a1 = await w.note('a1', key: 'A');
+      await w.fillAll(d);
+      await w.drain(d);
+      final a2 = await w.note('a2', key: 'A');
+      await w.fillAll(d);
+      expect(await w.items(d.id), hasLength(1), reason: 'only the held head');
+      expect((await w.keyLists(d.id))['A']!.events, <KeyListEvent>[
+        listEventOf(a1),
+        listEventOf(a2),
+      ]);
+    });
+
+    // Verifies: EVS-DEV-destination-key-hold/I
+    test('a key-scoped failure while any keyless pending item exists wedges '
+        'the destination', () async {
+      if (!available) return;
+      final d = FakeDestination(
+        id: 'keyed',
+        keyOf: noteKey,
+        script: <SendResult>[_keyRefusal],
+      );
+      await w.activateResolved(d);
+      await w.note('a1', key: 'A');
+      await w.note('n1');
+      await w.fillAll(d);
+      await w.drain(d);
+      final head = (await w.items(d.id)).first;
+      expect(head.finalStatus, FinalStatus.wedged);
+      expect(head.attempts.single.scope, WedgeScope.key);
+      expect((await w.wedgeRecord(d.id))!.cause, WedgeCause.permanentRefusal);
+      expect(await w.keyLists(d.id), isEmpty);
+      expect(await w.heldEvents(), isEmpty);
+      expect(await w.wedgeEvents(), hasLength(1));
+    });
+
+    // Verifies: EVS-DEV-destination-key-hold/I
+    test(
+      'a key-scoped failure on a keyless item wedges the destination',
+      () async {
+        if (!available) return;
+        final d = FakeDestination(
+          id: 'keyed',
+          keyOf: noteKey,
+          script: <SendResult>[_keyRefusal],
+        );
+        await w.activateResolved(d);
+        await w.note('n1');
+        await w.note('a1', key: 'A');
+        await w.fillAll(d);
+        await w.drain(d);
+        final items = await w.items(d.id);
+        expect(items.first.blockKey, isNull);
+        expect(items.first.finalStatus, FinalStatus.wedged);
+        expect((await w.wedgeRecord(d.id))!.cause, WedgeCause.permanentRefusal);
+        expect(await w.keyLists(d.id), isEmpty);
+        expect(await w.heldEvents(), isEmpty);
+      },
+    );
+
+    // Verifies: EVS-DEV-destination-key-hold/J
+    // Verifies: EVS-DEV-destination-drain/J
+    test('SendPermanent with destination scope on a keyed item wedges as '
+        'today', () async {
+      if (!available) return;
+      final d = FakeDestination(
+        id: 'keyed',
+        keyOf: noteKey,
+        script: <SendResult>[const SendPermanent(error: 'refused')],
+      );
+      await w.activateResolved(d);
+      await w.note('a1', key: 'A');
+      await w.note('a2', key: 'A');
+      await w.fillAll(d);
+      await w.drain(d);
+      final items = await w.items(d.id);
+      expect(items, hasLength(2));
+      expect(items.first.finalStatus, FinalStatus.wedged);
+      expect(items.first.attempts.single.scope, WedgeScope.destination);
+      expect(items.last.finalStatus, isNull);
+      expect((await w.wedgeRecord(d.id))!.cause, WedgeCause.permanentRefusal);
+      expect(await w.keyLists(d.id), isEmpty);
+      expect(await w.heldEvents(), isEmpty);
+    });
+
+    // Verifies: EVS-DEV-destination-key-hold/H+J
+    // Verifies: EVS-DEV-destination-drain/C+J
+    test('restart after a key-scoped attempt re-derives the hold', () async {
+      if (!available) return;
+      final d = FakeDestination(
+        id: 'keyed',
+        keyOf: noteKey,
+        script: <SendResult>[_keyRefusal],
+      );
+      await w.activateResolved(d);
+      final a1 = await w.note('a1', key: 'A');
+      final b1 = await w.note('b1', key: 'B');
+      final a2 = await w.note('a2', key: 'A');
+      await w.fillAll(d);
+      var failed = false;
+      await runWithDeliveryTestHooks(
+        DeliveryTestHooks(
+          failOutcomeTransaction: (id, outcome) {
+            if (failed) return false;
+            failed = true;
+            return true;
+          },
+        ),
+        () => w.drain(d),
+      );
+      expect(failed, isTrue);
+      var items = await w.items(d.id);
+      expect(items, hasLength(3), reason: 'the hold did not commit');
+      expect(items.first.finalStatus, isNull);
+      expect(items.first.attempts.single.scope, WedgeScope.key);
+      expect(await w.keyLists(d.id), isEmpty);
+      expect(await w.heldEvents(), isEmpty);
+
+      // A new process, whose drainer sends only the other key's item.
+      w.a = await w.openProcess();
+      final after = FakeDestination(
+        id: 'keyed',
+        keyOf: noteKey,
+        script: <SendResult>[const SendOk()],
+      );
+      await w.drain(after);
+      expect(after.sent, hasLength(1), reason: 'the hold needs no send');
+      items = await w.items(d.id);
+      expect(items.map((i) => i.finalStatus), <FinalStatus?>[
+        FinalStatus.tombstoned,
+        FinalStatus.sent,
+      ]);
+      expect(items.last.eventIds, <String>[b1.eventId]);
+      final held = (await w.heldEvents()).single;
+      expect(held.data['attempt_count'], 1);
+      expect(held.data['event_ids'], <String>[a1.eventId, a2.eventId]);
+      expect((await w.keyLists(d.id))['A']!.holdId, held.data['hold_id']);
+    });
+
+    // Verifies: EVS-DEV-destination-key-hold/H
+    test('a hold merges with an existing list in sequence order', () async {
+      if (!available) return;
+      final d = FakeDestination(
+        id: 'keyed',
+        keyOf: noteKey,
+        script: <SendResult>[_keyRefusal],
+      );
+      await w.activateResolved(d);
+      final a1 = await w.note('a1', key: 'A');
+      final a2 = await w.note('a2', key: 'A');
+      final a3 = await w.note('a3', key: 'A');
+      await w.fill(d);
+      await w.fill(d);
+      // The list a release still holds the latest event in.
+      final releasing = KeyList(
+        holdId: 'earlier-hold',
+        state: KeyListState.releasing,
+        cause: 'permanent_refusal',
+        events: <KeyListEvent>[listEventOf(a3)],
+      );
+      await w.writeKeyLists(d.id, <String, KeyList>{'A': releasing});
+      await w.fillAll(d);
+      expect(await w.items(d.id), hasLength(2));
+      await w.drain(d);
+      final held = (await w.heldEvents()).single;
+      final holdId = held.data['hold_id']! as String;
+      expect(holdId, isNot('earlier-hold'));
+      expect(held.data['event_ids'], <String>[
+        a1.eventId,
+        a2.eventId,
+        a3.eventId,
+      ]);
+      expect(await w.keyLists(d.id), <String, KeyList>{
+        'A': KeyList(
+          holdId: holdId,
+          state: KeyListState.held,
+          cause: 'permanent_refusal',
+          events: <KeyListEvent>[
+            listEventOf(a1),
+            listEventOf(a2),
+            listEventOf(a3),
+          ],
+        ),
+      });
+      expect(await w.items(d.id), hasLength(1));
+    });
+
+    // Verifies: EVS-DEV-destination-drain/J
+    test(
+      'retry-budget exhaustion on a keyed item wedges the destination',
+      () async {
+        if (!available) return;
+        final d = FakeDestination(
+          id: 'keyed',
+          keyOf: noteKey,
+          script: <SendResult>[const SendTransient(error: 'busy')],
+        );
+        await w.activateResolved(d);
+        await w.note('a1', key: 'A');
+        await w.fillAll(d);
+        await w.drain(d, policy: _policy(maxAttempts: 1));
+        final head = (await w.items(d.id)).single;
+        expect(head.finalStatus, FinalStatus.wedged);
+        expect(
+          (await w.wedgeRecord(d.id))!.cause,
+          WedgeCause.retryBudgetExhausted,
+        );
+        expect(await w.keyLists(d.id), isEmpty);
+        expect(await w.heldEvents(), isEmpty);
+      },
+    );
+
+    // Verifies: EVS-DEV-destination-key-hold/H
+    // Verifies: EVS-DEV-destination-drain/J
+    test(
+      'a key-scoped refusal that spends the retry budget holds the key',
+      () async {
+        if (!available) return;
+        final d = FakeDestination(
+          id: 'keyed',
+          keyOf: noteKey,
+          script: <SendResult>[
+            const SendTransient(error: 'busy'),
+            _keyRefusal,
+          ],
+        );
+        await w.activateResolved(d);
+        await w.note('a1', key: 'A');
+        await w.fillAll(d);
+        final policy = _policy(maxAttempts: 2);
+        await w.drain(d, policy: policy);
+        await w.drain(d, policy: policy);
+        final head = (await w.items(d.id)).single;
+        expect(head.attempts, hasLength(2));
+        expect(head.finalStatus, FinalStatus.tombstoned);
+        expect(await w.wedgeRecord(d.id), isNull);
+        final held = (await w.heldEvents()).single;
+        expect(held.data['attempt_count'], 2);
+        expect(held.data['cause'], 'permanent_refusal');
+      },
+    );
+
+    // Verifies: EVS-DEV-destination-key-hold/K+W
+    test('a hold with no queue item names the event a release failed to '
+        'build', () async {
+      if (!available) return;
+      final d = FakeDestination(id: 'keyed', keyOf: noteKey);
+      await w.activateResolved(d);
+      final a1 = await w.note('a1', key: 'A');
+      final a2 = await w.note('a2', key: 'A');
+      await w.writeKeyLists(d.id, <String, KeyList>{
+        'A': KeyList(
+          holdId: 'earlier-hold',
+          state: KeyListState.releasing,
+          cause: 'permanent_refusal',
+          events: <KeyListEvent>[listEventOf(a1), listEventOf(a2)],
+        ),
+      });
+      final holdId = await w.a.store.runTransaction(
+        (txn, collector) => holdKeyInTxnForTest(
+          w.registry,
+          txn,
+          collector,
+          destinationId: d.id,
+          key: 'A',
+          failedEventId: a1.eventId,
+          cause: 'transform_failed',
+          attemptCount: 3,
+        ),
+      );
+      final held = (await w.heldEvents()).single;
+      expect(held.data.keys.toSet(), _holdEventKeys);
+      expect(held.data['hold_id'], holdId);
+      expect(held.data['row_id'], isNull);
+      expect(held.data['failed_event_id'], a1.eventId);
+      expect(held.data['event_ids'], <String>[a1.eventId, a2.eventId]);
+      expect(held.data['cause'], 'transform_failed');
+      expect(held.data['attempt_count'], 3);
+      expect(await w.keyLists(d.id), <String, KeyList>{
+        'A': KeyList(
+          holdId: holdId,
+          state: KeyListState.held,
+          cause: 'transform_failed',
+          events: <KeyListEvent>[listEventOf(a1), listEventOf(a2)],
+        ),
+      });
+      expect(await w.items(d.id), isEmpty);
     });
   });
 }

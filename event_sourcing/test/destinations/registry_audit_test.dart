@@ -283,6 +283,16 @@ void main() {
         initiator: _user,
       );
       await ds.destinations.deleteDestination('wedged', initiator: _user);
+      // The drainer holds a block key, appending the hold event.
+      final logged = (await backend.findAllEvents()).first;
+      await enqueueSingle(
+        backend,
+        'held',
+        eventId: logged.eventId,
+        sequenceNumber: logged.sequenceNumber,
+        blockKey: 'K',
+      );
+      await holdKeyForTest(ds.destinations, 'held');
       // The drainer resumes a channel, appending the resume event.
       await resumeChannelForTest(
         ds.destinations,
@@ -336,6 +346,7 @@ void main() {
         kDestinationChannelResumedEventType,
         kDestinationHaltRequestedEventType,
         kDestinationHaltCancelledEventType,
+        kDestinationHeldEventType,
       });
     });
 

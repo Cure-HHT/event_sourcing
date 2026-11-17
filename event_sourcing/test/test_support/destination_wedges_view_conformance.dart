@@ -581,6 +581,9 @@ void runDestinationWedgesViewScenarios(
           await r.registry.cancelHalt('k', initiator: _init);
           await wedgeHeadForTest(r.registry, 'k');
           await r.registry.deleteDestination('k', initiator: _init);
+          final keyed = FakeDestination(id: 'h', keyOf: (_) => 'K');
+          await r.queued(keyed);
+          await holdKeyForTest(r.registry, 'h');
           await resumeChannelForTest(r.registry, r.backend, initiator: _init);
           final audits = <StoredEvent>[
             for (final e in await r.events())
@@ -1321,6 +1324,9 @@ void runDestinationWedgesViewScenarios(
         await s.registry.setEndDate('e', DateTime.utc(2100), initiator: _init);
         await s.registry.tombstoneAndRefill('e', row, initiator: _init);
         await s.registry.deleteDestination('e', initiator: _init);
+        final keyed = FakeDestination(id: 'h', keyOf: (_) => 'K');
+        await s.queued(keyed);
+        await holdKeyForTest(s.registry, 'h');
         await resumeChannelForTest(s.registry, backend, initiator: _init);
         final secured = await store.append(
           entryType: _noteType,

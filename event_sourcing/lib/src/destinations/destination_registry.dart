@@ -1527,6 +1527,143 @@ class DestinationRegistry {
     );
   }
 
+  /// Holds block key [key] of [destinationId] inside [txn], under the drain
+  /// lock its caller holds, and returns the new hold id.
+  ///
+  /// With a [head] (the pending queue head the drainer sent, whose block
+  /// key is [key] and whose final attempt, recorded earlier in [txn],
+  /// reported a permanent failure scoped to its key), the hold tombstones
+  /// the head in a statement of its own (the Postgres guard refuses an
+  /// attempt append and a status change in one update) and deletes [key]'s
+  /// pending items behind it. With no [head] (a release that failed to
+  /// build the event [failedEventId] until its retry budget was spent), it
+  /// touches no queue item.
+  ///
+  /// It then sets [key]'s list to the events of the head, of the deleted
+  /// items and of any existing list, merged in sequence order with each
+  /// event once, in state held under the new hold id with [cause], and
+  /// appends the `system.destination_held` event carrying the hold id.
+  /// [attemptCount] is the attempts recorded on the head, the final one
+  /// included, or the release failures recorded for the key. Leaves the
+  /// wedge record and the halt request unchanged.
+  ///
+  /// Throws [StateError] when [head] is not the pending head of the queue,
+  /// carries another block key, or its last recorded attempt is no
+  /// key-scoped permanent failure, and when an event the list would hold is
+  /// missing from the log.
+  // Implements: EVS-DEV-destination-key-hold/H+K
+  // one transaction records the attempt (the caller), tombstones the head,
+  //   deletes K's pending items behind it, merges K's list in sequence
+  //   order under a new hold id in state held, and appends the hold event
+  //   with exactly its data keys.
+  // Implements: EVS-DEV-destination-drain/B+D
+  // a hold tombstones a pending head carrying attempts, and appends a hold
+  //   event only for the pending head it tombstones or the list a release
+  //   failure returns to held.
+  Future<String> _holdKeyInTxn(
+    Transaction txn,
+    PublishCollector collector, {
+    required String destinationId,
+    required String key,
+    required String cause,
+    required int attemptCount,
+    FifoEntry? head,
+    String? failedEventId,
+  }) async {
+    _observeBodyRun('holdKeyInTxn');
+    final eventIds = <String>[];
+    if (head != null) {
+      final current = await _backend.readFifoHeadTxn(txn, destinationId);
+      if (current == null ||
+          current.entryId != head.entryId ||
+          current.finalStatus != null) {
+        throw StateError(
+          'holdKeyInTxn($destinationId, $key): item ${head.entryId} is not '
+          'the pending queue head; the head is ${current?.entryId} '
+          '(${current?.finalStatus?.toJson() ?? 'pending'}).',
+        );
+      }
+      if (current.blockKey != key) {
+        throw StateError(
+          'holdKeyInTxn($destinationId, $key): the head carries block key '
+          '${current.blockKey}.',
+        );
+      }
+      final last = current.attempts.isEmpty ? null : current.attempts.last;
+      if (last?.outcome != 'permanent' || last?.scope != WedgeScope.key) {
+        throw StateError(
+          'holdKeyInTxn($destinationId, $key): the last recorded attempt '
+          'is no permanent failure scoped to its key.',
+        );
+      }
+      await _backend.setFinalStatusTxn(
+        txn,
+        destinationId,
+        current.entryId,
+        FinalStatus.tombstoned,
+      );
+      final deleted = await _backend.deletePendingRowsForKeyAfterTxn(
+        txn,
+        destinationId,
+        key,
+        current.sequenceInQueue,
+      );
+      eventIds
+        ..addAll(current.eventIds)
+        ..addAll(<String>[for (final row in deleted) ...row.eventIds]);
+    }
+    final lists = await _backend.readKeyListsTxn(txn, destinationId);
+    final existing = lists[key];
+    final events = <KeyListEvent>[...?existing?.events];
+    for (final eventId in eventIds) {
+      final event = await _backend.findEventByIdInTxn(txn, eventId);
+      if (event == null) {
+        throw StateError(
+          'holdKeyInTxn($destinationId, $key): event $eventId is not in '
+          'the log.',
+        );
+      }
+      events.add(
+        KeyListEvent(eventId: eventId, sequenceNumber: event.sequenceNumber),
+      );
+    }
+    final holdId = _eventStore._uuid.v4();
+    final list = KeyList(
+      holdId: holdId,
+      state: KeyListState.held,
+      cause: cause,
+      events: events,
+    );
+    await _backend.writeKeyListsTxn(txn, destinationId, <String, KeyList>{
+      ...lists,
+      key: list,
+    });
+    _consultAuditAppendSeam(kDestinationHeldEntryType);
+    await _emitDestinationAuditInTxn(
+      txn,
+      collector,
+      entryType: kDestinationHeldEntryType,
+      eventType: kDestinationHeldEventType,
+      data: <String, Object?>{
+        'id': destinationId,
+        // `database_id` is added by the audit emitter.
+        'key': key,
+        'hold_id': holdId,
+        'row_id': head?.entryId,
+        'failed_event_id': head == null ? failedEventId : null,
+        'event_ids': <String>[for (final e in list.events) e.eventId],
+        'cause': cause,
+        'attempt_count': attemptCount,
+      },
+      initiator: _drainInitiator,
+      // Implements: EVS-DEV-view-convergence/E
+      // the hold event is a record the drainer appends in its own
+      //   transaction, an always-stored event.
+      mode: ApplyEventMode.alwaysStored,
+    );
+    return holdId;
+  }
+
   /// Consults the `failRegistryAuditAppend` test seam for an audit of
   /// [entryType], inside the transaction that appends it: after a registry
   /// operation's last write, and for the drainer's wedge in place of the
@@ -1636,5 +1773,50 @@ wedgeHeadInTxnForTest(
     drainerEpoch: drainerEpoch,
     configuration: configuration,
     configurationFingerprint: configurationFingerprint,
+  );
+}
+
+/// The registry's hold of a destination's block key inside [txn], as the
+/// drainer runs it, for the library's own tests of the hold a release
+/// failure opens: the hold is private to the event store's Dart library,
+/// and the drainer and the fill, which share that library, are its only
+/// production callers. In a build with assertions disabled it throws
+/// [StateError] before it touches [txn].
+// Implements: EVS-PRD-storage-barrier/J
+// the test-only entry point to the hold refuses in a build with assertions
+//   disabled, so it changes nothing the library writes there.
+@internal
+@visibleForTesting
+Future<String> holdKeyInTxnForTest(
+  DestinationRegistry registry,
+  Transaction txn,
+  PublishCollector collector, {
+  required String destinationId,
+  required String key,
+  required String cause,
+  required int attemptCount,
+  FifoEntry? head,
+  String? failedEventId,
+}) async {
+  var assertionsEnabled = false;
+  assert(() {
+    assertionsEnabled = true;
+    return true;
+  }(), 'records that assertions are enabled');
+  if (!assertionsEnabled) {
+    throw StateError(
+      'holdKeyInTxnForTest is test-only and refuses in a build with '
+      'assertions disabled',
+    );
+  }
+  return registry._holdKeyInTxn(
+    txn,
+    collector,
+    destinationId: destinationId,
+    key: key,
+    cause: cause,
+    attemptCount: attemptCount,
+    head: head,
+    failedEventId: failedEventId,
   );
 }
