@@ -20,7 +20,8 @@ import 'deliveries.dart' show ingestEventForTest;
 import 'destination_wedges_view_conformance.dart' show forgedEvent;
 import 'fake_destination.dart';
 import 'queue_registry_conformance.dart' show QueueTestDatabase;
-import 'queue_test_support.dart' show drainForTest, fillForTest;
+import 'queue_test_support.dart'
+    show drainForTest, fillForTest, honourHaltForTest;
 import 'test_backends.dart';
 
 const Initiator _init = AutomationInitiator(service: 'keyed-hold-scenarios');
@@ -936,6 +937,66 @@ void runKeyedHoldScenarios(
       expect(held.data['attempt_count'], 1);
       expect(held.data['event_ids'], <String>[a1.eventId, a2.eventId]);
       expect((await w.keyLists(d.id))['A']!.holdId, held.data['hold_id']);
+    });
+
+    // Verifies: EVS-DEV-destination-key-hold/H+Y
+    // Verifies: EVS-DEV-destination-drain/C
+    test('honouring a halt by id holds a key-scoped head and wedges the next '
+        'head', () async {
+      if (!available) return;
+      final d = FakeDestination(
+        id: 'keyed',
+        keyOf: noteKey,
+        script: <SendResult>[_keyRefusal],
+      );
+      await w.activateResolved(d);
+      final a1 = await w.note('a1', key: 'A');
+      final b1 = await w.note('b1', key: 'B');
+      await w.fillAll(d);
+      var failed = false;
+      await runWithDeliveryTestHooks(
+        DeliveryTestHooks(
+          failOutcomeTransaction: (id, outcome) {
+            if (failed) return false;
+            failed = true;
+            return true;
+          },
+        ),
+        () => w.drain(d),
+      );
+      expect(failed, isTrue);
+      expect((await w.items(d.id)).first.attempts.single.scope, WedgeScope.key);
+      final requestId = await w.registry.requestHalt(
+        d.id,
+        initiator: _init,
+        purpose: HaltPurpose.pause,
+      );
+
+      // A process that does not register the destination honours the halt.
+      w.a = await w.openProcess();
+      await honourHaltForTest(d.id, registry: w.registry);
+      final items = await w.items(d.id);
+      expect(items.map((i) => i.finalStatus), <FinalStatus?>[
+        FinalStatus.tombstoned,
+        FinalStatus.wedged,
+      ]);
+      expect(items.last.eventIds, <String>[b1.eventId]);
+      final held = (await w.heldEvents()).single;
+      expect(held.data['event_ids'], <String>[a1.eventId]);
+      expect((await w.keyLists(d.id))['A']!.holdId, held.data['hold_id']);
+      final wedge = await w.wedgeRecord(d.id);
+      expect(wedge?.rowId, items.last.entryId);
+      expect(wedge?.cause, WedgeCause.operatorHalt);
+      expect(
+        (await w.wedgeEvents()).single.data['halt_request_event_id'],
+        requestId,
+      );
+      expect(
+        await w.backend.transaction(
+          (txn) => w.backend.readHaltRequestTxn(txn, d.id),
+        ),
+        isNull,
+      );
     });
 
     // Verifies: EVS-DEV-destination-key-hold/H
