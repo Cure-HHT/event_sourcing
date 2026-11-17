@@ -2232,6 +2232,23 @@ a transform-failed head, a halt request, and an acceptance with no receiver
 record. These wedge the destination as before. A wedge or halt leaves key
 lists unchanged.
 
+The key lists outlive a process, so `addDestination` refuses a destination
+that is not keyed while the database holds key lists for its id: its fill
+would queue a held key's new events ahead of the held ones. Register it
+keyed, or delete the destination to drop its lists.
+
+Two failures mean the key lists no longer match the log, and retrying
+clears neither. If an event at a releasing list's front is missing from the
+log, the release records a release failure and, once the budget is spent,
+holds the key again with that event still at the front; every later
+release of the key ends the same way. If a recovery must re-create a list
+whose hold event is missing from the log, or a released item names an event
+the log lacks, `tombstoneAndRefill` throws `StateError` and changes nothing.
+In either case the operator deletes the destination with
+`deleteDestination` (it needs the destination's hard-delete opt-in), which
+removes its key lists, and registers it again; the refill sends its
+admitted events again, at least once.
+
 Postgres schema version 10 adds the block key and hold id to the queue and
 raises the minimum compatible schema version to 10, so deploy stop-then-
 start: stop every instance of the previous build before starting the new
