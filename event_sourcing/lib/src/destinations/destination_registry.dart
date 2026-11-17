@@ -2037,8 +2037,9 @@ class DestinationRegistry {
     await _backend.writeKeyListsTxn(txn, destinationId, lists);
   }
 
-  /// The latest event of [entryType] and [eventType] the log holds, read
-  /// inside [txn], for [destinationId] and hold id [holdId]; null when none.
+  /// The latest event of [entryType] and [eventType] this database appended,
+  /// read inside [txn], for [destinationId] and hold id [holdId]; null when
+  /// none.
   Future<StoredEvent?> _holdEventInTxn(
     Transaction txn, {
     required String entryType,
@@ -2052,7 +2053,8 @@ class DestinationRegistry {
     )) {
       if (event.entryType == entryType &&
           event.data['id'] == destinationId &&
-          event.data['hold_id'] == holdId) {
+          event.data['hold_id'] == holdId &&
+          event.data['database_id'] == _eventStore.databaseId) {
         return event;
       }
     }

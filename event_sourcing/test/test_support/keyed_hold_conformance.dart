@@ -16,6 +16,8 @@ import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'declarations.dart';
+import 'deliveries.dart' show ingestEventForTest;
+import 'destination_wedges_view_conformance.dart' show forgedEvent;
 import 'fake_destination.dart';
 import 'queue_registry_conformance.dart' show QueueTestDatabase;
 import 'queue_test_support.dart' show drainForTest, fillForTest;
@@ -1254,6 +1256,83 @@ void runKeyedHoldScenarios(
         (await w.items(d.id)).where((i) => i.eventIds.contains(b1.eventId)),
         hasLength(1),
       );
+    });
+
+    // Verifies: EVS-DEV-destination-key-hold/T+U+X
+    test("a peer database's hold and clearing events under the same hold id "
+        'leave the clearing and a recovery to this database', () async {
+      if (!available) return;
+      final d = FakeDestination(
+        id: 'keyed',
+        keyOf: noteKey,
+        script: <SendResult>[
+          _keyRefusal,
+          const SendPermanent(error: 'refused'),
+        ],
+      );
+      await w.activateResolved(d);
+      final a1 = await w.note('a1', key: 'A');
+      final holdId = await w.holdA(d);
+      Future<void> ingestPeer(
+        String entryType,
+        String eventType,
+        Map<String, Object?> data,
+      ) async {
+        final outcome = await ingestEventForTest(
+          w.a.store,
+          forgedEvent(
+            entryType: entryType,
+            aggregateType: kDestinationAuditAggregateType,
+            eventType: eventType,
+            data: <String, Object?>{
+              'id': d.id,
+              'database_id': 'peer-db',
+              'key': 'A',
+              'hold_id': holdId,
+              ...data,
+            },
+          ),
+        );
+        expect(outcome.outcome, IngestOutcome.ingested, reason: eventType);
+      }
+
+      await ingestPeer(kDestinationHeldEntryType, kDestinationHeldEventType, {
+        'row_id': 'peer-row',
+        'failed_event_id': null,
+        'event_ids': <String>['e1'],
+        'cause': 'transform_failed',
+        'attempt_count': 1,
+      });
+      await ingestPeer(
+        kDestinationHoldClearedEntryType,
+        kDestinationHoldClearedEventType,
+        const <String, Object?>{},
+      );
+
+      await w.release(d, 'A', holdId);
+      await w.fill(d);
+      expect(await w.keyLists(d.id), isEmpty);
+      final cleared = [
+        for (final e in await w.clearedEvents())
+          if (e.data['database_id'] == w.a.store.databaseId) e,
+      ];
+      expect(cleared, hasLength(1));
+      expect(cleared.single.data['hold_id'], holdId);
+
+      // A recovery of the released item creates its list again under the
+      // cause of this database's hold event.
+      await w.drain(d);
+      final head = (await w.releasedItems(d.id)).single;
+      expect(head.finalStatus, FinalStatus.wedged);
+      await w.registry.tombstoneAndRefill(d.id, head.entryId, initiator: _init);
+      expect(await w.keyLists(d.id), <String, KeyList>{
+        'A': KeyList(
+          holdId: holdId,
+          state: KeyListState.releasing,
+          cause: 'permanent_refusal',
+          events: <KeyListEvent>[listEventOf(a1)],
+        ),
+      });
     });
 
     // Verifies: EVS-DEV-destination-key-hold/Q
