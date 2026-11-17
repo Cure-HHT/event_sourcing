@@ -1001,6 +1001,78 @@ void runDeliveryCycleScenarios(
         expect(errors, isEmpty);
       });
 
+      // Verifies: EVS-DEV-destination-drain-lock/G
+      // a cycle reports that it holds the drain lock only while it holds it:
+      //   not while it stands by, and not from the moment it detects a loss,
+      //   even while the pass in flight keeps its state running; it reports
+      //   it again once it has taken the lock back.
+      test(
+        'holding the lock is reported from detection, not from standby',
+        () async {
+          if (!available) return;
+          final d = Receiver(id: 'x');
+          await w.activate(d);
+          final b = await w.openProcess();
+          final holder = await b.backend.tryAcquireDrainLock(
+            databaseId: b.store.databaseId,
+          );
+          final timers = ManualTimers();
+          var failNext = false;
+          await runWithDeliveryTestHooks(
+            DeliveryTestHooks(
+              handDrivenCycle: true,
+              timerFactory: timers.create,
+              failNextHeartbeat: () {
+                if (!failNext) return false;
+                failNext = false;
+                return true;
+              },
+            ),
+            () async {
+              final cycle = await w.start(handDriven: true);
+              expect(cycle.state, SyncCycleState.standby);
+              expect(
+                cycle.holdsDrainLock,
+                isFalse,
+                reason: 'a cycle standing by holds no lock',
+              );
+              await holder.release();
+              await until(() async {
+                await timers.fire();
+                return cycle.state == SyncCycleState.running;
+              }, reason: 'the takeover');
+              expect(cycle.holdsDrainLock, isTrue);
+
+              await w.note('n1');
+              final gate = Completer<void>();
+              d.gate = () => gate.future;
+              final pass = cycle();
+              await until(() => d.started.isNotEmpty, reason: 'the send');
+              failNext = true;
+              await timers.fire();
+              expect(
+                cycle.state,
+                SyncCycleState.running,
+                reason: 'the pass in flight has not settled',
+              );
+              expect(
+                cycle.holdsDrainLock,
+                isFalse,
+                reason: 'the loss is detected; the cycle no longer holds it',
+              );
+              gate.complete();
+              await pass;
+              await until(() async {
+                await timers.fire();
+                return cycle.holdsDrainLock;
+              }, reason: 're-acquisition');
+              await cycle.close();
+              expect(cycle.holdsDrainLock, isFalse);
+            },
+          );
+        },
+      );
+
       // Verifies: EVS-DEV-destination-drain-lock/E
       // the heartbeat runs on its own timer while a pass is blocked in a
       //   send.

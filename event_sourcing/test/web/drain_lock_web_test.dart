@@ -331,6 +331,47 @@ void main() {
       expect(c1.state, SyncCycleState.standby);
     });
 
+    // Verifies: EVS-DEV-destination-drain-lock/G
+    // a cycle handing the drain lock over reports that it does not hold it
+    //   from the moment the hand-over starts, even while its send in flight
+    //   keeps its state running, and still once it stands by.
+    test('a cycle handing the lock over does not report holding it', () async {
+      final name = freshWebName('handover-holds');
+      final f1 = await tab(name);
+      final v1 = TestPageVisibility();
+      final d1 = WebReceiver(id: 'x');
+      await f1.register(d1);
+      await f1.note('n1');
+      final c1 = await startIn(
+        f1,
+        DeliveryTestHooks(
+          pageVisibility: v1,
+          timerFactory: ManualTimers().create,
+        ),
+      );
+      cycles.add(c1);
+      expect(c1.state, SyncCycleState.running);
+      expect(c1.holdsDrainLock, isTrue);
+
+      final gate = Completer<void>();
+      d1.gate = () => gate.future;
+      unawaited(c1());
+      await until(() => d1.started.length == 1, reason: 'the send');
+      v1.visible = false;
+      await until(() => !c1.holdsDrainLock, reason: 'the hand-over');
+      expect(
+        c1.state,
+        SyncCycleState.running,
+        reason: 'the send in flight has not settled',
+      );
+      gate.complete();
+      await until(
+        () => c1.state == SyncCycleState.standby,
+        reason: 'the release',
+      );
+      expect(c1.holdsDrainLock, isFalse);
+    });
+
     // Verifies: EVS-DEV-destination-drain-lock/A
     // a hidden tab does not request the drain lock: with the lock free it
     //   stays in standby over three cadence ticks, and takes it once
@@ -854,6 +895,33 @@ void main() {
         f1.note('n2'),
         throwsA(isA<TransactionRerunLimitException>()),
       );
+    });
+
+    // Verifies: EVS-DEV-destination-drain-lock/G
+    // a cycle that held the drain lock and stopped for good (its handle
+    //   cannot commit) does not report holding it.
+    test('a cycle stopped for good does not report holding the lock', () async {
+      final name = freshWebName('stopped-holds');
+      final f1 = await tab(name);
+      final f2 = await tab(name);
+      final d1 = WebReceiver(id: 'x');
+      await f1.register(d1);
+      final hooks1 = DeliveryTestHooks(timerFactory: ManualTimers().create);
+      final c1 = await startIn(f1, hooks1);
+      cycles.add(c1);
+      expect(c1.state, SyncCycleState.running);
+      expect(c1.holdsDrainLock, isTrue);
+      // F2 commits a deletion F1 has not seen, and another opener that may
+      // write compacts the database past F1's handle.
+      await f2.register(WebReceiver(id: 'y'), activate: false);
+      await f2.registry.deleteDestination('y', initiator: kWebInit);
+      await (await openTabDatabase(name)).close();
+
+      await runWithDeliveryTestHooks(hooks1, c1.call);
+      await c1.stopped.timeout(const Duration(seconds: 10));
+      expect(c1.state, SyncCycleState.stopped);
+      expect(c1.stopCause, isA<TransactionRerunLimitException>());
+      expect(c1.holdsDrainLock, isFalse);
     });
 
     // Verifies: EVS-DEV-destination-drain-lock/C

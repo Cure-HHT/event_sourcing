@@ -49,7 +49,7 @@
 | EVS-DEV-delivery-receiver                  | Delivery channel receiver mechanics                          | delivery-continuity.md                  | d37b43bb |
 | EVS-DEV-delivery-resume                    | Channel resume and new generation                            | delivery-continuity.md                  | ae74fe21 |
 | EVS-DEV-destination-drain                  | Destination queue mechanics                                  | dev-destination-drain.md                | 1e1e4047 |
-| EVS-DEV-destination-drain-lock             | Delivery cycle mechanics                                     | dev-destination-drain-lock.md           | c8a491db |
+| EVS-DEV-destination-drain-lock             | Delivery cycle mechanics                                     | dev-destination-drain-lock.md           | 5c712b53 |
 | EVS-DEV-destination-key-hold               | Key-scoped holds on a destination queue                      | dev-destination-key-hold.md             | 311c31aa |
 | EVS-DEV-destination-retry-budget           | Destination retry budget and attempt outcomes                | dev-destination-retry-budget.md         | 03cce550 |
 | EVS-DEV-effective-permissions-shape        | effectivePermissionsFor surface                              | scoped-permissions.md                   | c6cee772 |
