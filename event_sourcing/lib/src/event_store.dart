@@ -93,6 +93,7 @@ import 'package:event_sourcing/src/actions/principal.dart' show UserPrincipal;
 import 'package:event_sourcing/src/actions/scope_value.dart';
 import 'package:event_sourcing/src/causal_record.dart';
 import 'package:event_sourcing/src/destinations/batch_envelope_metadata.dart';
+import 'package:event_sourcing/src/destinations/default_destination_holds_spec.dart';
 import 'package:event_sourcing/src/destinations/default_destination_wedges_spec.dart';
 import 'package:event_sourcing/src/destinations/destination.dart';
 import 'package:event_sourcing/src/destinations/destination_schedule.dart';
@@ -636,15 +637,17 @@ class EventStore {
   ///
   /// The open first registers, in [entryTypes] and [projections], every
   /// reserved system entry type ([kSystemEntryTypes]) and the library's
-  /// default destination-wedges view ([defaultDestinationWedgesSpec]) they
+  /// default destination-wedges view ([defaultDestinationWedgesSpec]) and
+  /// default destination-holds view ([defaultDestinationHoldsSpec]) they
   /// lack, then seals [projections]; the reserved types are therefore part
   /// of the build's data generation. A registry that already holds a
-  /// reserved entry-type id, or a spec under the default view's name, is
+  /// reserved entry-type id, or a spec under either default view's name, is
   /// accepted only when it holds the library's own object (the exported
   /// definition or spec, which an earlier open with the same registries
   /// also leaves there); any other definition, or a sealed [projections]
-  /// that lacks the view, throws [ArgumentError] naming the reserved id or
-  /// view, before either registry changes and before anything is written.
+  /// that lacks either view, throws [ArgumentError] naming the reserved id
+  /// or view, before either registry changes and before anything is
+  /// written.
   ///
   /// Before anything is written, the build registers its data generation
   /// (its data-format major and each registered entry type's major) with
@@ -925,21 +928,22 @@ class EventStore {
   }
 
   /// Registers, in the caller's registries, every reserved system entry
-  /// type ([kSystemEntryTypes]) and the default destination-wedges view
-  /// ([defaultDestinationWedgesSpec]) they lack, before the registries are
+  /// type ([kSystemEntryTypes]), the default destination-wedges view
+  /// ([defaultDestinationWedgesSpec]) and the default destination-holds view
+  /// ([defaultDestinationHoldsSpec]) they lack, before the registries are
   /// sealed and the boot reads them.
   ///
   /// A registry that already holds a reserved entry-type id, or a spec under
-  /// the default view's name, is accepted only when it holds the library's
-  /// own object (the exported definition or spec, which is also what an
-  /// earlier open with the same registries left there); anything else, or a
-  /// sealed projection registry that lacks the view, throws [ArgumentError]
-  /// naming the reserved id or view before either registry changes and
-  /// before anything is written.
+  /// either default view's name, is accepted only when it holds the
+  /// library's own object (the exported definition or spec, which is also
+  /// what an earlier open with the same registries left there); anything
+  /// else, or a sealed projection registry that lacks either view, throws
+  /// [ArgumentError] naming the reserved id or view before either registry
+  /// changes and before anything is written.
   // Implements: EVS-DEV-destination-drain/M
-  // opening an event store registers the reserved system entry types and the
-  //   default destination-wedges view, accepting only the library's own
-  //   definitions already present.
+  // opening an event store registers the reserved system entry types, the
+  //   default destination-wedges view and the default destination-holds
+  //   view, accepting only the library's own definitions already present.
   static void _registerLibraryDefinitions(
     EntryTypeRegistry entryTypes,
     ProjectionRegistry projections,
@@ -973,35 +977,49 @@ class EventStore {
         );
       }
     }
-    final viewName = defaultDestinationWedgesSpec.viewName;
-    final heldSpec = projections.lookup(viewName);
-    if (heldSpec != null &&
-        !identical(heldSpec, defaultDestinationWedgesSpec)) {
-      throw ArgumentError.value(
-        viewName,
-        'projections',
-        "view \"$viewName\" is reserved for the library's default "
-            'destination-wedges view; the registry holds another spec under '
-            'that name. Register defaultDestinationWedgesSpec or none: '
-            'EventStore.open registers it.',
-      );
-    }
-    if (heldSpec == null && projections.isSealed) {
-      throw ArgumentError.value(
-        viewName,
-        'projections',
-        "the projection registry is sealed and lacks the library's default "
-            'destination-wedges view "$viewName", which EventStore.open '
-            'registers; pass the registry unsealed, or register '
-            'defaultDestinationWedgesSpec before sealing it.',
-      );
+    final views = <(ProjectionSpec, String, String)>[
+      (
+        defaultDestinationWedgesSpec,
+        'destination-wedges',
+        'defaultDestinationWedgesSpec',
+      ),
+      (
+        defaultDestinationHoldsSpec,
+        'destination-holds',
+        'defaultDestinationHoldsSpec',
+      ),
+    ];
+    final missing = <ProjectionSpec>[];
+    for (final (spec, label, name) in views) {
+      final viewName = spec.viewName;
+      final heldSpec = projections.lookup(viewName);
+      if (heldSpec != null && !identical(heldSpec, spec)) {
+        throw ArgumentError.value(
+          viewName,
+          'projections',
+          "view \"$viewName\" is reserved for the library's default "
+              '$label view; the registry holds another spec under that '
+              'name. Register $name or none: EventStore.open registers it.',
+        );
+      }
+      if (heldSpec == null && projections.isSealed) {
+        throw ArgumentError.value(
+          viewName,
+          'projections',
+          "the projection registry is sealed and lacks the library's default "
+              '$label view "$viewName", which EventStore.open registers; '
+              'pass the registry unsealed, or register $name before sealing '
+              'it.',
+        );
+      }
+      if (heldSpec == null) missing.add(spec);
     }
     for (final definition in kSystemEntryTypes) {
       if (entryTypes.byId(definition.id) == null) {
         entryTypes.register(definition);
       }
     }
-    if (heldSpec == null) projections.register(defaultDestinationWedgesSpec);
+    missing.forEach(projections.register);
   }
 
   /// The build this process runs as: the compiled [LibVersion] constants,

@@ -698,7 +698,8 @@ final eventStore = datastore.eventStore;
 
 Every event type your app appends must have its `entryType` registered
 here — missing entries fail at append time, not boot. The library's own
-reserved system entry types, and its default destination-wedges view, are
+reserved system entry types, and its default destination-wedges and
+destination-holds views, are
 registered by the open itself; list only your application's types (an id
 the library reserves is refused unless it is the library's own
 definition). The
@@ -1460,6 +1461,16 @@ design:
   transaction, the two can differ for the moment between them), and rows
   for other databases come from wedge events a peer forwarded, as that peer
   asserts them. Tell local rows from peer rows by that field.
+- Every store also folds the library's default destination-holds view
+  (`defaultDestinationHoldsSpec`, view `default_destination_holds`): one
+  row per held key of a keyed destination, keyed
+  `<database identity>|<destination>|<key>`, inserted in state `held` by a
+  hold event (a re-hold replaces it under the new hold id), moved to
+  `releasing` by the release event naming its hold, and removed by the
+  clearing event naming its hold or by the deletion that names its key
+  list. `DestinationRegistry.readDeliveryStatus` (or
+  `readDeliveryStatusInTxn`, inside a transaction you hold) reads the key
+  lists themselves.
 
 Activating that machinery — canonicalization rules: per-aggregate-type
 rules saying who is the canonical authority for that aggregate, who can

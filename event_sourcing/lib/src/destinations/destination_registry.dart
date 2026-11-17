@@ -632,14 +632,18 @@ class DestinationRegistry {
   ///
   /// The deletion tombstones a wedged head, deletes the pending items behind
   /// it, removes the destination's schedule, fill position, replay request,
-  /// wedge record, halt request, send fence, refill guard and sender channel
-  /// record, and keeps every item that
+  /// transform failure record, wedge record, halt request, send fence,
+  /// refill guard, sender channel record, key lists and release failure
+  /// records, and keeps every item that
   /// was delivered, wedged or recovered (the delivery record) and the queue's
   /// sequence counter. A `system.destination_deleted` audit event records
   /// the tombstoned item, the number of pending items deleted, the opt-in it
-  /// acted on and the halt request it closed (`closed_halt_request_event_id`,
-  /// null when none was open). This registry forgets the destination after
-  /// the commit.
+  /// acted on, the halt request it closed (`closed_halt_request_event_id`,
+  /// null when none was open) and the key lists it removed (`key_lists`,
+  /// one `{key, hold_id}` object per list, in key order; empty when the
+  /// destination held no key), whose rows the default destination-holds
+  /// view drops. A held key's events are not delivered. This registry
+  /// forgets the destination after the commit.
   ///
   /// A destination registered again under the same id starts a new
   /// registration; its refill may send again events that this
@@ -699,6 +703,21 @@ class DestinationRegistry {
         );
       }
       final retirement = await _backend.retireQueueTxn(txn, id);
+      // Implements: EVS-DEV-destination-drain/A
+      // deletion removes the destination's key lists and release failure
+      //   records, and names each key list it removes in the deletion
+      //   event, by key and hold id.
+      final keyLists = await _backend.readKeyListsTxn(txn, id);
+      final namedLists = <Map<String, Object?>>[
+        for (final key in keyLists.keys.toList()..sort())
+          <String, Object?>{'key': key, 'hold_id': keyLists[key]!.holdId},
+      ];
+      await _backend.writeKeyListsTxn(txn, id, const <String, KeyList>{});
+      await _backend.writeReleaseFailuresTxn(
+        txn,
+        id,
+        const <String, ReleaseFailureRecord>{},
+      );
       await _backend.deleteScheduleTxn(txn, id);
       await _backend.clearReplayRequestTxn(txn, id);
       await _backend.clearWedgeRecordTxn(txn, id);
@@ -723,6 +742,7 @@ class DestinationRegistry {
           'deleted_pending_count': retirement.deletedPendingCount,
           'allow_hard_delete': schedule.allowHardDelete,
           'closed_halt_request_event_id': halt?.requestEventId,
+          'key_lists': namedLists,
         },
         initiator: initiator,
       );
@@ -1020,9 +1040,9 @@ class DestinationRegistry {
   /// serves, and the destinations it does not serve, as of its latest pass.
   /// Also its latest heartbeat, and for
   /// each persisted destination its schedule, open halt request, wedge
-  /// record, refill guard and unserved reason. All of it is read in one
-  /// transaction, from persisted state only, so any process can read it,
-  /// including one that does not drain and registers nothing.
+  /// record, refill guard, key lists and unserved reason. All of it is read
+  /// in one transaction, from persisted state only, so any process can read
+  /// it, including one that does not drain and registers nothing.
   ///
   /// `drainer` is null when no drainer has declared since the current drain
   /// epoch began (the lock changed hands and the new holder has not
@@ -1031,37 +1051,80 @@ class DestinationRegistry {
   /// whatever its epoch: compare its `epoch` with `drainer`'s to tell
   /// whether it belongs to the current drainer. The default destination-wedges view
   /// covers wedges only: a destination that is unserved or held by a refill
-  /// guard is not wedged, and appears here, not in the view. On a browser
+  /// guard is not wedged, and appears here, not in the view. A key list in
+  /// state held waits for [releaseHold]; one in state releasing is being
+  /// moved back into the queue by the fill. On a browser
   /// database shared by several tabs the read reflects this tab's latest
   /// known revision of the database.
+  ///
+  /// [readDeliveryStatusInTxn] reads the same inside a transaction the
+  /// caller already holds.
   // Implements: EVS-DEV-destination-drain/T
   // the persisted delivery status: each destination's schedule, open halt
-  //   request, wedge record, refill guard and unserved reason, and the
-  //   current drainer's declaration, read from any process.
+  //   request, wedge record, refill guard, key lists and unserved reason,
+  //   and the current drainer's declaration, read from any process.
   Future<DeliveryStatus> readDeliveryStatus() =>
-      _backend.transaction((txn) async {
-        final epoch = await _backend.readDrainEpochTxn(txn);
-        final stored = await _backend.readDrainerDeclarationTxn(txn);
-        final drainer = stored != null && stored.epoch == epoch ? stored : null;
-        final heartbeat = await _backend.readDrainHeartbeatTxn(txn);
-        final schedules = await _backend.listSchedulesTxn(txn);
-        final destinations = <String, DestinationDeliveryStatus>{};
-        for (final entry in schedules.entries) {
-          final id = entry.key;
-          destinations[id] = DestinationDeliveryStatus(
-            schedule: entry.value,
-            openHaltRequest: await _backend.readHaltRequestTxn(txn, id),
-            wedge: await _backend.readWedgeRecordTxn(txn, id),
-            refillGuard: await _backend.readRefillGuardTxn(txn, id),
-            unserved: drainer?.unserved[id],
-          );
-        }
-        return DeliveryStatus(
-          drainer: drainer,
-          heartbeat: heartbeat,
-          destinations: destinations,
-        );
-      });
+      _backend.transaction(_readDeliveryStatusTxn);
+
+  /// [readDeliveryStatus], read inside [txn], a transaction the caller
+  /// holds: the records the standalone read returns, as [txn] sees them,
+  /// writes made earlier in [txn] included. Opens no transaction of its
+  /// own, so a caller deciding inside its transaction (for example whether
+  /// to release a hold) reads the key lists there instead of waiting on a
+  /// second transaction over the same storage.
+  ///
+  /// [txn] must be a handle this registry's event store issued
+  /// ([EventStore.runTransaction]) or its storage reader issued
+  /// ([StorageReader.transaction]), whose body is running; any other handle
+  /// is refused with [StateError] before anything is read.
+  // Implements: EVS-DEV-destination-key-hold/Z
+  // the delivery-status read inside a caller's transaction, reading from
+  //   that transaction the records the standalone read returns.
+  // Implements: EVS-DEV-destination-drain/T
+  // the key lists, with every other record of the delivery status, read
+  //   inside the caller's transaction.
+  Future<DeliveryStatus> readDeliveryStatusInTxn(Transaction txn) async {
+    final reader = _eventStore.reader;
+    final issued =
+        _eventStore._liveHandles.contains(txn) ||
+        (reader is _StorageReader && reader._liveHandles.contains(txn));
+    if (!issued) {
+      throw StateError(
+        'DestinationRegistry.readDeliveryStatusInTxn: the transaction handle '
+        "was not issued by this registry's event store or its storage "
+        'reader, or its body has returned. Pass the handle a runTransaction '
+        'or StorageReader.transaction body received, while that body runs.',
+      );
+    }
+    return _readDeliveryStatusTxn(txn);
+  }
+
+  Future<DeliveryStatus> _readDeliveryStatusTxn(Transaction txn) async {
+    final epoch = await _backend.readDrainEpochTxn(txn);
+    final stored = await _backend.readDrainerDeclarationTxn(txn);
+    final drainer = stored != null && stored.epoch == epoch ? stored : null;
+    final heartbeat = await _backend.readDrainHeartbeatTxn(txn);
+    final schedules = await _backend.listSchedulesTxn(txn);
+    final destinations = <String, DestinationDeliveryStatus>{};
+    for (final entry in schedules.entries) {
+      final id = entry.key;
+      destinations[id] = DestinationDeliveryStatus(
+        schedule: entry.value,
+        openHaltRequest: await _backend.readHaltRequestTxn(txn, id),
+        wedge: await _backend.readWedgeRecordTxn(txn, id),
+        refillGuard: await _backend.readRefillGuardTxn(txn, id),
+        unserved: drainer?.unserved[id],
+        keyLists: Map<String, KeyList>.unmodifiable(
+          await _backend.readKeyListsTxn(txn, id),
+        ),
+      );
+    }
+    return DeliveryStatus(
+      drainer: drainer,
+      heartbeat: heartbeat,
+      destinations: destinations,
+    );
+  }
 
   /// Request that the drainer halt delivery on destination [destinationId],
   /// and return the identifier of the request event.

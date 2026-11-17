@@ -178,6 +178,8 @@ export 'src/core/errors/sync_exception.dart';
 // exported.
 export 'src/destinations/batch_envelope_metadata.dart'
     show BatchEnvelopeMetadata;
+export 'src/destinations/default_destination_holds_spec.dart'
+    show defaultDestinationHoldsSpec;
 export 'src/destinations/default_destination_wedges_spec.dart'
     show defaultDestinationWedgesSpec;
 export 'src/destinations/destination.dart' show Destination;
@@ -334,9 +336,17 @@ export 'src/projections/primitives/derived_field.dart'
         FallbackValue,
         FirstEventTimestamp;
 export 'src/projections/primitives/row_data.dart'
-    show PayloadField, RowDataExtractor, SelectedFields, WholePayload;
+    show
+        CombinedRowData,
+        ConstantFields,
+        EventTimestampField,
+        ListLengthField,
+        PayloadField,
+        RowDataExtractor,
+        SelectedFields,
+        WholePayload;
 export 'src/projections/primitives/row_key.dart'
-    show AggregateIdKey, CompositeKey, RowKeyExtractor;
+    show AggregateIdKey, CompositeKey, ListedRowKeys, RowKeyExtractor;
 export 'src/projections/projection_registry.dart' show ProjectionRegistry;
 // Callers create AggregateProjectionSpec / TableProjectionSpec values,
 // register them in a ProjectionRegistry, and pass the registry to

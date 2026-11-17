@@ -56,6 +56,7 @@ DestinationRegistry.eventStore: EventStore get eventStore
 DestinationRegistry.localRegistrationId: String? localRegistrationId(String id)
 DestinationRegistry.new: constructor DestinationRegistry({required EventStore eventStore})
 DestinationRegistry.readDeliveryStatus: Future<DeliveryStatus> readDeliveryStatus()
+DestinationRegistry.readDeliveryStatusInTxn: Future<DeliveryStatus> readDeliveryStatusInTxn(Transaction txn)
 DestinationRegistry.releaseHold: Future<ReleaseHoldResult> releaseHold(String destinationId, String key, {required String holdId, required Initiator initiator, required String requestId})
 DestinationRegistry.requestHalt: Future<String> requestHalt(String destinationId, {required Initiator initiator, required HaltPurpose purpose})
 DestinationRegistry.scheduleOf: Future<DestinationSchedule> scheduleOf(String id)

@@ -24,6 +24,29 @@ destination is opened only by a build of 3.1 or later
   `blockKeyOf`. A class that writes `implements Destination` rather than
   `extends Destination` inherits neither and must declare both (`keyed =>
   false` and a `blockKeyOf` that returns null keep its behaviour).
+- `DestinationRegistry.readDeliveryStatus` shows each destination's key
+  lists (`DestinationDeliveryStatus.keyLists`), and
+  `DestinationRegistry.readDeliveryStatusInTxn` reads the same status
+  inside a transaction the caller holds, opening none of its own
+  (EVS-DEV-destination-key-hold/Z).
+- `deleteDestination` removes the destination's key lists and release
+  failure records and names the key lists it removed in its deletion event
+  (`key_lists`, one `{key, hold_id}` per list).
+- `EventStore.open` registers a second default view,
+  `default_destination_holds` (`defaultDestinationHoldsSpec`), one row per
+  held key keyed `<database_id>|<id>|<key>`, in state `held` or
+  `releasing`. A projection registry passed to `open` sealed without it,
+  or holding another spec under its name, is refused.
+
+### Projections
+
+- `TableProjectionSpec` gains optional `updateEventTypes` with
+  `updateData` (merge fields into an existing row), `matchField` (an update
+  or remove changes a row only when that field matches the event's), and
+  `listedRemovals` (`ListedRowKeys`: an event removes every row it names in
+  a list). New row-data primitives: `CombinedRowData`, `ConstantFields`,
+  `ListLengthField` and `EventTimestampField`. A table view that sets none
+  of them keeps its fingerprint.
 
 ## 0.7.3
 
