@@ -47,6 +47,13 @@ destination that holds no key.
   `releasing`. A projection registry passed to `open` sealed without it,
   or holding another spec under its name, is refused.
 
+### Documentation
+
+- The guide's "Key-scoped holds" section states the one rule, how a
+  destination opts in, what a hold, a release and a recovery do, how to
+  read holds, the failures that stay destination-wide, and the
+  stop-then-start deployment the schema minimum requires.
+
 ### Projections
 
 - `TableProjectionSpec` gains optional `updateEventTypes` with

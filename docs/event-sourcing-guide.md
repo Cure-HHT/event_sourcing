@@ -2171,6 +2171,73 @@ delivered, when a destination deleted and registered again refills events
 the earlier registration delivered, and when a send's outcome did not
 commit (the drainer lost its lock or stopped before recording it).
 
+#### Key-scoped holds
+
+A destination's queue is one FIFO, so a permanent refusal of one subject's
+item would stop every subject behind it. A destination that can name the
+subject of each event opts in to holding that subject alone. One rule
+carries the feature: while a key has a key list, none of that key's events
+enters the queue except by the list's release, in sequence order.
+
+A destination opts in by overriding two members of `Destination` (a class
+that writes `implements Destination` declares both): `keyed => true` and
+`blockKeyOf(event)`, which returns the key naming the subject, or null for
+none. The fill evaluates it beside the transform, outside its transaction,
+and stores the key on each queue item, which carries events of one key only.
+A key containing `|` is queued as a keyless item. A keyed destination may
+not also serialize natively. The send returns
+`SendPermanent(error: ..., scope: WedgeScope.key)` when the refusal
+concerns only that item's key; the default scope is the destination.
+
+On such a refusal the drainer, in one transaction, tombstones the head,
+removes the key's other pending items and records the key's events in a
+key list, in sequence order and each once, in state held under a new hold
+id (a UUID), and appends `system.destination_held`. Every other key keeps
+delivering. From then on the fill and every replay insert that key's events
+into the list instead of enqueuing them.
+
+An operator releases a held key with
+`DestinationRegistry.releaseHold(id, key, holdId: ..., initiator: ...,
+requestId: ...)`, naming the hold id from the hold event or the status. The
+result is `ReleaseHoldApplied` (the list is now releasing; the event is
+`system.destination_hold_released`), `ReleaseHoldAlreadyReleasing` (a
+repeated request for the same hold changes nothing and returns the first
+event) or `ReleaseHoldStale` (the key is not held, or is held under another
+hold id; nothing is released). The fill then moves the list's events back
+into the queue, in order and gated on the fill position, whatever the
+schedule window, stamping each released item with the hold id. The release
+that empties the list removes it and appends
+`system.destination_hold_cleared`.
+
+If the transform or the key evaluation fails on a listed event while
+releasing, the failure is recorded for that key, retried under the retry
+curve and, once the budget is spent, the list returns to held under a new
+hold id with cause `transform_failed`. A recovery (`tombstoneAndRefill`)
+returns the events of any released items it removes to their key lists
+rather than rewinding the fill below them; deleting the destination removes
+its lists and names them in the deletion event's `key_lists`.
+
+To read holds, `readDeliveryStatus()` lists each destination's key lists
+(`keyLists`: state, hold id and events), and `readDeliveryStatusInTxn`
+reads the same inside a transaction the caller holds, which a caller that
+decides a release inside its own transaction needs. The library's default
+`default_destination_holds` view (`defaultDestinationHoldsSpec`, registered
+by `EventStore.open`) has one row per held key, in state `held` or
+`releasing`.
+
+Some failures stay destination-wide whatever the scope a send states: a
+refusal on a head with no block key, or while any pending item has none (a
+keyless item cannot be told from the held subject's), a spent retry budget,
+a transform-failed head, a halt request, and an acceptance with no receiver
+record. These wedge the destination as before. A wedge or halt leaves key
+lists unchanged.
+
+Postgres schema version 10 adds the block key and hold id to the queue and
+raises the minimum compatible schema version to 10, so deploy stop-then-
+start: stop every instance of the previous build before starting the new
+one. A persisted Sembast database that holds a keyed destination opens only
+with data format 3.1 or later.
+
 ### Reading order from here
 
 If you're building toward a cross-process deployment, the canonical
