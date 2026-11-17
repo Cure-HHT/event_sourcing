@@ -112,7 +112,8 @@ abstract class Destination {
   /// scoped to the refused item's key (`SendPermanent.scope`), on which the
   /// library holds that key's events back and keeps delivering every other
   /// key's. When `false` (the default) every queue item carries no block key
-  /// and the destination behaves as every destination did before keys.
+  /// and the destination behaves as every destination did before keys. A
+  /// destination that holds key lists registers only while it is keyed.
   // Implements: EVS-PRD-destination-key-hold/A
   // a destination declares whether it names a key for each event it
   //   queues; one that does not behaves as before keys.

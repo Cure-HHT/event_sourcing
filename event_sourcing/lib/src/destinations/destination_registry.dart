@@ -263,6 +263,11 @@ class DestinationRegistry {
   /// no pull ([Destination.channelPull] is null), or when it is both keyed
   /// ([Destination.keyed]) and natively serializing.
   ///
+  /// Throws `ArgumentError`, with nothing written but the registry check
+  /// record, when [destination] is not keyed and the database holds key
+  /// lists for its id: register it keyed, or delete its key lists with
+  /// [deleteDestination].
+  ///
   /// A destination deleted and registered again under the same id starts a
   /// new registration. Its refill may send again events that the prior
   /// registration's `sent` items already delivered: delivery is
@@ -277,6 +282,7 @@ class DestinationRegistry {
     final wireFormat = destination.wireFormat;
     final allowHardDelete = destination.allowHardDelete;
     final serializesNatively = destination.serializesNatively;
+    final keyed = destination.keyed;
     // Implements: EVS-DEV-delivery-channel/B
     // a destination that serializes natively and implements no pull is
     //   refused before anything is written.
@@ -291,7 +297,7 @@ class DestinationRegistry {
     // Implements: EVS-DEV-destination-key-hold/F
     // a destination that is both keyed and natively serializing is refused
     //   before anything is written.
-    if (destination.keyed && serializesNatively) {
+    if (keyed && serializesNatively) {
       throw ArgumentError.value(
         id,
         'destination',
@@ -344,6 +350,27 @@ class DestinationRegistry {
                   id,
                   'destination.id',
                   'destination id $id is already registered',
+                ),
+              ),
+            );
+          }
+          // Implements: EVS-PRD-destination-key-hold/L
+          // a destination that is not keyed is refused while it has key
+          //   lists, since its fill would queue a held key's new events
+          //   ahead of the held ones.
+          if (!keyed && (await _backend.readKeyListsTxn(txn, id)).isNotEmpty) {
+            return _decideWithoutChange<String>(
+              txn,
+              op: 'addDestination',
+              destinationId: id,
+              check: 'refused_unkeyed_with_key_lists',
+              outcome: _Refused<String>(
+                ArgumentError.value(
+                  id,
+                  'destination',
+                  'destination $id is not keyed but has key lists; register '
+                      'it keyed, or delete its key lists with '
+                      'deleteDestination',
                 ),
               ),
             );

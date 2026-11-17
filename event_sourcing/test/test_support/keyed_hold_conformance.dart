@@ -749,6 +749,67 @@ void runKeyedHoldScenarios(
       ]);
     });
 
+    // Verifies: EVS-PRD-destination-key-hold/L
+    test('a destination registered without a key while it has key lists is '
+        'refused, and registers once they are deleted', () async {
+      if (!available) return;
+      final d = FakeDestination(
+        id: 'subjects',
+        keyOf: noteKey,
+        script: <SendResult>[_keyRefusal],
+      );
+      await w.activateResolved(d);
+      await w.note('a1', key: 'A');
+      await w.holdA(d);
+      final lists = await w.keyLists(d.id);
+      expect(lists, isNotEmpty);
+      final registered = await w.backend.findAllEvents(
+        entryType: kDestinationRegisteredEntryType,
+      );
+
+      // A new process registers the destination without its key.
+      w.a = await w.openProcess();
+      await expectLater(
+        w.registry.addDestination(FakeDestination(id: d.id), initiator: _init),
+        throwsA(
+          isA<ArgumentError>().having(
+            (e) => e.toString(),
+            'message',
+            allOf(
+              contains(d.id),
+              contains('keyed'),
+              contains('deleteDestination'),
+            ),
+          ),
+        ),
+      );
+      expect(w.registry.byId(d.id), isNull);
+      expect(await w.keyLists(d.id), lists);
+      expect(
+        await w.backend.findAllEvents(
+          entryType: kDestinationRegisteredEntryType,
+        ),
+        hasLength(registered.length),
+      );
+
+      // Registered keyed, it is accepted.
+      w.a = await w.openProcess();
+      await w.registry.addDestination(
+        FakeDestination(id: d.id, keyOf: noteKey, allowHardDelete: true),
+        initiator: _init,
+      );
+      expect(w.registry.byId(d.id), isNotNull);
+
+      // Deleted, its key lists go with it and it registers without a key.
+      await w.registry.deleteDestination(d.id, initiator: _init);
+      expect(await w.keyLists(d.id), isEmpty);
+      await w.registry.addDestination(
+        FakeDestination(id: d.id),
+        initiator: _init,
+      );
+      expect(w.registry.byId(d.id), isNotNull);
+    });
+
     // Verifies: EVS-DEV-destination-key-hold/I
     test('a key-scoped failure while any keyless pending item exists wedges '
         'the destination', () async {

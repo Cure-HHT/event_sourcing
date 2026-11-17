@@ -14,7 +14,7 @@
 | EVS-PRD-canonical-json                | Canonical JSON Serialization      | prd-canonical-json.md                | 14bb1343 |
 | EVS-PRD-cross-process-event-transport | Cross-Process Event Transport     | prd-reaction.md                      | 3a77adea |
 | EVS-PRD-delivery-channel              | Delivery channel continuity       | delivery-continuity.md               | f6230ffe |
-| EVS-PRD-destination-key-hold          | Key-scoped holds on a destination | prd-destination-key-hold.md          | 9b8c4b7a |
+| EVS-PRD-destination-key-hold          | Key-scoped holds on a destination | prd-destination-key-hold.md          | 132cb6b8 |
 | EVS-PRD-destinations                  | Destinations                      | prd-destinations.md                  | cddc4d9c |
 | EVS-PRD-event-log                     | Event Log                         | prd-event-log.md                     | e50ef232 |
 | EVS-PRD-hash-chain-integrity          | Hash-Chain Integrity              | prd-hash-chain-integrity.md          | 5e9d9d6e |
