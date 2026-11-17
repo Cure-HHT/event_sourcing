@@ -14,7 +14,7 @@
 | EVS-DEV-converging-view-reads | Reads of a converging view | DEV | Active | A-E,G-J,L-P (100%) | A-E,G-J,L-P (100%) [14P 0F 0A] | A-E,G-J,L-P (100%) | 0/14 (0%) | 0/14 (0%) | n/a | n/a |
 | EVS-DEV-destination-drain-lock | Delivery cycle mechanics | DEV | Active | A-G (100%) | A-G (100%) [7P 0F 0A] | A-G (100%) | 0/7 (0%) | 0/7 (0%) | n/a | n/a |
 | EVS-DEV-destination-drain | Destination queue mechanics | DEV | Active | A-V,X-Z (100%) | A-V,X-Z (100%) [25P 0F 0A] | A-V,X-Z (100%) | 0/25 (0%) | 0/25 (0%) | n/a | n/a |
-| EVS-DEV-destination-key-hold | Key-scoped holds on a destination queue | DEV | Active | A-X,Z (96%) | A-Z (100%) [26P 0F 0A] | A-Z (100%) | 0/26 (0%) | 0/26 (0%) | n/a | n/a |
+| EVS-DEV-destination-key-hold | Key-scoped holds on a destination queue | DEV | Active | A-Z (100%) | A-Z (100%) [26P 0F 0A] | A-Z (100%) | 0/26 (0%) | 0/26 (0%) | n/a | n/a |
 | EVS-DEV-destination-retry-budget | Destination retry budget and attempt outcomes | DEV | Active | A-G (100%) | A-G (100%) [7P 0F 0A] | A-G (100%) | 0/7 (0%) | 0/7 (0%) | n/a | n/a |
 | EVS-DEV-entry-type-downgrade-refusal | Entry-type version downgrade refusal | DEV | Active | A,C (100%) | A,C (100%) [2P 0F 0A] | A,C (100%) | 0/2 (0%) | 0/2 (0%) | n/a | n/a |
 | EVS-DEV-event-record | The event record as read, stored and sent | DEV | Active | A-M (100%) | A-M (100%) [13P 0F 0A] | A-M (100%) | 0/13 (0%) | 0/13 (0%) | n/a | n/a |
@@ -30,7 +30,7 @@
 | EVS-DEV-view-convergence | View copies and their catch-up | DEV | Active | A-K,M,O,Q,S-X,Z (100%) | A-K,M,O,Q,S-X,Z (100%) [21P 0F 0A] | A-K,M,O,Q,S-X,Z (100%) | 0/21 (0%) | 0/21 (0%) | n/a | n/a |
 | EVS-PRD-action-dispatch | Action Dispatch | PRD | Active | A-F (100%) | A-F (100%) [6P 0F 0A] | A-F (100%) | 0/6 (0%) | 0/6 (0%) | n/a | n/a |
 | EVS-PRD-canonical-json | Canonical JSON Serialization | PRD | Active | A-F (100%) | A-D (67%) [4P 0F 0A] | A-D (67%) | 0/6 (0%) | 0/6 (0%) | n/a | n/a |
-| EVS-PRD-destination-key-hold | Key-scoped holds on a destination | PRD | Active | A-L (99%) | A-L (100%) [12P 0F 0A] | A-L (100%) | 0/12 (0%) | 0/12 (0%) | n/a | n/a |
+| EVS-PRD-destination-key-hold | Key-scoped holds on a destination | PRD | Active | A-L (100%) | A-L (100%) [12P 0F 0A] | A-L (100%) | 0/12 (0%) | 0/12 (0%) | n/a | n/a |
 | EVS-PRD-destinations | Destinations | PRD | Active | A-Y (100%) | A-Y (100%) [25P 0F 0A] | A-Y (100%) | 0/25 (0%) | 0/25 (0%) | n/a | n/a |
 | EVS-PRD-event-log | Event Log | PRD | Active | A-G (100%) | A-G (100%) [7P 0F 0A] | A-G (100%) | 0/7 (0%) | 0/7 (0%) | n/a | n/a |
 | EVS-PRD-hash-chain-integrity | Hash-Chain Integrity | PRD | Active | A-K (100%) | A-K (100%) [11P 0F 0A] | A-K (100%) | 0/11 (0%) | 0/11 (0%) | n/a | n/a |
@@ -3023,7 +3023,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/destinations/destination_registry.dart:1799
+- event_sourcing/lib/src/destinations/destination_registry.dart:1803
 - event_sourcing/lib/src/storage/final_status.dart:48
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2865
 - event_sourcing/lib/src/storage/sembast_backend.dart:3447
@@ -3091,7 +3091,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/destinations/destination_registry.dart:1799
+- event_sourcing/lib/src/destinations/destination_registry.dart:1803
 - event_sourcing/lib/src/destinations/destination_registry.dart:25
 - event_sourcing/lib/src/sync/drain.dart:31
 
@@ -3354,7 +3354,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/destinations/destination_registry.dart:1707
+- event_sourcing/lib/src/destinations/destination_registry.dart:1711
 - event_sourcing/lib/src/destinations/destination_registry.dart:25
 - event_sourcing/lib/src/storage/fifo_entry.dart:374
 - event_sourcing/lib/src/storage/queue_records.dart:10
@@ -3494,7 +3494,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/destinations/destination_registry.dart:2093
+- event_sourcing/lib/src/destinations/destination_registry.dart:2097
 - event_sourcing/lib/src/destinations/destination_registry.dart:319
 - event_sourcing/lib/src/security/system_entry_types.dart:879
 
@@ -4029,7 +4029,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/destinations/destination_registry.dart:1683
+- event_sourcing/lib/src/destinations/destination_registry.dart:1687
 - event_sourcing/lib/src/destinations/destination_registry.dart:34
 
 Tests:
@@ -4494,7 +4494,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/destinations/destination_registry.dart:1794
+- event_sourcing/lib/src/destinations/destination_registry.dart:1798
 - event_sourcing/lib/src/storage/queue_records.dart:822
 - event_sourcing/lib/src/storage/storage_backend.dart:1080
 - event_sourcing/lib/src/storage/storage_backend.dart:1552
@@ -4568,7 +4568,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/destinations/destination_registry.dart:1794
+- event_sourcing/lib/src/destinations/destination_registry.dart:1798
 - event_sourcing/lib/src/security/system_entry_types.dart:98
 
 Tests:
@@ -4724,7 +4724,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/destinations/destination_registry.dart:1923
+- event_sourcing/lib/src/destinations/destination_registry.dart:1927
 - event_sourcing/lib/src/security/system_entry_types.dart:111
 - event_sourcing/lib/src/sync/fill_batch.dart:61
 - event_sourcing/lib/src/sync/fill_batch.dart:706
@@ -4742,7 +4742,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/destinations/destination_registry.dart:1929
+- event_sourcing/lib/src/destinations/destination_registry.dart:1933
 
 Tests:
 
@@ -4785,7 +4785,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/destinations/destination_registry.dart:1979
+- event_sourcing/lib/src/destinations/destination_registry.dart:1983
 - event_sourcing/lib/src/destinations/destination_registry.dart:994
 
 Tests:
@@ -4806,7 +4806,7 @@ Tests:
 
 Code:
 
-- none
+- event_sourcing/lib/src/destinations/destination_registry.dart:1580
 
 Tests:
 
@@ -8016,9 +8016,9 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/destinations/destination_registry.dart:1739
-- event_sourcing/lib/src/destinations/destination_registry.dart:1912
-- event_sourcing/lib/src/destinations/destination_registry.dart:1962
+- event_sourcing/lib/src/destinations/destination_registry.dart:1743
+- event_sourcing/lib/src/destinations/destination_registry.dart:1916
+- event_sourcing/lib/src/destinations/destination_registry.dart:1966
 - event_sourcing/lib/src/event_store.dart:2227
 - event_sourcing/lib/src/event_store.dart:3609
 - event_sourcing/lib/src/projections/interpreter/projection_interpreter.dart:174
@@ -8898,7 +8898,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/destinations/destination_registry.dart:1926
+- event_sourcing/lib/src/destinations/destination_registry.dart:1930
 - event_sourcing/lib/src/sync/fill_batch.dart:708
 
 Tests:
@@ -12558,8 +12558,8 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/destinations/destination_registry.dart:2132
-- event_sourcing/lib/src/destinations/destination_registry.dart:2182
+- event_sourcing/lib/src/destinations/destination_registry.dart:2136
+- event_sourcing/lib/src/destinations/destination_registry.dart:2186
 - event_sourcing/lib/src/event_store.dart:3673
 - event_sourcing/lib/src/event_store.dart:3711
 - event_sourcing/lib/src/event_store.dart:3740
