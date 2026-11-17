@@ -2235,7 +2235,11 @@ lists unchanged.
 The key lists outlive a process, so `addDestination` refuses a destination
 that is not keyed while the database holds key lists for its id: its fill
 would queue a held key's new events ahead of the held ones. Register it
-keyed, or delete the destination to drop its lists.
+keyed, or delete the destination to drop its lists. The check runs only at
+registration, and `keyed` is not persisted, so a build that changes a
+destination's `keyed` must deploy stop-then-start: an unkeyed process
+registered before a keyed one holds a key would otherwise fill past that
+hold.
 
 Two failures mean the key lists no longer match the log, and retrying
 clears neither. If an event at a releasing list's front is missing from the
