@@ -1290,6 +1290,7 @@ void runKeyedHoldScenarios(
       final d = FakeDestination(
         id: 'keyed',
         keyOf: noteKey,
+        batchCapacity: 1,
         script: <SendResult>[_keyRefusal, _keyRefusal],
       );
       await w.activateResolved(d);
@@ -1299,6 +1300,12 @@ void runKeyedHoldScenarios(
       await w.release(d, 'A', holdId);
       await w.fill(d);
       final released = (await w.releasedItems(d.id)).single;
+      expect(released.eventIds, <String>[a1.eventId]);
+      expect(
+        (await w.keyLists(d.id))['A']!.events,
+        <KeyListEvent>[listEventOf(a2)],
+        reason: 'a2 is still in the list when a1 is refused',
+      );
       await w.drain(d);
       expect((await w.items(d.id)).last.finalStatus, FinalStatus.tombstoned);
       final held = await w.heldEvents();
@@ -1316,6 +1323,42 @@ void runKeyedHoldScenarios(
           events: <KeyListEvent>[listEventOf(a1), listEventOf(a2)],
         ),
       });
+      expect(await w.clearedEvents(), isEmpty);
+      expect(await w.wedgeRecord(d.id), isNull);
+    });
+
+    // Verifies: EVS-DEV-destination-key-hold/H+Q+R
+    test('a released item carries the list key even when the key evaluates '
+        'otherwise at release, and its refusal holds that key again', () async {
+      if (!available) return;
+      var keyNow = 'A';
+      final d = FakeDestination(
+        id: 'keyed',
+        keyOf: (e) => e.data['id'] == 'a1' ? keyNow : noteKey(e),
+        script: <SendResult>[_keyRefusal, _keyRefusal],
+      );
+      await w.activateResolved(d);
+      final a1 = await w.note('a1', key: 'A');
+      final a2 = await w.note('a2', key: 'A');
+      final holdId = await w.holdA(d);
+      keyNow = 'Z';
+      await w.release(d, 'A', holdId);
+      await w.fill(d);
+      final released = (await w.releasedItems(d.id)).single;
+      expect(released.eventIds, <String>[a1.eventId]);
+      expect(released.blockKey, 'A');
+      await w.drain(d);
+      final again = (await w.heldEvents()).last;
+      expect(again.data['key'], 'A');
+      expect(again.data['row_id'], released.entryId);
+      final lists = await w.keyLists(d.id);
+      expect(lists.keys, <String>['A']);
+      expect(lists['A']!.state, KeyListState.held);
+      expect(lists['A']!.holdId, again.data['hold_id']);
+      expect(lists['A']!.events, <KeyListEvent>[
+        listEventOf(a1),
+        listEventOf(a2),
+      ]);
       expect(await w.wedgeRecord(d.id), isNull);
     });
 

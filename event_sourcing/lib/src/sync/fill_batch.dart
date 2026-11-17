@@ -687,7 +687,8 @@ Future<void> _releaseLists(
 /// below the fill position (none while the position is below the front:
 /// a recovery's re-walk may still insert an older event of the key ahead
 /// of it), assembles one batch from them, evaluates their block keys and
-/// runs the destination's transform, all outside any transaction. While
+/// runs the destination's transform, all outside any transaction. The item
+/// carries [key], the list's key, whatever the evaluation returns. While
 /// the key's release failure record's backoff after its last failure has
 /// not elapsed, it does nothing.
 ///
@@ -775,7 +776,10 @@ Future<void> _releaseStep(
         source: source,
         now: now,
         channel: _channelOf(destination, state, databaseId),
-        blockKey: assembled.key,
+        // The item belongs to the list it is released from, whatever the
+        // events' block keys evaluate to now: a key that changed since the
+        // hold must not move them under another key, or under none.
+        blockKey: key,
       );
     } on Object catch (e, st) {
       final failed = assembled.keyError != null ? 'block key' : 'transform';
