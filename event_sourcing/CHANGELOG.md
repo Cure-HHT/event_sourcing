@@ -38,6 +38,13 @@ destination that holds no key.
   `DestinationRegistry.readDeliveryStatusInTxn` reads the same status
   inside a transaction the caller holds, opening none of its own
   (EVS-DEV-destination-key-hold/Z).
+- `addDestination` throws `ArgumentError`, with nothing written, for a
+  destination that is both keyed and natively serializing
+  (EVS-DEV-destination-key-hold/F).
+- `addDestination` throws `ArgumentError`, writing only the registry check
+  record, for a destination that is not keyed while the database holds key
+  lists for its id; register it keyed, or delete its key lists with
+  `deleteDestination` (EVS-PRD-destination-key-hold/L).
 - `deleteDestination` removes the destination's key lists and release
   failure records and names the key lists it removed in its deletion event
   (`key_lists`, one `{key, hold_id}` per list).
