@@ -47,6 +47,7 @@ const Map<int, Map<String, List<String>>> _enumeratedValuesByDataFormatMajor =
           'operator_halt',
           'permanent_refusal',
           'retry_budget_exhausted',
+          'transform_failed',
         ],
         'purpose': <String>['pause', 'reconfigure'],
         'kind': <String>[

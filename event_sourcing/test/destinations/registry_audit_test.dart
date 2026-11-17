@@ -283,7 +283,17 @@ void main() {
         initiator: _user,
       );
       await ds.destinations.deleteDestination('wedged', initiator: _user);
-      // The drainer holds a block key, appending the hold event.
+      // The drainer holds a block key, appending the hold event; an
+      // operator releases it and the fill clears it, appending the release
+      // and clearing events.
+      final keyed = FakeDestination(id: 'held', keyOf: (_) => 'K');
+      await ds.destinations.addDestination(keyed, initiator: _automation);
+      await ds.destinations.setStartDate(
+        'held',
+        DateTime.utc(2026, 1, 1),
+        initiator: _automation,
+      );
+      await fillForTest(keyed, backend: backend);
       final logged = (await backend.findAllEvents()).first;
       await enqueueSingle(
         backend,
@@ -293,6 +303,7 @@ void main() {
         blockKey: 'K',
       );
       await holdKeyForTest(ds.destinations, 'held');
+      await releaseHoldsForTest(ds.destinations, keyed);
       // The drainer resumes a channel, appending the resume event.
       await resumeChannelForTest(
         ds.destinations,
@@ -347,6 +358,8 @@ void main() {
         kDestinationHaltRequestedEventType,
         kDestinationHaltCancelledEventType,
         kDestinationHeldEventType,
+        kDestinationHoldReleasedEventType,
+        kDestinationHoldClearedEventType,
       });
     });
 

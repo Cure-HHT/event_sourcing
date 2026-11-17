@@ -1152,6 +1152,130 @@ class DestinationRegistry {
     return _Done<String>(event.eventId);
   });
 
+  /// Release block key [key] of destination [destinationId], held under
+  /// [holdId]: the delivery cycle's fill then moves the key's held events
+  /// back into the queue, in sequence order, from the list's front.
+  ///
+  /// Inside one transaction: reads the key's list and,
+  /// - when the key has no list, or its list is under a hold other than
+  ///   [holdId], writes nothing but the registry check record and returns
+  ///   [ReleaseHoldStale] with the list's hold id (null when there is no
+  ///   list);
+  /// - when the list is already releasing under [holdId], writes nothing
+  ///   but the registry check record and returns
+  ///   [ReleaseHoldAlreadyReleasing] with the release event the earlier
+  ///   release appended;
+  /// - otherwise moves the list to releasing and appends a
+  ///   `system.destination_hold_released` event whose initiator is
+  ///   [initiator] and whose data carries `id`, `database_id`, `key`,
+  ///   `hold_id` and `request_id` ([requestId], the caller's request id),
+  ///   and returns [ReleaseHoldApplied] with that event.
+  ///
+  /// The operation acts on persisted state: the calling process need not
+  /// register the destination.
+  // Implements: EVS-DEV-destination-key-hold/N+O+P
+  // a compare-and-set on the hold id in one transaction: a stale or missing
+  //   hold writes only the check record; a list already releasing under the
+  //   hold returns the earlier release event; a held list moves to
+  //   releasing with the release event carrying exactly its data keys.
+  // Implements: EVS-PRD-destination-key-hold/E+I
+  // an operator's release queues the key's held events again and appends a
+  //   release event.
+  Future<ReleaseHoldResult> releaseHold(
+    String destinationId,
+    String key, {
+    required String holdId,
+    required Initiator initiator,
+    required String requestId,
+  }) => _run<ReleaseHoldResult>('releaseHold', (txn, collector) async {
+    const op = 'releaseHold';
+    final lists = await _backend.readKeyListsTxn(txn, destinationId);
+    final list = lists[key];
+    if (list == null || list.holdId != holdId) {
+      return _decideWithoutChange<ReleaseHoldResult>(
+        txn,
+        op: op,
+        destinationId: destinationId,
+        check: 'refused_stale_hold',
+        outcome: _Done<ReleaseHoldResult>(ReleaseHoldStale(list?.holdId)),
+      );
+    }
+    if (list.state == KeyListState.releasing) {
+      final earlier = await _releaseEventOfTxn(txn, destinationId, holdId);
+      if (earlier == null) {
+        return _decideWithoutChange<ReleaseHoldResult>(
+          txn,
+          op: op,
+          destinationId: destinationId,
+          check: 'refused_release_event_missing',
+          outcome: _Refused<ReleaseHoldResult>(
+            StateError(
+              'DestinationRegistry.releaseHold($destinationId, $key): the '
+              'list is releasing under hold $holdId but the log holds no '
+              'release event for that hold.',
+            ),
+          ),
+        );
+      }
+      return _decideWithoutChange<ReleaseHoldResult>(
+        txn,
+        op: op,
+        destinationId: destinationId,
+        check: 'already_releasing',
+        outcome: _Done<ReleaseHoldResult>(
+          ReleaseHoldAlreadyReleasing(earlier.eventId),
+        ),
+      );
+    }
+    await _backend.writeKeyListsTxn(txn, destinationId, <String, KeyList>{
+      ...lists,
+      key: KeyList(
+        holdId: list.holdId,
+        state: KeyListState.releasing,
+        cause: list.cause,
+        events: list.events,
+      ),
+    });
+    final event = await _emitDestinationAuditInTxn(
+      txn,
+      collector,
+      entryType: kDestinationHoldReleasedEntryType,
+      eventType: kDestinationHoldReleasedEventType,
+      data: <String, Object?>{
+        'id': destinationId,
+        // `database_id` is added by the audit emitter.
+        'key': key,
+        'hold_id': holdId,
+        'request_id': requestId,
+      },
+      initiator: initiator,
+    );
+    _consultAuditAppendSeam(kDestinationHoldReleasedEntryType);
+    return _Done<ReleaseHoldResult>(ReleaseHoldApplied(event.eventId));
+  });
+
+  /// The `system.destination_hold_released` event this database appended
+  /// for [destinationId]'s hold [holdId], read inside [txn]; null when the
+  /// log holds none.
+  Future<StoredEvent?> _releaseEventOfTxn(
+    Transaction txn,
+    String destinationId,
+    String holdId,
+  ) async {
+    final events = await _backend.findAllEventsInTxn(
+      txn,
+      entryType: kDestinationHoldReleasedEntryType,
+    );
+    for (final e in events.reversed) {
+      if (e.data['id'] == destinationId &&
+          e.data['hold_id'] == holdId &&
+          e.data['database_id'] == _eventStore.databaseId) {
+        return e;
+      }
+    }
+    return null;
+  }
+
   /// Cancel destination [destinationId]'s open halt request.
   ///
   /// Inside one transaction: reads the persisted schedule and the open
@@ -1547,10 +1671,12 @@ class DestinationRegistry {
   /// included, or the release failures recorded for the key. Leaves the
   /// wedge record and the halt request unchanged.
   ///
-  /// Throws [StateError] when [head] is not the pending head of the queue,
-  /// carries another block key, or its last recorded attempt is no
-  /// key-scoped permanent failure, and when an event the list would hold is
-  /// missing from the log.
+  /// Throws [StateError], writing nothing, unless exactly one of [head]
+  /// and [failedEventId] is given, when no [head] is given and [key] has
+  /// no list, when [head] is not the pending head of the queue, carries
+  /// another block key, or its last recorded attempt is no key-scoped
+  /// permanent failure, and when an event the list would hold is missing
+  /// from the log.
   // Implements: EVS-DEV-destination-key-hold/H+K
   // one transaction records the attempt (the caller), tombstones the head,
   //   deletes K's pending items behind it, merges K's list in sequence
@@ -1571,6 +1697,13 @@ class DestinationRegistry {
     String? failedEventId,
   }) async {
     _observeBodyRun('holdKeyInTxn');
+    if ((head == null) == (failedEventId == null)) {
+      throw StateError(
+        'holdKeyInTxn($destinationId, $key): exactly one of a head and a '
+        'failed event is named (head: ${head?.entryId}, failed event: '
+        '$failedEventId).',
+      );
+    }
     final eventIds = <String>[];
     if (head != null) {
       final current = await _backend.readFifoHeadTxn(txn, destinationId);
@@ -1614,6 +1747,12 @@ class DestinationRegistry {
     }
     final lists = await _backend.readKeyListsTxn(txn, destinationId);
     final existing = lists[key];
+    if (head == null && existing == null) {
+      throw StateError(
+        'holdKeyInTxn($destinationId, $key): a hold with no queue item needs '
+        "the key's list, and the key has none.",
+      );
+    }
     final events = <KeyListEvent>[...?existing?.events];
     for (final eventId in eventIds) {
       final event = await _backend.findEventByIdInTxn(txn, eventId);
@@ -1650,7 +1789,7 @@ class DestinationRegistry {
         'key': key,
         'hold_id': holdId,
         'row_id': head?.entryId,
-        'failed_event_id': head == null ? failedEventId : null,
+        'failed_event_id': failedEventId,
         'event_ids': <String>[for (final e in list.events) e.eventId],
         'cause': cause,
         'attempt_count': attemptCount,
@@ -1662,6 +1801,42 @@ class DestinationRegistry {
       mode: ApplyEventMode.alwaysStored,
     );
     return holdId;
+  }
+
+  /// Appends, inside [txn], the `system.destination_hold_cleared` event of
+  /// [destinationId]'s block key [key], whose list, released under
+  /// [holdId], the fill's release step emptied and removes in [txn].
+  // Implements: EVS-DEV-destination-key-hold/T
+  // the clearing event carries exactly `id`, `database_id`, `key` and
+  //   `hold_id`.
+  // Implements: EVS-PRD-destination-key-hold/J
+  // a clearing event is appended when a released key's held events have
+  //   all been queued.
+  Future<void> _clearHoldInTxn(
+    Transaction txn,
+    PublishCollector collector, {
+    required String destinationId,
+    required String key,
+    required String holdId,
+  }) async {
+    _consultAuditAppendSeam(kDestinationHoldClearedEntryType);
+    await _emitDestinationAuditInTxn(
+      txn,
+      collector,
+      entryType: kDestinationHoldClearedEntryType,
+      eventType: kDestinationHoldClearedEventType,
+      data: <String, Object?>{
+        'id': destinationId,
+        // `database_id` is added by the audit emitter.
+        'key': key,
+        'hold_id': holdId,
+      },
+      initiator: _drainInitiator,
+      // Implements: EVS-DEV-view-convergence/E
+      // the clearing event is a record the fill appends in its own
+      //   transaction, an always-stored event.
+      mode: ApplyEventMode.alwaysStored,
+    );
   }
 
   /// Consults the `failRegistryAuditAppend` test seam for an audit of

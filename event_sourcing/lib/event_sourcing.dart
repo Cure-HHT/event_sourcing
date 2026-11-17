@@ -182,7 +182,14 @@ export 'src/destinations/default_destination_wedges_spec.dart'
     show defaultDestinationWedgesSpec;
 export 'src/destinations/destination.dart' show Destination;
 export 'src/destinations/destination_schedule.dart'
-    show DestinationSchedule, SetEndDateResult, TombstoneAndRefillResult;
+    show
+        DestinationSchedule,
+        ReleaseHoldAlreadyReleasing,
+        ReleaseHoldApplied,
+        ReleaseHoldResult,
+        ReleaseHoldStale,
+        SetEndDateResult,
+        TombstoneAndRefillResult;
 export 'src/destinations/halt_purpose.dart' show HaltPurpose;
 export 'src/destinations/receiver_response.dart'
     show

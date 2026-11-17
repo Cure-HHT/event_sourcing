@@ -147,3 +147,71 @@ class TombstoneAndRefillResult {
   /// swept trail items.
   final int rewoundTo;
 }
+
+/// Result of `DestinationRegistry.releaseHold`: the release applied, the
+/// key already releasing under the named hold, or the named hold stale.
+sealed class ReleaseHoldResult {
+  const ReleaseHoldResult();
+}
+
+/// The release moved the key's list to releasing and appended the release
+/// event [releaseEventId].
+final class ReleaseHoldApplied extends ReleaseHoldResult {
+  const ReleaseHoldApplied(this.releaseEventId);
+
+  /// The id of the `system.destination_hold_released` event the release
+  /// appended.
+  final String releaseEventId;
+
+  @override
+  bool operator ==(Object other) =>
+      other is ReleaseHoldApplied && other.releaseEventId == releaseEventId;
+
+  @override
+  int get hashCode => Object.hash(ReleaseHoldApplied, releaseEventId);
+
+  @override
+  String toString() => 'ReleaseHoldApplied($releaseEventId)';
+}
+
+/// The key's list was already releasing under the named hold: nothing
+/// changed, and [releaseEventId] is the release event the earlier release
+/// appended.
+final class ReleaseHoldAlreadyReleasing extends ReleaseHoldResult {
+  const ReleaseHoldAlreadyReleasing(this.releaseEventId);
+
+  /// The id of the `system.destination_hold_released` event the earlier
+  /// release appended.
+  final String releaseEventId;
+
+  @override
+  bool operator ==(Object other) =>
+      other is ReleaseHoldAlreadyReleasing &&
+      other.releaseEventId == releaseEventId;
+
+  @override
+  int get hashCode => Object.hash(ReleaseHoldAlreadyReleasing, releaseEventId);
+
+  @override
+  String toString() => 'ReleaseHoldAlreadyReleasing($releaseEventId)';
+}
+
+/// The named hold is not the key's: the key has no list (a null
+/// [currentHoldId]) or its list is under the hold [currentHoldId]. Nothing
+/// changed.
+final class ReleaseHoldStale extends ReleaseHoldResult {
+  const ReleaseHoldStale(this.currentHoldId);
+
+  /// The hold id of the key's list, or null when the key has none.
+  final String? currentHoldId;
+
+  @override
+  bool operator ==(Object other) =>
+      other is ReleaseHoldStale && other.currentHoldId == currentHoldId;
+
+  @override
+  int get hashCode => Object.hash(ReleaseHoldStale, currentHoldId);
+
+  @override
+  String toString() => 'ReleaseHoldStale($currentHoldId)';
+}

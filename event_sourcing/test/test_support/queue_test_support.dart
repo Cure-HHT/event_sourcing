@@ -12,15 +12,13 @@ import 'package:event_sourcing/src/ingest/delivery_channel.dart';
 import 'package:event_sourcing/src/security/system_entry_types.dart'
     show
         kDestinationChannelResumedEntryType,
-        kDestinationHoldClearedEntryType,
-        kDestinationHoldReleasedEntryType,
         kDestinationSenderSucceededEntryType;
 import 'package:event_sourcing/src/storage/drain_lock.dart';
 import 'package:event_sourcing/src/storage/drain_records.dart';
 import 'package:event_sourcing/src/storage/final_status.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/queue_records.dart'
-    show SenderChannelRecord;
+    show KeyList, KeyListState, SenderChannelRecord;
 import 'package:event_sourcing/src/storage/sembast_backend.dart';
 import 'package:event_sourcing/src/storage/send_result.dart';
 import 'package:event_sourcing/src/storage/source.dart';
@@ -306,7 +304,9 @@ Future<void> honourHaltForTest(
 /// resolves for [backend], for a test whose raw-appended events were
 /// stamped as authored by an identity a later step in the same test moved
 /// the harness away from (e.g. an `EventStore` opened over the backend
-/// after the events were appended).
+/// after the events were appended). With [registry] (the registry of the
+/// event store over [backend]) the fill also releases key lists in state
+/// releasing, as the delivery cycle's fill does.
 Future<void> fillForTest(
   Destination destination, {
   required StorageBackend backend,
@@ -317,6 +317,7 @@ Future<void> fillForTest(
   String? databaseId,
   SyncPolicy policy = SyncPolicy.defaults,
   Duration cadence = const Duration(seconds: 15),
+  DestinationRegistry? registry,
 }) async {
   final resolvedDatabaseId =
       databaseId ?? await harnessDatabaseIdForTest(backend);
@@ -333,6 +334,7 @@ Future<void> fillForTest(
       flushHeld: flushHeld,
       declaredFingerprint: declaredFingerprint,
       databaseId: resolvedDatabaseId,
+      registry: registry,
     ),
     databaseId: resolvedDatabaseId,
   );
@@ -449,6 +451,38 @@ Future<String> holdKeyForTest(
   return holdId;
 }
 
+/// Releases every held key list of [destination] through [registry], then
+/// fills [destination] through [registry] until its key lists are cleared,
+/// appending one release event per list and one clearing event per list.
+/// The destination's fill position must be at or past each list's front.
+/// Throws [StateError] when a list is still present after the fills.
+Future<void> releaseHoldsForTest(
+  DestinationRegistry registry,
+  Destination destination,
+) async {
+  final backend = testBackendOf(registry.eventStore);
+  Future<Map<String, KeyList>> lists() => backend.transaction(
+    (txn) => backend.readKeyListsTxn(txn, destination.id),
+  );
+  for (final entry in (await lists()).entries) {
+    if (entry.value.state != KeyListState.held) continue;
+    await registry.releaseHold(
+      destination.id,
+      entry.key,
+      holdId: entry.value.holdId,
+      initiator: const AutomationInitiator(service: 'release-for-test'),
+      requestId: 'release-for-test',
+    );
+  }
+  for (var i = 0; i < 20; i++) {
+    if ((await lists()).isEmpty) return;
+    await fillForTest(destination, backend: backend, registry: registry);
+  }
+  throw StateError(
+    'releaseHoldsForTest(${destination.id}): the key lists were not cleared',
+  );
+}
+
 /// Persist [schedule] (see [persistScheduleForTest]) and run one fill over
 /// it: the fill reads the persisted schedule, so a test that describes the
 /// window in memory persists it first. For a destination that serializes
@@ -487,14 +521,11 @@ Future<void> fillWithScheduleForTest(
 }
 
 /// Not yet built: the destination audit kinds no operation of this build
-/// appends (the restore's succession event, and a keyed destination's
-/// release and clearing events), so no fixture can append one. Fixtures that
-/// append one audit of every kind leave them out; remove each kind from this
-/// set when it has an emitter.
+/// appends (the restore's succession event), so no fixture can append one.
+/// Fixtures that append one audit of every kind leave them out; remove each
+/// kind from this set when it has an emitter.
 const Set<String> destinationAuditsWithoutEmitter = <String>{
   kDestinationSenderSucceededEntryType,
-  kDestinationHoldReleasedEntryType,
-  kDestinationHoldClearedEntryType,
 };
 
 /// Appends a resume event the supported way, through the drainer: registers

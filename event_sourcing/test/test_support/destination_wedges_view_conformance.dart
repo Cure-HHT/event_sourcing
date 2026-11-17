@@ -584,6 +584,7 @@ void runDestinationWedgesViewScenarios(
           final keyed = FakeDestination(id: 'h', keyOf: (_) => 'K');
           await r.queued(keyed);
           await holdKeyForTest(r.registry, 'h');
+          await releaseHoldsForTest(r.registry, keyed);
           await resumeChannelForTest(r.registry, r.backend, initiator: _init);
           final audits = <StoredEvent>[
             for (final e in await r.events())
@@ -1327,6 +1328,7 @@ void runDestinationWedgesViewScenarios(
         final keyed = FakeDestination(id: 'h', keyOf: (_) => 'K');
         await s.queued(keyed);
         await holdKeyForTest(s.registry, 'h');
+        await releaseHoldsForTest(s.registry, keyed);
         await resumeChannelForTest(s.registry, backend, initiator: _init);
         final secured = await store.append(
           entryType: _noteType,
