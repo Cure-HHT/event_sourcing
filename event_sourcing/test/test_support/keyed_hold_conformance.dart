@@ -9,6 +9,7 @@
 // This file exposes one function, [runKeyedHoldScenarios], and registers no
 // `main()` of its own. Traceability lives on the individual tests.
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing/src/event_store.dart' show holdKeyInTxnForTest;
@@ -21,7 +22,7 @@ import 'destination_wedges_view_conformance.dart' show forgedEvent;
 import 'fake_destination.dart';
 import 'queue_registry_conformance.dart' show QueueTestDatabase;
 import 'queue_test_support.dart'
-    show drainForTest, fillForTest, honourHaltForTest;
+    show drainForTest, fillForTest, honourHaltForTest, withTestDrainLock;
 import 'test_backends.dart';
 
 const Initiator _init = AutomationInitiator(service: 'keyed-hold-scenarios');
@@ -135,6 +136,22 @@ class _World {
     await fill(d);
   }
 
+  /// Runs [racers] concurrently under one harness drain lock, which every
+  /// fill and drain among them shares, so none of them takes the lock
+  /// afresh while another releases it.
+  Future<void> race(List<Future<void> Function()> racers) => withTestDrainLock(
+    backend,
+    (_) => Future.wait(<Future<void>>[for (final r in racers) r()]),
+    databaseId: a.store.databaseId,
+  );
+
+  /// [activateResolved] with a start date after every note appended so
+  /// far, so [d] admits only later ones.
+  Future<void> activateFromNow(Destination d) async {
+    await activate(d, startDate: eventTime.add(const Duration(seconds: 1)));
+    await fill(d);
+  }
+
   Future<void> fill(
     Destination d, {
     SyncPolicy? policy,
@@ -224,6 +241,82 @@ class _World {
     return held.data['hold_id']! as String;
   }
 
+  /// Checks [id]'s queue and key lists against [notes], every note appended
+  /// to the log: no event is in two places (a pending or sent item, or a
+  /// key list); each key's events, in sent items, then pending items in
+  /// queue order, then the key's list, are in sequence order; and while a
+  /// key has a list, every pending item of the key is one a release
+  /// enqueued, ahead of the list's front. With [settled], every note is in
+  /// exactly one place.
+  Future<void> expectPerKeyOrder(
+    String id,
+    List<StoredEvent> notes, {
+    bool settled = false,
+  }) async {
+    final items = await this.items(id);
+    final lists = await keyLists(id);
+    final seqOf = <String, int>{
+      for (final n in notes) n.eventId: n.sequenceNumber,
+    };
+    final keyOf = <String, String?>{
+      for (final n in notes) n.eventId: noteKey(n),
+    };
+    final placed = <String>[];
+    final order = <String, List<int>>{};
+    void place(String eventId) {
+      placed.add(eventId);
+      final seq = seqOf[eventId];
+      if (seq == null) return;
+      (order[keyOf[eventId] ?? ''] ??= <int>[]).add(seq);
+    }
+
+    for (final status in <FinalStatus?>[FinalStatus.sent, null]) {
+      for (final item in items) {
+        if (item.finalStatus != status) continue;
+        item.eventIds.forEach(place);
+      }
+    }
+    for (final entry in lists.entries) {
+      for (final e in entry.value.events) {
+        place(e.eventId);
+      }
+      final front = entry.value.events.isEmpty
+          ? null
+          : entry.value.events.first.sequenceNumber;
+      for (final item in items) {
+        if (item.finalStatus != null || item.blockKey != entry.key) continue;
+        expect(
+          item.releasedHoldId,
+          isNotNull,
+          reason:
+              'a pending item of listed key ${entry.key} entered the '
+              'queue other than by its release',
+        );
+        if (front != null) {
+          expect(item.sequenceRange.lastSeq, lessThan(front));
+        }
+      }
+    }
+    expect(
+      placed.toSet(),
+      hasLength(placed.length),
+      reason: 'an event is queued or listed twice',
+    );
+    for (final entry in order.entries) {
+      final seqs = entry.value;
+      for (var i = 1; i < seqs.length; i++) {
+        expect(
+          seqs[i],
+          greaterThan(seqs[i - 1]),
+          reason: 'key "${entry.key}" is out of order: $seqs',
+        );
+      }
+    }
+    if (settled) {
+      expect(placed.toSet(), <String>{for (final n in notes) n.eventId});
+    }
+  }
+
   /// The items of [id] a release enqueued.
   Future<List<FifoEntry>> releasedItems(String id) async => <FifoEntry>[
     for (final i in await items(id))
@@ -269,9 +362,14 @@ const SendPermanent _keyRefusal = SendPermanent(
 
 /// Run every keyed-hold scenario against a database [databaseFactory]
 /// builds fresh for each test (a null database skips the test).
+///
+/// With [serializableConflicts] (a backend whose transactions abort with a
+/// serialization failure on a concurrent update, and re-run), the scenario
+/// that provokes one on a hold runs too.
 void runKeyedHoldScenarios(
   Future<QueueTestDatabase?> Function() databaseFactory, {
   required String label,
+  bool serializableConflicts = false,
 }) {
   group('keyed hold scenarios ($label)', () {
     late _World w;
@@ -2158,6 +2256,654 @@ void runKeyedHoldScenarios(
         expect((await w.releasedItems(d.id)).last.releasedHoldId, holdId);
       },
     );
+
+    // Verifies: EVS-DEV-destination-key-hold-guards/A+C
+    // Verifies: EVS-PRD-destination-key-hold/M
+    test('a registration that changes the key scheme while key lists exist is '
+        'refused, writing only the check record', () async {
+      if (!available) return;
+      final d = FakeDestination(
+        id: 'keyed',
+        keyOf: noteKey,
+        script: <SendResult>[_keyRefusal],
+      );
+      await w.activateResolved(d);
+      await w.note('a1', key: 'A');
+      await w.holdA(d);
+      final lists = await w.keyLists(d.id);
+      final schedule = await w.backend.readSchedule(d.id);
+      expect(
+        schedule!.keying,
+        const DestinationKeying(keyed: true, keyScheme: 'test-v1'),
+      );
+      final registered = await w.backend.findAllEvents(
+        entryType: kDestinationRegisteredEntryType,
+      );
+      expect(registered.single.data['keyed'], isTrue);
+      expect(registered.single.data['key_scheme'], 'test-v1');
+
+      w.a = await w.openProcess();
+      await expectLater(
+        w.registry.addDestination(
+          FakeDestination(id: d.id, keyOf: noteKey, keyScheme: 'test-v2'),
+          initiator: _init,
+        ),
+        throwsA(
+          isA<ArgumentError>().having(
+            (e) => e.toString(),
+            'message',
+            allOf(contains('test-v1'), contains('test-v2')),
+          ),
+        ),
+      );
+      expect(
+        (await w.backend.transaction(w.backend.readRegistryCheckTxn))!.outcome,
+        'refused_keying_changed',
+      );
+      expect(w.registry.byId(d.id), isNull);
+      expect(await w.backend.readSchedule(d.id), schedule);
+      expect(await w.keyLists(d.id), lists);
+      expect(
+        await w.backend.findAllEvents(
+          entryType: kDestinationRegisteredEntryType,
+        ),
+        hasLength(1),
+      );
+
+      // The same keying registers.
+      await w.registry.addDestination(
+        FakeDestination(id: d.id, keyOf: noteKey),
+        initiator: _init,
+      );
+      expect(w.registry.byId(d.id), isNotNull);
+    });
+
+    // Verifies: EVS-DEV-destination-key-hold-guards/B
+    test('a keyed destination that names no key scheme is refused before '
+        'anything is written', () async {
+      if (!available) return;
+      final before = await w.backend.findAllEvents();
+      for (final scheme in <String?>[null, '']) {
+        await expectLater(
+          w.registry.addDestination(
+            FakeDestination(id: 'keyed', keyOf: noteKey, keyScheme: scheme),
+            initiator: _init,
+          ),
+          throwsA(isA<ArgumentError>()),
+        );
+      }
+      expect(await w.backend.readSchedule('keyed'), isNull);
+      expect(await w.backend.findAllEvents(), hasLength(before.length));
+    });
+
+    // Verifies: EVS-DEV-destination-key-hold-guards/C+D+E
+    // Verifies: EVS-PRD-destination-key-hold/C
+    test('a process registered keyed before another registered the '
+        'destination unkeyed neither fills nor holds', () async {
+      if (!available) return;
+      final keyed = FakeDestination(
+        id: 'subjects',
+        keyOf: noteKey,
+        script: <SendResult>[_keyRefusal],
+      );
+      await w.activateResolved(keyed);
+      final a = w.a;
+      await w.note('a1', key: 'A');
+      await w.note('b1', key: 'B');
+      await w.fillAll(keyed);
+      final queued = await w.items(keyed.id);
+      expect(queued.map((i) => i.blockKey), <String?>['A', 'B']);
+
+      // No key lists exist, so another process (a rolling deploy that
+      // reverts keying) registers it unkeyed, and its keying is recorded.
+      final b = await w.openProcess();
+      await b.registry.addDestination(
+        FakeDestination(id: keyed.id),
+        initiator: _init,
+      );
+      expect(
+        (await w.backend.readSchedule(keyed.id))!.keying,
+        DestinationKeying.unkeyed,
+      );
+
+      // The keyed process still drains: its key-scoped refusal wedges the
+      // destination rather than holding A, which B would fill past.
+      w.a = a;
+      await w.drain(keyed);
+      expect(await w.keyLists(keyed.id), isEmpty);
+      expect(await w.heldEvents(), isEmpty);
+      expect((await w.items(keyed.id)).first.finalStatus, FinalStatus.wedged);
+      expect(
+        (await w.wedgeRecord(keyed.id))!.cause,
+        WedgeCause.permanentRefusal,
+      );
+
+      // And its fill writes nothing under the keying no longer recorded.
+      final cursor = await w.backend.transaction(
+        (txn) => w.backend.readFillCursorTxn(txn, keyed.id),
+      );
+      final itemCount = (await w.items(keyed.id)).length;
+      await w.note('a2', key: 'A');
+      await w.fillAll(keyed);
+      expect(await w.items(keyed.id), hasLength(itemCount));
+      expect(
+        await w.backend.transaction(
+          (txn) => w.backend.readFillCursorTxn(txn, keyed.id),
+        ),
+        cursor,
+      );
+    });
+
+    // Verifies: EVS-DEV-destination-key-hold-guards/C+D
+    // Verifies: EVS-PRD-destination-key-hold/C
+    test('a process under the old key scheme does not fill past a hold the '
+        'new scheme made', () async {
+      if (!available) return;
+      final v1 = FakeDestination(id: 'subjects', keyOf: noteKey);
+      await w.activateResolved(v1);
+      final old = w.a;
+
+      // A second process registers the destination under a new scheme, with
+      // a key function that gives A's events key 'P-A', while no list
+      // exists, then holds P-A.
+      final v2 = FakeDestination(
+        id: v1.id,
+        keyOf: (e) => noteKey(e) == null ? null : 'P-${noteKey(e)}',
+        keyScheme: 'test-v2',
+        script: <SendResult>[_keyRefusal],
+      );
+      w.a = await w.openProcess();
+      await w.registry.addDestination(v2, initiator: _init);
+      final a1 = await w.note('a1', key: 'A');
+      await w.fillAll(v2);
+      await w.drain(v2);
+      expect((await w.keyLists(v1.id)).keys, <String>['P-A']);
+
+      // The old process's fill would key a2 'A', match no list and queue it
+      // ahead of a1: it writes nothing.
+      final a2 = await w.note('a2', key: 'A');
+      final items = await w.items(v1.id);
+      final newProcess = w.a;
+      w.a = old;
+      await w.fillAll(v1);
+      expect(await w.items(v1.id), items);
+
+      // The new process routes it into the list.
+      w.a = newProcess;
+      await w.fillAll(v2);
+      expect(await w.items(v1.id), items);
+      expect((await w.keyLists(v1.id))['P-A']!.events, <KeyListEvent>[
+        listEventOf(a1),
+        listEventOf(a2),
+      ]);
+    });
+
+    // Verifies: EVS-DEV-destination-key-hold-guards/I
+    test('a schedule that records no keying, as on a database migrated in '
+        'place, takes the keying of the next registration', () async {
+      if (!available) return;
+      final d = FakeDestination(
+        id: 'subjects',
+        keyOf: noteKey,
+        script: <SendResult>[_keyRefusal],
+      );
+      await w.activateResolved(d);
+      await w.note('a1', key: 'A');
+      await w.note('n1');
+      await w.fillAll(d);
+      final items = await w.items(d.id);
+      expect(items, hasLength(2));
+      final migrated = (await w.backend.readSchedule(d.id))!;
+      await w.backend.transaction(
+        (txn) => w.backend.writeScheduleTxn(
+          txn,
+          d.id,
+          DestinationSchedule(
+            startDate: migrated.startDate,
+            endDate: migrated.endDate,
+            registrationId: migrated.registrationId,
+            allowHardDelete: migrated.allowHardDelete,
+          ),
+        ),
+      );
+      expect((await w.backend.readSchedule(d.id))!.keying, isNull);
+
+      w.a = await w.openProcess();
+      await w.registry.addDestination(
+        FakeDestination(id: d.id, keyOf: noteKey, keyScheme: 'participant-v1'),
+        initiator: _init,
+      );
+      final recorded = (await w.backend.readSchedule(d.id))!;
+      expect(
+        recorded.keying,
+        const DestinationKeying(keyed: true, keyScheme: 'participant-v1'),
+      );
+      expect(recorded.registrationId, migrated.registrationId);
+      expect(recorded.startDate, migrated.startDate);
+      expect(await w.items(d.id), items);
+    });
+
+    // Verifies: EVS-DEV-destination-key-hold-guards/H
+    test("a re-hold by a refusal removes the key's release failure record, "
+        'so the new release gets the whole budget', () async {
+      if (!available) return;
+      final d = _ThrowingTransformDestination(
+        id: 'keyed',
+        keyOf: noteKey,
+        script: <SendResult>[_keyRefusal, _keyRefusal],
+      );
+      await w.activateResolved(d);
+      final a1 = await w.note('a1', key: 'A');
+      final a2 = await w.note('a2', key: 'A');
+      final holdId = await w.holdA(d);
+      await w.release(d, 'A', holdId);
+      final policy = _policy(maxAttempts: 2);
+      final t0 = DateTime.utc(2027, 1, 1);
+      await w.fill(d, policy: policy, clock: () => t0);
+      final released = (await w.releasedItems(d.id)).single;
+      expect(released.eventIds, <String>[a1.eventId]);
+      d
+        ..throwing = true
+        ..throwsFor = <String>{'a2'};
+      final t1 = t0.add(const Duration(minutes: 1));
+      await w.fill(d, policy: policy, clock: () => t1);
+      expect((await w.releaseFailures(d.id))['A']!.failures, 1);
+
+      // The released a1 is refused: A is held again, with no record.
+      await w.drain(d, policy: policy);
+      final rehold = (await w.heldEvents()).last;
+      final newHoldId = rehold.data['hold_id']! as String;
+      expect(newHoldId, isNot(holdId));
+      expect(await w.releaseFailures(d.id), isEmpty);
+
+      // One failure of the new release does not spend a budget of two.
+      await w.release(d, 'A', newHoldId, requestId: 'request-2');
+      d.throwsFor = <String>{'a1'};
+      final t2 = t1.add(const Duration(minutes: 1));
+      await w.fill(d, policy: policy, clock: () => t2);
+      expect((await w.releaseFailures(d.id))['A']!.failures, 1);
+      final list = (await w.keyLists(d.id))['A']!;
+      expect(list.state, KeyListState.releasing);
+      expect(list.holdId, newHoldId);
+      expect(list.events, <KeyListEvent>[listEventOf(a1), listEventOf(a2)]);
+      expect(await w.heldEvents(), hasLength(2));
+    });
+
+    // Verifies: EVS-DEV-destination-key-hold-guards/F
+    test('a hold that throws rolls back and wedges the head '
+        'destination-wide', () async {
+      if (!available) return;
+      final d = FakeDestination(
+        id: 'keyed',
+        keyOf: noteKey,
+        script: <SendResult>[_keyRefusal],
+      );
+      await w.activateResolved(d);
+      await w.note('a1', key: 'A');
+      await w.note('a2', key: 'A');
+      await w.fillAll(d);
+      final queued = await w.items(d.id);
+      expect(queued, hasLength(2));
+      // An item behind the head that carries attempts makes the hold's
+      // deletion of A's pending items throw.
+      await w.backend.transaction(
+        (txn) => w.backend.appendAttemptTxn(
+          txn,
+          d.id,
+          queued[1].entryId,
+          AttemptResult(
+            attemptedAt: DateTime.utc(2027),
+            outcome: 'transient',
+            errorMessage: 'an attempt the queue should not hold',
+          ),
+        ),
+      );
+      await w.drain(d);
+      final items = await w.items(d.id);
+      expect(items.first.finalStatus, FinalStatus.wedged);
+      expect(items.first.attempts, hasLength(1));
+      expect(items.first.attempts.single.scope, WedgeScope.key);
+      expect(items[1].finalStatus, isNull);
+      expect((await w.wedgeRecord(d.id))!.cause, WedgeCause.permanentRefusal);
+      expect(await w.wedgeEvents(), hasLength(1));
+      expect(await w.keyLists(d.id), isEmpty);
+      expect(await w.heldEvents(), isEmpty);
+    });
+
+    // Verifies: EVS-DEV-destination-key-hold-guards/G
+    test('a recovery that cannot return a released item to its list is '
+        'refused, writing only the check record', () async {
+      if (!available) return;
+      final d = FakeDestination(
+        id: 'keyed',
+        keyOf: noteKey,
+        script: <SendResult>[const SendPermanent(error: 'refused')],
+      );
+      await w.activateResolved(d);
+      await w.note('n1');
+      await w.fillAll(d);
+      final a1 = await w.note('a1', key: 'A');
+      // A released item whose hold the log has no event for.
+      await w.backend.transaction(
+        (txn) => w.backend.enqueueFifoTxn(
+          txn,
+          d.id,
+          <StoredEvent>[a1],
+          wirePayload: WirePayload(
+            bytes: Uint8List.fromList(utf8.encode('{}')),
+            contentType: d.wireFormat,
+            transformVersion: null,
+          ),
+          blockKey: 'A',
+          releasedHoldId: 'no-such-hold',
+        ),
+      );
+      await w.drain(d);
+      final head = (await w.items(d.id)).first;
+      expect(head.finalStatus, FinalStatus.wedged);
+      final before = await w.items(d.id);
+      final cursor = await w.backend.transaction(
+        (txn) => w.backend.readFillCursorTxn(txn, d.id),
+      );
+      await expectLater(
+        w.registry.tombstoneAndRefill(d.id, head.entryId, initiator: _init),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            allOf(contains('no-such-hold'), contains('deleteDestination')),
+          ),
+        ),
+      );
+      expect(
+        (await w.backend.transaction(w.backend.readRegistryCheckTxn))!.outcome,
+        'refused_released_item_unreturnable',
+      );
+      expect(await w.items(d.id), before);
+      expect(await w.keyLists(d.id), isEmpty);
+      expect(await w.wedgeRecord(d.id), isNotNull);
+      expect(
+        await w.backend.transaction(
+          (txn) => w.backend.readFillCursorTxn(txn, d.id),
+        ),
+        cursor,
+      );
+    });
+
+    // Verifies: EVS-DEV-destination-drain/G
+    // Verifies: EVS-DEV-destination-key-hold/H+L
+    // Verifies: EVS-PRD-destination-key-hold/B+C
+    test('a fill racing a hold keeps each key in order and enqueues each '
+        'event once', () async {
+      if (!available) return;
+      for (var round = 0; round < 4; round++) {
+        final d = FakeDestination(
+          id: 'race-hold-$round',
+          keyOf: noteKey,
+          script: <SendResult>[
+            _keyRefusal,
+            for (var i = 0; i < 20; i++) const SendOk(),
+          ],
+        );
+        await w.activateFromNow(d);
+        final notes = <StoredEvent>[
+          await w.note('a1-$round', key: 'A'),
+          await w.note('b1-$round', key: 'B'),
+        ];
+        await w.fillAll(d, passes: 2);
+        notes.addAll(<StoredEvent>[
+          await w.note('a2-$round', key: 'A'),
+          await w.note('b2-$round', key: 'B'),
+          await w.note('a3-$round', key: 'A'),
+        ]);
+        await w.race(<Future<void> Function()>[
+          () => w.fillAll(d, passes: 4),
+          () => w.drain(d),
+          () => w.fillAll(d, passes: 4),
+        ]);
+        await w.expectPerKeyOrder(d.id, notes);
+        await w.fillAll(d);
+        await w.expectPerKeyOrder(d.id, notes, settled: true);
+        expect(
+          (await w.keyLists(d.id))['A']!.events.map((e) => e.eventId),
+          <String>[notes[0].eventId, notes[2].eventId, notes[4].eventId],
+        );
+        expect(await w.heldEvents(), hasLength(round + 1));
+      }
+    });
+
+    // Verifies: EVS-DEV-destination-drain/G
+    // Verifies: EVS-DEV-destination-key-hold/N+O+Q
+    // Verifies: EVS-PRD-destination-key-hold/C+E
+    test('a fill racing a release from another process keeps each key in '
+        'order and enqueues each event once', () async {
+      if (!available) return;
+      for (var round = 0; round < 4; round++) {
+        final d = FakeDestination(
+          id: 'race-release-$round',
+          keyOf: noteKey,
+          script: <SendResult>[_keyRefusal],
+        );
+        await w.activateFromNow(d);
+        final notes = <StoredEvent>[await w.note('a1-$round', key: 'A')];
+        final holdId = await w.holdA(d);
+        notes.addAll(<StoredEvent>[
+          await w.note('a2-$round', key: 'A'),
+          await w.note('b1-$round', key: 'B'),
+          await w.note('a3-$round', key: 'A'),
+        ]);
+        final other = await w.openProcess();
+        final releases = <ReleaseHoldResult>[];
+        await w.race(<Future<void> Function()>[
+          () => w.fillAll(d, passes: 4),
+          () async {
+            releases.add(
+              await other.registry.releaseHold(
+                d.id,
+                'A',
+                holdId: holdId,
+                initiator: _init,
+                requestId: 'race-$round',
+              ),
+            );
+          },
+          () => w.fillAll(d, passes: 4),
+        ]);
+        expect(releases.single, isA<ReleaseHoldApplied>());
+        await w.expectPerKeyOrder(d.id, notes);
+        await w.fillAll(d);
+        await w.expectPerKeyOrder(d.id, notes, settled: true);
+        expect(await w.keyLists(d.id), isEmpty);
+        // A's events reach the queue in order: a1 by the release, and a2
+        // and a3 by the release too or, once the list emptied ahead of
+        // them, by the fill.
+        final queuedA = <String>[
+          for (final i in await w.items(d.id))
+            if (i.blockKey == 'A' && i.finalStatus == null) ...i.eventIds,
+        ];
+        expect(queuedA, <String>[
+          notes[0].eventId,
+          notes[1].eventId,
+          notes[3].eventId,
+        ]);
+        expect((await w.releasedItems(d.id)).first.eventIds, <String>[
+          notes[0].eventId,
+        ]);
+      }
+    });
+
+    // Verifies: EVS-DEV-destination-drain/F+G
+    // Verifies: EVS-DEV-destination-key-hold/L+X
+    test('a fill racing a recovery from another process keeps each key in '
+        'order and enqueues each event once', () async {
+      if (!available) return;
+      for (var round = 0; round < 4; round++) {
+        final d = FakeDestination(
+          id: 'race-recover-$round',
+          keyOf: noteKey,
+          script: <SendResult>[const SendPermanent(error: 'refused')],
+        );
+        await w.activateFromNow(d);
+        final notes = <StoredEvent>[
+          await w.note('b1-$round', key: 'B'),
+          await w.note('a1-$round', key: 'A'),
+          await w.note('b2-$round', key: 'B'),
+        ];
+        await w.fillAll(d);
+        await w.drain(d);
+        final head = (await w.items(d.id)).first;
+        expect(head.finalStatus, FinalStatus.wedged);
+        notes.addAll(<StoredEvent>[
+          await w.note('a2-$round', key: 'A'),
+          await w.note('b3-$round', key: 'B'),
+        ]);
+        final other = await w.openProcess();
+        await w.race(<Future<void> Function()>[
+          () => w.fillAll(d, passes: 4),
+          () => other.registry
+              .tombstoneAndRefill(d.id, head.entryId, initiator: _init)
+              .then((_) {}),
+          () => w.fillAll(d, passes: 4),
+        ]);
+        await w.fillAll(d);
+        await w.expectPerKeyOrder(d.id, notes, settled: true);
+        final pending = <String>[
+          for (final i in await w.items(d.id))
+            if (i.finalStatus == null) ...i.eventIds,
+        ];
+        expect(pending, <String>[for (final n in notes) n.eventId]);
+      }
+    });
+
+    // Verifies: EVS-DEV-destination-drain/A+G
+    test(
+      'a fill racing a deletion from another process enqueues nothing '
+      'after the deletion, and keeps each key in order when it wins',
+      () async {
+        if (!available) return;
+        var deletions = 0;
+        for (var round = 0; round < 4; round++) {
+          final d = FakeDestination(
+            id: 'race-delete-$round',
+            keyOf: noteKey,
+            allowHardDelete: true,
+            script: <SendResult>[_keyRefusal],
+          );
+          await w.activateFromNow(d);
+          final notes = <StoredEvent>[await w.note('a1-$round', key: 'A')];
+          await w.holdA(d);
+          // In even rounds only the held key's events arrive, which the fill
+          // routes into its list, so the queue holds no pending head and the
+          // deletion always proceeds. In odd rounds another key's events
+          // arrive too, and deletion refuses a pending head, so a fill that
+          // queues b1 first wins: the destination stays, in order.
+          notes.addAll(<StoredEvent>[
+            await w.note('a2-$round', key: 'A'),
+            if (round.isOdd) await w.note('b1-$round', key: 'B'),
+            if (round.isOdd) await w.note('b2-$round', key: 'B'),
+          ]);
+          final other = await w.openProcess();
+          var deleted = true;
+          await w.race(<Future<void> Function()>[
+            () => w.fillAll(d, passes: 4),
+            () async {
+              try {
+                await other.registry.deleteDestination(d.id, initiator: _init);
+                // A refusal is a StateError the registry throws by design.
+                // ignore: avoid_catching_errors
+              } on StateError catch (e) {
+                expect(e.message, contains('is pending'));
+                deleted = false;
+              }
+            },
+            () => w.fillAll(d, passes: 4),
+          ]);
+          await w.fillAll(d);
+          if (!deleted) {
+            expect(await w.backend.readSchedule(d.id), isNotNull);
+            await w.expectPerKeyOrder(d.id, notes, settled: true);
+            continue;
+          }
+          deletions += 1;
+          expect(await w.backend.readSchedule(d.id), isNull);
+          expect(await w.keyLists(d.id), isEmpty);
+          expect(await w.releaseFailures(d.id), isEmpty);
+          expect(
+            (await w.items(d.id)).where((i) => i.finalStatus == null),
+            isEmpty,
+            reason: 'no fill commits an item after the deletion',
+          );
+        }
+        expect(deletions, greaterThanOrEqualTo(2));
+      },
+    );
+
+    // Verifies: EVS-DEV-destination-key-hold/H+K
+    // Verifies: EVS-DEV-destination-drain/C
+    test('a hold re-run after a serialization failure appends one hold event '
+        'under one hold id', () async {
+      if (!available) return;
+      if (!serializableConflicts) {
+        markTestSkipped('$label does not abort a concurrent update');
+        return;
+      }
+      final d = FakeDestination(
+        id: 'keyed',
+        keyOf: noteKey,
+        script: <SendResult>[_keyRefusal, _keyRefusal],
+      );
+      await w.activateResolved(d);
+      // Z is held first, so the key lists row exists for the concurrent
+      // writer to update.
+      await w.note('z1', key: 'Z');
+      await w.fillAll(d);
+      await w.drain(d);
+      final lists = await w.keyLists(d.id);
+      expect(lists.keys, <String>['Z']);
+      final a1 = await w.note('a1', key: 'A');
+      await w.fillAll(d);
+      final head = (await w.items(d.id)).last;
+      expect(head.eventIds, <String>[a1.eventId]);
+
+      final other = await w.openProcess();
+      var armed = false;
+      var conflicts = 0;
+      var holdRuns = 0;
+      await runWithDeliveryTestHooks(
+        DeliveryTestHooks(
+          afterSendBeforeOutcome: (_) async => armed = true,
+          beforeQueueWrites: (_) async {
+            if (!armed) return;
+            armed = false;
+            conflicts += 1;
+            // Commits, from another connection, an update of the key lists
+            // row the hold's transaction reads and then writes.
+            await other.backend.transaction(
+              (txn) => other.backend.writeKeyListsTxn(txn, d.id, lists),
+            );
+          },
+          onRegistryBodyRun: (op) {
+            if (op == 'holdKeyInTxn') holdRuns += 1;
+          },
+        ),
+        () => w.drain(d),
+      );
+      expect(conflicts, 1);
+      expect(holdRuns, 2, reason: 'the hold ran again after the abort');
+      final held = (await w.heldEvents())
+          .where((e) => e.data['key'] == 'A')
+          .toList();
+      expect(held, hasLength(1));
+      final after = await w.keyLists(d.id);
+      expect(after['A']!.holdId, held.single.data['hold_id']);
+      expect(after['A']!.events, <KeyListEvent>[listEventOf(a1)]);
+      expect(after['Z'], lists['Z']);
+      final tombstoned = (await w.items(
+        d.id,
+      )).singleWhere((i) => i.entryId == head.entryId);
+      expect(tombstoned.finalStatus, FinalStatus.tombstoned);
+      expect(tombstoned.attempts, hasLength(1));
+    });
   });
 }
 

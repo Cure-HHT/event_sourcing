@@ -399,6 +399,8 @@ Future<void> fillBatch(
 }) async {
   final now = (clock ?? () => DateTime.now().toUtc())();
   final id = destination.id;
+  // Consumer code: read once, outside any transaction.
+  final keying = DestinationKeying.of(destination);
 
   // Perform every pending replay request before filling: a request recorded
   // while one is performed is performed next, so the position never
@@ -406,7 +408,9 @@ Future<void> fillBatch(
   _FillState state;
   for (;;) {
     state = await _FillState.read(backend, id);
-    if (_fillHeld(state, registrationId, declaredFingerprint)) return;
+    if (_fillHeld(state, id, registrationId, declaredFingerprint, keying)) {
+      return;
+    }
     final request = state.request;
     if (request == null) break;
     final performed = await _performReplayRequest(
@@ -443,9 +447,10 @@ Future<void> fillBatch(
       cadence: cadence,
       registrationId: registrationId,
       declaredFingerprint: declaredFingerprint,
+      keying: keying,
     );
     state = await _FillState.read(backend, id);
-    if (_fillHeld(state, registrationId, declaredFingerprint) ||
+    if (_fillHeld(state, id, registrationId, declaredFingerprint, keying) ||
         state.request != null) {
       return;
     }
@@ -617,15 +622,35 @@ Future<void> fillBatch(
 
 /// Whether the fill writes nothing for [state]: the destination was
 /// deleted, its head is wedged, its persisted registration is not
-/// [registrationId], or a refill guard names [declaredFingerprint].
+/// [registrationId], its persisted schedule records a keying other than
+/// [keying] (the keying of the destination the drainer registers), or a
+/// refill guard names [declaredFingerprint].
 bool _fillHeld(
   _FillState state,
+  String destinationId,
   String? registrationId,
   String? declaredFingerprint,
+  DestinationKeying keying,
 ) {
   if (state.schedule == null || state.headWedged) return true;
   if (registrationId != null &&
       state.schedule!.registrationId != registrationId) {
+    return true;
+  }
+  // Implements: EVS-DEV-destination-key-hold-guards/D
+  // a fill, a replay or a release step under a keying other than the
+  //   recorded one writes nothing; the schedule is part of the
+  //   compare-and-set, so a keying recorded while the fill builds its items
+  //   makes its commit write nothing too.
+  final recorded = state.schedule!.keying;
+  if (recorded != null && recorded != keying) {
+    libraryLog(
+      'sync_cycle',
+      'the fill of destination "$destinationId" is held: this '
+          'process registers it $keying, and its persisted schedule records '
+          '$recorded',
+      level: LibraryLogLevel.warning,
+    );
     return true;
   }
   final guard = state.refillGuard;
@@ -652,6 +677,7 @@ Future<void> _releaseLists(
   required Duration cadence,
   required String? registrationId,
   required String? declaredFingerprint,
+  required DestinationKeying keying,
 }) async {
   final keys = <String>[
     for (final entry in state.keyLists.entries)
@@ -661,7 +687,13 @@ Future<void> _releaseLists(
     final current = i == 0
         ? state
         : await _FillState.read(backend, destination.id);
-    if (_fillHeld(current, registrationId, declaredFingerprint) ||
+    if (_fillHeld(
+          current,
+          destination.id,
+          registrationId,
+          declaredFingerprint,
+          keying,
+        ) ||
         current.request != null) {
       return;
     }

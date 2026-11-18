@@ -5,9 +5,10 @@
 Data: data format 3.1, a minor step: keyed destinations. Postgres schema
 version 10 adds the queue item's block key and release hold id and raises
 the minimum compatible schema version to 10, so deploying it is
-stop-then-start. A persisted Sembast database that holds a keyed
-destination is opened only by a build of 3.1 or later
-(EVS-DEV-version-compatibility/C).
+stop-then-start, and a rollback to a build of schema 9 is a restore of
+the database, for every consumer, including one that keys no destination.
+A persisted Sembast database that holds a keyed destination is opened only
+by a build of 3.1 or later (EVS-DEV-version-compatibility/C).
 
 Breaking: `EventStore.open` now refuses a sealed projection registry that
 holds `defaultDestinationWedgesSpec` but not `defaultDestinationHoldsSpec`;
@@ -29,10 +30,31 @@ destination that holds no key.
   `system.destination_held`, `system.destination_hold_released` and
   `system.destination_hold_cleared` are declared
   (EVS-DEV-destination-key-hold).
-- `Destination` gains two members with defaults, `keyed` and
-  `blockKeyOf`. A class that writes `implements Destination` rather than
-  `extends Destination` inherits neither and must declare both (`keyed =>
-  false` and a `blockKeyOf` that returns null keep its behaviour).
+- `Destination` gains three members with defaults, `keyed`,
+  `blockKeyOf` and `keyScheme`. A class that writes `implements
+  Destination` rather than `extends Destination` inherits none and must
+  declare them (`keyed => false`, a `blockKeyOf` that returns null and a
+  null `keyScheme` keep its behaviour). A keyed destination names a
+  non-empty `keyScheme`; `addDestination` throws `ArgumentError` before
+  anything is written otherwise.
+- Every registration records the destination's keying (`DestinationKeying`:
+  `keyed` and `keyScheme`) in its persisted schedule
+  (`DestinationSchedule.keying`) and its registration event (`keyed`,
+  `key_scheme`). While the destination has key lists, `addDestination`
+  throws `ArgumentError`, writing only the registry check record
+  (`refused_keying_changed`), for a keying other than the recorded one; a
+  schedule that records none takes the registration's. A fill, replay or
+  release step under a keying other than the recorded one writes nothing,
+  and a key-scoped refusal drained under one wedges the head
+  (EVS-DEV-destination-key-hold-guards).
+- A hold that cannot be committed (the queue or the log is not as it
+  requires) is rolled back and the head is wedged with cause
+  `permanent_refusal`, instead of the pass ending with the attempt alone.
+  A recovery that cannot return a released item to its key list throws
+  `StateError` writing only its registry check record
+  (`refused_released_item_unreturnable`), and a hold removes its key's
+  release failure record, so the new hold's release starts with the
+  whole retry budget.
 - `DestinationRegistry.readDeliveryStatus` shows each destination's key
   lists (`DestinationDeliveryStatus.keyLists`), and
   `DestinationRegistry.readDeliveryStatusInTxn` reads the same status

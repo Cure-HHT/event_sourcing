@@ -268,6 +268,20 @@ class DestinationRegistry {
   /// lists for its id: register it keyed, or delete its key lists with
   /// [deleteDestination].
   ///
+  /// Every registration records [destination]'s keying (whether it is keyed
+  /// and its [Destination.keyScheme]) in the persisted schedule, the latest
+  /// registration's keying in effect, as for the hard-delete opt-in. While
+  /// the database holds key lists for the id, a registration whose keying
+  /// differs from the recorded one throws `ArgumentError`, with nothing
+  /// written but the registry check record; a schedule that records no
+  /// keying (written before keyings were recorded, as on a database
+  /// migrated in place) takes this registration's. A fill, a release step
+  /// or a hold in a process whose destination's keying is not the recorded
+  /// one writes nothing (`EVS-DEV-destination-key-hold-guards`), so a process
+  /// registered before another changed the keying stops too. Throws
+  /// `ArgumentError` before anything is written for a keyed destination
+  /// whose key scheme is null or empty.
+  ///
   /// A destination deleted and registered again under the same id starts a
   /// new registration. Its refill may send again events that the prior
   /// registration's `sent` items already delivered: delivery is
@@ -282,7 +296,8 @@ class DestinationRegistry {
     final wireFormat = destination.wireFormat;
     final allowHardDelete = destination.allowHardDelete;
     final serializesNatively = destination.serializesNatively;
-    final keyed = destination.keyed;
+    final keying = DestinationKeying.of(destination);
+    final keyed = keying.keyed;
     // Implements: EVS-DEV-delivery-channel/B
     // a destination that serializes natively and implements no pull is
     //   refused before anything is written.
@@ -305,6 +320,19 @@ class DestinationRegistry {
             'destination holds one block key while the rest of its queue '
             'goes on, and a natively serializing destination delivers its '
             'queue in order',
+      );
+    }
+    // Implements: EVS-DEV-destination-key-hold-guards/B
+    // a keyed destination that names no key scheme is refused before
+    //   anything is written.
+    final scheme = keying.keyScheme;
+    if (keyed && (scheme == null || scheme.isEmpty)) {
+      throw ArgumentError.value(
+        id,
+        'destination',
+        'destination $id is keyed and names no key scheme; a keyed '
+            'destination declares Destination.keyScheme, so a change to how '
+            'it computes block keys is recorded',
       );
     }
     final filterEntryTypes = destination.filter.entryTypes?.toList();
@@ -358,7 +386,11 @@ class DestinationRegistry {
           // a destination that is not keyed is refused while it has key
           //   lists, since its fill would queue a held key's new events
           //   ahead of the held ones.
-          if (!keyed && (await _backend.readKeyListsTxn(txn, id)).isNotEmpty) {
+          final hasKeyLists = (await _backend.readKeyListsTxn(
+            txn,
+            id,
+          )).isNotEmpty;
+          if (!keyed && hasKeyLists) {
             return _decideWithoutChange<String>(
               txn,
               op: 'addDestination',
@@ -375,6 +407,33 @@ class DestinationRegistry {
               ),
             );
           }
+          // Implements: EVS-DEV-destination-key-hold-guards/C+I
+          // Implements: EVS-PRD-destination-key-hold/M
+          // a registration whose keying differs from the recorded one is
+          //   refused while the destination has key lists; a schedule with
+          //   no recorded keying (written before keyings were recorded)
+          //   takes this registration's, as a first registration does.
+          final recorded = persisted?.keying;
+          if (hasKeyLists && recorded != null && recorded != keying) {
+            return _decideWithoutChange<String>(
+              txn,
+              op: 'addDestination',
+              destinationId: id,
+              check: 'refused_keying_changed',
+              outcome: _Refused<String>(
+                ArgumentError.value(
+                  id,
+                  'destination',
+                  'destination $id is registered $keying but its key lists '
+                      'were held $recorded; a change of keying while key '
+                      'lists exist would let the new events of a held key '
+                      'pass its held ones. Release and clear its key lists, or '
+                      'delete them with deleteDestination, before changing '
+                      'its keying',
+                ),
+              ),
+            );
+          }
           final event = await _emitDestinationAuditInTxn(
             txn,
             collector,
@@ -385,6 +444,10 @@ class DestinationRegistry {
               'wire_format': wireFormat,
               'allow_hard_delete': allowHardDelete,
               'serializes_natively': serializesNatively,
+              // Implements: EVS-DEV-destination-key-hold-guards/A
+              // the registration event records the keying it recorded.
+              'keyed': keyed,
+              'key_scheme': keying.keyScheme,
               'filter_entry_types': filterEntryTypes,
               'filter_event_types': filterEventTypes,
               // Predicates are not serializable; null is recorded so that
@@ -415,6 +478,7 @@ class DestinationRegistry {
               endDate: persisted?.endDate,
               registrationId: registration,
               allowHardDelete: allowHardDelete,
+              keying: keying,
             ),
           );
           _consultAuditAppendSeam(kDestinationRegisteredEntryType);
@@ -543,6 +607,7 @@ class DestinationRegistry {
         endDate: current.endDate,
         registrationId: current.registrationId,
         allowHardDelete: current.allowHardDelete,
+        keying: current.keying,
       ),
     );
     final existing = await _backend.readReplayRequestTxn(txn, id);
@@ -599,6 +664,7 @@ class DestinationRegistry {
       endDate: endDate,
       registrationId: current.registrationId,
       allowHardDelete: current.allowHardDelete,
+      keying: current.keying,
     );
     final isActive = updated.isActiveAt(now);
 
@@ -977,6 +1043,34 @@ class DestinationRegistry {
       }
       guardFingerprint = recorded;
     }
+    // Implements: EVS-DEV-destination-key-hold-guards/G
+    // a recovery that cannot return a released item to its key's list is
+    //   refused, writing nothing but the registry check record.
+    final released = <FifoEntry>[
+      for (final item in await _backend.listFifoEntriesTxn(txn, destinationId))
+        if (item.releasedHoldId != null &&
+            (item.entryId == head.entryId ||
+                (item.finalStatus == null &&
+                    item.sequenceInQueue > head.sequenceInQueue)))
+          item,
+    ];
+    final returned = await _plannedReturnInTxn(txn, destinationId, released);
+    final unreturnable = returned.refusal;
+    if (unreturnable != null) {
+      return _decideWithoutChange<TombstoneAndRefillResult>(
+        txn,
+        op: op,
+        destinationId: destinationId,
+        check: 'refused_released_item_unreturnable',
+        outcome: _Refused<TombstoneAndRefillResult>(
+          StateError(
+            'tombstoneAndRefill($destinationId, $fifoRowId): $unreturnable '
+            'The recovery cannot return it to its key list; delete the '
+            'destination (deleteDestination) to clear its queue.',
+          ),
+        ),
+      );
+    }
     final targetFirstSeq = head.sequenceRange.firstSeq;
     final targetLastSeq = head.sequenceRange.lastSeq;
     final cursorBefore = await _backend.readFillCursorTxn(txn, destinationId);
@@ -998,10 +1092,24 @@ class DestinationRegistry {
     //   to their key's list; the rewind counts only the removed items no
     //   release enqueued, and leaves the fill position where it was when
     //   there are none.
-    await _returnReleasedInTxn(txn, destinationId, <FifoEntry>[
-      if (head.releasedHoldId != null) head,
-      ...sweep.released,
-    ]);
+    final swept = <String>{
+      if (head.releasedHoldId != null) head.entryId,
+      for (final item in sweep.released) item.entryId,
+    };
+    if (!const SetEquality<String>().equals(swept, <String>{
+      for (final item in released) item.entryId,
+    })) {
+      // The listing and the sweep ran in this transaction: a difference is
+      // a defect of the backend, not a race.
+      throw StateError(
+        'tombstoneAndRefill($destinationId, $fifoRowId): the sweep removed '
+        'released items $swept, and the recovery planned to return '
+        '${released.map((i) => i.entryId).toSet()}.',
+      );
+    }
+    if (released.isNotEmpty) {
+      await _backend.writeKeyListsTxn(txn, destinationId, returned.lists!);
+    }
     final lows = <int>[
       if (head.releasedHoldId == null) targetFirstSeq,
       ?sweep.minFirstSeq,
@@ -1784,8 +1892,9 @@ class DestinationRegistry {
   /// It then sets [key]'s list to the events of the head, of the deleted
   /// items and of any existing list, merged in sequence order with each
   /// event once, in state held under the new hold id with [cause], and
-  /// appends the `system.destination_held` event carrying the hold id.
-  /// [attemptCount] is the attempts recorded on the head, the final one
+  /// appends the `system.destination_held` event carrying the hold id. It
+  /// removes [key]'s release failure record, so the new hold's release
+  /// starts with the whole retry budget. [attemptCount] is the attempts recorded on the head, the final one
   /// included, or the release failures recorded for the key. Leaves the
   /// wedge record and the halt request unchanged.
   ///
@@ -1895,6 +2004,17 @@ class DestinationRegistry {
       ...lists,
       key: list,
     });
+    // Implements: EVS-DEV-destination-key-hold-guards/H
+    // a new hold starts with no release failure record for its key, so its
+    //   release is retried under the whole budget.
+    final failures = await _backend.readReleaseFailuresTxn(txn, destinationId);
+    if (failures.containsKey(key)) {
+      await _backend.writeReleaseFailuresTxn(
+        txn,
+        destinationId,
+        <String, ReleaseFailureRecord>{...failures}..remove(key),
+      );
+    }
     _consultAuditAppendSeam(kDestinationHeldEntryType);
     await _emitDestinationAuditInTxn(
       txn,
@@ -1970,26 +2090,27 @@ class DestinationRegistry {
     );
   }
 
-  /// Returns, inside [txn], the events of each of [items], queue items a
-  /// release enqueued that an operator recovery removes, to [destinationId]'s
-  /// list of the item's block key, at their sequence positions and each
-  /// event once. An existing list keeps its state, hold id and cause; a
-  /// missing one is created in state releasing under the hold id the item
-  /// records, with the cause of that hold's event.
+  /// The key lists of [destinationId] once the events of each of [items],
+  /// queue items a release enqueued that an operator recovery removes, are
+  /// returned to the list of the item's block key, at their sequence
+  /// positions and each event once, read inside [txn] and written by the
+  /// caller. An existing list keeps its state, hold id and cause; a missing
+  /// one is created in state releasing under the hold id the item records,
+  /// with the cause of that hold's event.
   ///
-  /// Throws [StateError] when an item carries no block key, when one of its
-  /// events is not in the log, or when the log holds no hold event for the
-  /// hold id of a list it must create.
+  /// Returns a refusal instead, naming the item, when an item carries no
+  /// block key, when one of its events is not in the log, or when the log
+  /// holds no hold event for the hold id of a list it must create. It
+  /// writes nothing either way.
   // Implements: EVS-DEV-destination-key-hold/X
   // a recovery returns each removed released item's events to its key's
   //   list at sequence position, keeping an existing list's state and hold
   //   id and creating a missing list releasing under the item's hold id.
-  Future<void> _returnReleasedInTxn(
+  Future<({Map<String, KeyList>? lists, String? refusal})> _plannedReturnInTxn(
     Transaction txn,
     String destinationId,
     List<FifoEntry> items,
   ) async {
-    if (items.isEmpty) return;
     final lists = <String, KeyList>{
       ...await _backend.readKeyListsTxn(txn, destinationId),
     };
@@ -1997,9 +2118,9 @@ class DestinationRegistry {
       final key = item.blockKey;
       final holdId = item.releasedHoldId!;
       if (key == null) {
-        throw StateError(
-          'tombstoneAndRefill($destinationId): released item '
-          '${item.entryId} carries no block key.',
+        return (
+          lists: null,
+          refusal: 'released item ${item.entryId} carries no block key.',
         );
       }
       var list = lists[key];
@@ -2012,9 +2133,11 @@ class DestinationRegistry {
           holdId: holdId,
         );
         if (held == null) {
-          throw StateError(
-            'tombstoneAndRefill($destinationId): the log holds no hold event '
-            'for hold $holdId, which released item ${item.entryId} records.',
+          return (
+            lists: null,
+            refusal:
+                'the log holds no hold event for hold $holdId, which '
+                'released item ${item.entryId} records.',
           );
         }
         list = KeyList(
@@ -2027,9 +2150,11 @@ class DestinationRegistry {
       for (final eventId in item.eventIds) {
         final event = await _backend.findEventByIdInTxn(txn, eventId);
         if (event == null) {
-          throw StateError(
-            'tombstoneAndRefill($destinationId): event $eventId of released '
-            'item ${item.entryId} is not in the log.',
+          return (
+            lists: null,
+            refusal:
+                'event $eventId of released item ${item.entryId} is not in '
+                'the log.',
           );
         }
         list = list!.withInserted(
@@ -2038,7 +2163,7 @@ class DestinationRegistry {
       }
       lists[key] = list!;
     }
-    await _backend.writeKeyListsTxn(txn, destinationId, lists);
+    return (lists: lists, refusal: null);
   }
 
   /// The latest event of [entryType] and [eventType] this database appended,

@@ -2179,10 +2179,20 @@ subject of each event opts in to holding that subject alone. One rule
 carries the feature: while a key has a key list, none of that key's events
 enters the queue except by the list's release, in sequence order.
 
-A destination opts in by overriding two members of `Destination` (a class
-that writes `implements Destination` declares both): `keyed => true` and
+A destination opts in by overriding three members of `Destination` (a
+class that writes `implements Destination` declares them): `keyed => true`,
 `blockKeyOf(event)`, which returns the key naming the subject, or null for
-none. The fill evaluates it beside the transform, outside its transaction,
+none, and `keyScheme`, a non-empty name for the rule `blockKeyOf` computes
+keys by (for example `participant-v1`; change it whenever a change to
+`blockKeyOf` may give one subject's events another key). A keyed destination
+without a key scheme is refused at registration.
+
+The hold covers only events that carry the held key. An event of the held
+subject whose `blockKeyOf` returns null, or a key containing `|`, is queued
+as a keyless item and is not held back with its subject's events: once
+queued it makes every later key-scoped refusal wedge the destination (see
+below). So `blockKeyOf` must return the subject's key for every event that
+belongs to a subject, and null only for an event that belongs to none. The fill evaluates it beside the transform, outside its transaction,
 and stores the key on each queue item, which carries events of one key only.
 A key containing `|` is queued as a keyless item. A keyed destination may
 not also serialize natively. The send returns
@@ -2232,14 +2242,21 @@ a transform-failed head, a halt request, and an acceptance with no receiver
 record. These wedge the destination as before. A wedge or halt leaves key
 lists unchanged.
 
-The key lists outlive a process, so `addDestination` refuses a destination
-that is not keyed while the database holds key lists for its id: its fill
-would queue a held key's new events ahead of the held ones. Register it
-keyed, or delete the destination to drop its lists. The check runs only at
-registration, and `keyed` is not persisted, so a build that changes a
-destination's `keyed` must deploy stop-then-start: an unkeyed process
-registered before a keyed one holds a key would otherwise fill past that
-hold.
+The key lists outlive a process, and a process that computes keys
+differently from the one that held a key would queue that key's new events
+ahead of the held ones. Every registration therefore records the
+destination's keying -- `keyed` and `keyScheme` -- in its persisted schedule
+(`DestinationSchedule.keying`) and in its registration event. While the
+database holds key lists for the id, `addDestination` refuses a
+registration that is not keyed, or whose keying differs from the recorded
+one (registry check `refused_keying_changed`): release and clear the lists,
+or delete the destination, before changing the keying. Without key lists a
+new keying is accepted and recorded. A process registered earlier under
+another keying keeps running, so its fill, replays and release steps write
+nothing while the recorded keying differs from its own, and a key-scoped
+refusal it drains wedges the head instead of holding the key. A schedule
+written before keyings were recorded (a database migrated in place) takes
+the keying of the next registration.
 
 Two failures mean the key lists no longer match the log, and retrying
 clears neither. If an event at a releasing list's front is missing from the
@@ -2247,7 +2264,12 @@ log, the release records a release failure and, once the budget is spent,
 holds the key again with that event still at the front; every later
 release of the key ends the same way. If a recovery must re-create a list
 whose hold event is missing from the log, or a released item names an event
-the log lacks, `tombstoneAndRefill` throws `StateError` and changes nothing.
+the log lacks or carries no block key, `tombstoneAndRefill` throws
+`StateError` and writes only its registry check record
+(`refused_released_item_unreturnable`). A hold that cannot be committed for
+the same kind of reason (an item behind the head that carries attempts, an
+event missing from the log) is rolled back and the head is wedged
+destination-wide, so the ordinary recovery applies.
 In either case the operator deletes the destination with
 `deleteDestination` (it needs the destination's hard-delete opt-in), which
 removes its key lists, and registers it again; the refill sends its
@@ -2256,7 +2278,8 @@ admitted events again, at least once.
 Postgres schema version 10 adds the block key and hold id to the queue and
 raises the minimum compatible schema version to 10, so deploy stop-then-
 start: stop every instance of the previous build before starting the new
-one. A persisted Sembast database that holds a keyed destination opens only
+one. A rollback to a build of schema 9 is then a restore of the database,
+for every consumer, keyed destinations or not. A persisted Sembast database that holds a keyed destination opens only
 with data format 3.1 or later.
 
 ### Reading order from here

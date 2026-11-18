@@ -19,7 +19,8 @@ import 'package:event_sourcing/src/storage/stored_event.dart';
 /// FIFO semantics) for drain tests that do not exercise batching.
 ///
 /// Keys: with a `keyOf` given the destination is keyed and its block key of
-/// an event is what `keyOf` returns (or throws); with none it is not keyed.
+/// an event is what `keyOf` returns (or throws), under key scheme
+/// `keyScheme` (`test-v1` by default); with none it is not keyed.
 class FakeDestination extends Destination {
   FakeDestination({
     this.id = 'fake',
@@ -31,6 +32,7 @@ class FakeDestination extends Destination {
     this.maxAccumulateTime = Duration.zero,
     this.allowHardDelete = false,
     String? Function(StoredEvent event)? keyOf,
+    this.keyScheme = 'test-v1',
   }) : _keyOf = keyOf,
        _script = script ?? <SendResult>[],
        _filter = filter ?? const SubscriptionFilter(),
@@ -81,6 +83,9 @@ class FakeDestination extends Destination {
 
   @override
   bool get keyed => _keyOf != null;
+
+  @override
+  final String? keyScheme;
 
   @override
   Future<String?> blockKeyOf(StoredEvent event) async {

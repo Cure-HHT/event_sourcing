@@ -427,8 +427,11 @@ Future<String> holdKeyForTest(
     );
   }
   await drainForTest(
+    // Keyed under FakeDestination's default key scheme, the keying the
+    // destination was registered under: a hold under another is refused.
     FakeDestination(
       id: destinationId,
+      keyOf: (_) => key,
       script: <SendResult>[
         const SendPermanent(
           error: 'refused for this key by the test receiver',

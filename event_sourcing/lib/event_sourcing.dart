@@ -185,6 +185,7 @@ export 'src/destinations/default_destination_wedges_spec.dart'
 export 'src/destinations/destination.dart' show Destination;
 export 'src/destinations/destination_schedule.dart'
     show
+        DestinationKeying,
         DestinationSchedule,
         ReleaseHoldAlreadyReleasing,
         ReleaseHoldApplied,

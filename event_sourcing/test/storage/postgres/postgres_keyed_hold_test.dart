@@ -17,5 +17,6 @@ void main() {
   runKeyedHoldScenarios(
     () => PostgresScenarioDatabase.fresh(db),
     label: 'postgres',
+    serializableConflicts: true,
   );
 }

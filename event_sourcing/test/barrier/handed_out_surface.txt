@@ -70,7 +70,8 @@ DestinationSchedule.fromJson: constructor DestinationSchedule.fromJson(Map<Strin
 DestinationSchedule.hashCode: int get hashCode
 DestinationSchedule.isActiveAt: bool isActiveAt(DateTime now)
 DestinationSchedule.isDormant: bool get isDormant
-DestinationSchedule.new: constructor DestinationSchedule({DateTime? startDate, DateTime? endDate, String? registrationId, bool allowHardDelete = false})
+DestinationSchedule.keying: field DestinationKeying? keying
+DestinationSchedule.new: constructor DestinationSchedule({DateTime? startDate, DateTime? endDate, String? registrationId, bool allowHardDelete = false, DestinationKeying? keying})
 DestinationSchedule.registrationId: field String? registrationId
 DestinationSchedule.startDate: field DateTime? startDate
 DestinationSchedule.toJson: Map<String, Object?> toJson()
