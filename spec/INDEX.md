@@ -14,7 +14,7 @@
 | EVS-PRD-canonical-json                | Canonical JSON Serialization      | prd-canonical-json.md                | 14bb1343 |
 | EVS-PRD-cross-process-event-transport | Cross-Process Event Transport     | prd-reaction.md                      | 3a77adea |
 | EVS-PRD-delivery-channel              | Delivery channel continuity       | delivery-continuity.md               | f6230ffe |
-| EVS-PRD-destination-key-hold          | Key-scoped holds on a destination | prd-destination-key-hold.md          | 132cb6b8 |
+| EVS-PRD-destination-key-hold          | Key-scoped holds on a destination | prd-destination-key-hold.md          | 1feff106 |
 | EVS-PRD-destinations                  | Destinations                      | prd-destinations.md                  | cddc4d9c |
 | EVS-PRD-event-log                     | Event Log                         | prd-event-log.md                     | e50ef232 |
 | EVS-PRD-hash-chain-integrity          | Hash-Chain Integrity              | prd-hash-chain-integrity.md          | 5e9d9d6e |
@@ -51,6 +51,7 @@
 | EVS-DEV-destination-drain                  | Destination queue mechanics                                  | dev-destination-drain.md                | 1e1e4047 |
 | EVS-DEV-destination-drain-lock             | Delivery cycle mechanics                                     | dev-destination-drain-lock.md           | 5c712b53 |
 | EVS-DEV-destination-key-hold               | Key-scoped holds on a destination queue                      | dev-destination-key-hold.md             | 311c31aa |
+| EVS-DEV-destination-key-hold-guards        | Guards on a keyed destination's holds                        | dev-destination-key-hold-guards.md      | 0c871cf6 |
 | EVS-DEV-destination-retry-budget           | Destination retry budget and attempt outcomes                | dev-destination-retry-budget.md         | 03cce550 |
 | EVS-DEV-effective-permissions-shape        | effectivePermissionsFor surface                              | scoped-permissions.md                   | c6cee772 |
 | EVS-DEV-entry-type-downgrade-refusal       | Entry-type version downgrade refusal                         | dev-entry-type-downgrade-refusal.md     | 3adaac55 |
