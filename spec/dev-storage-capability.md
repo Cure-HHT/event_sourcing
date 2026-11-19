@@ -9,7 +9,7 @@ How the library keeps the writing access to the storage it opens. `EventStore.op
 
 ## Assertions
 
-A. `EventStore.open` SHALL take, for the backends the library ships, a storage description instead of a backend: a Sembast description naming a database file path, a browser database name or an in-memory database name, or a Postgres description carrying the library's schema and the connection, lock-session and wait settings the Postgres backend opens with.
+A. `EventStore.open` SHALL take, for the backends the library ships, a storage description instead of a backend: a Sembast description naming a database file path with or without an encryption key, a browser database name or an in-memory database name, or a Postgres description carrying the library's schema and the connection, lock-session and wait settings the Postgres backend opens with.
 
 B. For a Sembast description the library SHALL open the database with a factory it selects itself: the native file factory on the native runtimes, the browser factory on the web, and the in-memory factory for an in-memory description.
 
@@ -35,7 +35,7 @@ L. The library SHALL provide an operation that deletes the Sembast database a de
 
 ## Rationale
 
-**Why a description (assertion A).** A description is data -- a location, connection settings, waits -- so handing it to the library hands over nothing the application keeps a reference to. The Postgres description carries what the Postgres backend opens with: the library's schema, the pool's and the lock session's connection settings, the TLS mode, the lock-session timeouts and heartbeat, and the boot-lock wait. Provisioning stays a separate deployment step run as the owner (EVS-DEV-postgres-backend/G), and the library opens no pool as the owner. The Sembast description names where the database lives and nothing else: it takes no code, so the trusted storage input stays the backend the library ships (encryption at rest is on the roadmap, `spec/roadmap/storage.md`).
+**Why a description (assertion A).** A description is data -- a location, connection settings, waits -- so handing it to the library hands over nothing the application keeps a reference to. The Postgres description carries what the Postgres backend opens with: the library's schema, the pool's and the lock session's connection settings, the TLS mode, the lock-session timeouts and heartbeat, and the boot-lock wait. Provisioning stays a separate deployment step run as the owner (EVS-DEV-postgres-backend/G), and the library opens no pool as the owner. The Sembast description names where the database lives and, for a file, the key it is stored under when it is stored encrypted: it takes no code, so the trusted storage input stays the backend the library ships, with the codec that encrypts the file among its own code (EVS-DEV-sembast-encryption).
 
 **Why the library selects the Sembast factory (assertion B).** A factory is code: one the application supplied receives the database it opens and can keep it, which would hand back the handle the barrier withholds. The library selects the factory per runtime through a conditional import, as it selects its lock-manager wrapper, so the native file factory is compiled only where `dart:io` exists and the browser factory only where the browser's interop exists. On the web every tab of an origin opens the same browser database; each tab's library opens its own handle, and the tabs stay excluded from each other by the locks the library already takes there.
 
@@ -61,6 +61,8 @@ L. The library SHALL provide an operation that deletes the Sembast database a de
 
 ## Changelog
 
+- 2026-11-19 | 2747db23 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-11-19 | - | - | Michael Lewis (<michael@anspar.org>) | A: a Sembast file description carries an encryption key or none. Rationale of A: the key is data, and the codec that encrypts the file is the library's own
 - 2026-10-05 | 4cba8786 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: sync changelog hash
 - 2026-10-05 | - | - | Michael Lewis (<michael@anspar.org>) | Rationale of J: the Postgres description extends the one internal storage description, carries connection settings rather than a backend instance, and the analyzer reports every other use of it; code that imports the library's private source files is outside the public API J governs
 - 2026-09-25 | 4cba8786 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
@@ -69,4 +71,4 @@ L. The library SHALL provide an operation that deletes the Sembast database a de
 - 2026-09-25 | 445e1a1d | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-24 | - | - | Michael Lewis (<michael@anspar.org>) | Add A-L: EventStore.open takes a storage description for the shipped backends and the library selects the Sembast factory; writing, publishing and handle-yielding members of handed-out types are library-private and their public surface is a committed list; read-only interfaces are separate objects; transaction handles are opaque and bound to their issuer; Postgres reader transactions run read-only; the library builds the stores that work through its storage; a backend instance is accepted only as application-supplied; openForTest refuses with assertions disabled; the library deletes a Sembast database by its description
 
-*End* *The storage capability the library keeps* | **Hash**: 4cba8786
+*End* *The storage capability the library keeps* | **Hash**: 2747db23

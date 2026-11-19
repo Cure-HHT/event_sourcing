@@ -108,7 +108,7 @@ extension under the same trust-boundary discipline, not a free lunch.
 
 The library cannot stop these writers (`EVS-PRD-destinations/L`):
 
-- Code in the application's process. The storage description carries the credentials of the library's Postgres roles or the location of its Sembast database, and the process holds them, so such code can open its own connection or handle with them and write the library's tables. Sembast also hands the handle already open on a location to a second open of that location in the same isolate.
+- Code in the application's process. The storage description carries the credentials of the library's Postgres roles, or the location of its Sembast database and the key it is encrypted under, and the process holds them, so such code can open its own connection or handle with them and write the library's tables. Sembast also hands the handle already open on a location to a second open of that location in the same isolate.
 - The database's administrators: the owner, superusers, and holders of `CREATEROLE` or of the admin option over a library role.
 - On the standalone Dart VM, `dart:mirrors` and the service protocol, which can read the library's private state.
 - On the web, script on the page, which can walk a compiled Dart object's fields and open the library's IndexedDB database by name.
@@ -120,12 +120,6 @@ The library cannot stop these writers (`EVS-PRD-destinations/L`):
 - the library runs its storage in an isolate of its own, whose credentials the application's isolates never receive;
 - the library reads its credentials from a source the application does not otherwise read, such as a secret mounted for the library alone;
 - the test seams and the test-only constructor move into a separate test-support library that production builds do not depend on.
-
-## Encryption at rest for Sembast databases
-
-**Baseline.** The Sembast storage description names a location and takes no code (`EVS-DEV-storage-capability/A`). A Sembast database is as confidential as the platform keeps the files or the origin's IndexedDB: the application relies on the operating system's or the browser's storage encryption.
-
-**Remaining.** Encrypt the records the library stores. A sembast codec does this, but it is code in the persistence path that sees and can alter every record, so accepting one from the application widens the storage trust input and needs architectural review. Candidates: a codec the library ships, keyed by a secret the description carries, so no application code enters the persistence path; or an application-supplied codec named in the trust boundaries beside the backend.
 
 ## A browser tab whose database handle cannot commit
 

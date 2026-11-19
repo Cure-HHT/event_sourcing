@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.8.0
+
+Data: data format 3.0, unchanged. A Sembast database file opened with an
+encryption key for the first time is converted in place (see below); one
+opened without a key is unchanged.
+
+### Storage
+
+- A Sembast file description takes an optional `encryptionKey`
+  (`SembastStorage.file(path, encryptionKey: key)`), a
+  `StorageEncryptionKey` of exactly 32 bytes (`StorageEncryptionKey.generate()`
+  draws one from a secure random source). The library then stores every
+  record line of the file, the compacted file included, as AES-256-GCM
+  ciphertext under the key with a fresh random nonce per line
+  (EVS-PRD-storage-barrier/K, EVS-DEV-sembast-encryption). The key's and the
+  description's text forms omit the key. A browser or in-memory description
+  takes no key, and a file description without one stores the file
+  unencrypted, as before.
+- A key that does not decrypt the database, or no key for an encrypted
+  database, makes `EventStore.open` throw `StorageKeyMismatchError`, and the
+  file is left byte for byte as it was (EVS-PRD-storage-barrier/L).
+- An unencrypted database opened with a key is converted: it is opened as
+  an open without a key opens it (which repairs a last line a crash cut
+  short), an encrypted copy is written beside it, read back and compared store by store, flushed, and
+  moved over the file by one rename. A crash at any point leaves either the
+  unencrypted file or the complete encrypted one, and the next open with
+  the key finishes the conversion (EVS-PRD-storage-barrier/M). A database the
+  0.7 releases wrote opens this way with every event and view row.
+- `SembastStorage.inspectFile(path)` reports, from the file's first line and
+  writing nothing, whether the database at a path is `absent` (no file, or
+  an empty one), `unencrypted` or `encrypted` (`SembastFileEncryption`). It
+  throws `FormatException` for a file that is not a Sembast database.
+- A second open, in the same isolate, of a location an event store holds
+  open is refused unless it asks for the same key.
+- New dependency: `pointycastle` ^4.0.0 (pure Dart AES and GCM).
+
 ## 0.7.4
 
 Data: data format 3.0, unchanged; nothing to migrate.

@@ -1,0 +1,14 @@
+# gitleaks configuration: the default rules, plus the files whose findings
+# are known not to be secrets.
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Generated test data that holds no secret"
+paths = [
+  # An unencrypted Sembast database written by the library for its
+  # encryption tests. Its record lines read `{"key":"<uuid>",...}`, which
+  # the generic-api-key rule matches; every value in it is synthetic.
+  '''^event_sourcing/test/fixtures/production_era_sembast/diary\.db$''',
+]

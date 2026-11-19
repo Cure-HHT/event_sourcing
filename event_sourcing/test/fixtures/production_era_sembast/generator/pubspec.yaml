@@ -1,0 +1,13 @@
+name: production_era_sembast_generator
+description: Writes the unencrypted Sembast database fixture with the library at the commit pinned below.
+publish_to: none
+
+environment:
+  sdk: ^3.10.7
+
+dependencies:
+  event_sourcing:
+    git:
+      url: https://github.com/Cure-HHT/event_sourcing.git
+      ref: 26912f87009cb085b508ae412765ee6773f59f22
+      path: event_sourcing

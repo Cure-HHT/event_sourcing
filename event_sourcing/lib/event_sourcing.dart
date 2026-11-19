@@ -28,6 +28,11 @@
 /// - `DatabaseResetRequiredError` / `DatabaseIdentityMismatchError` — thrown
 ///   by `EventStore.open` for a database an earlier build wrote, or whose
 ///   stored identity is missing or changed.
+/// - `StorageEncryptionKey` — the AES-256 key a `SembastStorage.file`
+///   description stores its database under; `StorageKeyMismatchError` is
+///   thrown by `EventStore.open` when the key does not decrypt the database,
+///   and `SembastStorage.inspectFile` reports whether a database file is
+///   encrypted (`SembastFileEncryption`).
 /// - `LibVersion` — this build's package version and data-format version.
 /// - `EntryTypeVersionDowngradeError` — thrown by `EventStore.open` when any
 ///   entry type's registered major is below its stored target's major.
@@ -492,6 +497,8 @@ export 'src/storage/storage_description.dart'
         SembastStorage,
         StorageDescription,
         deleteSembastDatabase;
+export 'src/storage/storage_encryption.dart'
+    show SembastFileEncryption, StorageEncryptionKey, StorageKeyMismatchError;
 export 'src/storage/storage_exception.dart'
     show
         StorageCorruptException,
