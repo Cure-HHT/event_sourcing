@@ -23,18 +23,32 @@ opened without a key is unchanged.
   file is left byte for byte as it was (EVS-PRD-storage-barrier/L).
 - An unencrypted database opened with a key is converted: it is opened as
   an open without a key opens it (which repairs a last line a crash cut
-  short), an encrypted copy is written beside it, read back and compared store by store, flushed, and
-  moved over the file by one rename. A crash at any point leaves either the
-  unencrypted file or the complete encrypted one, and the next open with
-  the key finishes the conversion (EVS-PRD-storage-barrier/M). A database the
+  short), rewritten line by line into an encrypted copy beside it, the copy
+  read back and compared line by line, flushed, and moved over the file by
+  one rename. A crash at any point leaves either the unencrypted file or
+  the complete encrypted one, and the next open with the key finishes the
+  conversion (EVS-PRD-storage-barrier/M). It holds one line in memory at a
+  time, so it needs no more memory than an ordinary open. A database the
   0.7 releases wrote opens this way with every event and view row.
+- The inspection and conversion run holding an exclusive lock on a file
+  beside the database (`<path>.encryption-lock`), so a conversion in
+  another process waits. The lock is per process: two isolates of one
+  process opening one file remain unsupported, as on Sembast generally.
+- `deleteSembastDatabase` on a file description also deletes what an
+  encrypted open leaves beside the file: an interrupted conversion's copy
+  (`<path>.encrypting`), sembast's compaction files (`~<name>`) and the
+  lock file.
 - `SembastStorage.inspectFile(path)` reports, from the file's first line and
   writing nothing, whether the database at a path is `absent` (no file, or
   an empty one), `unencrypted` or `encrypted` (`SembastFileEncryption`). It
   throws `FormatException` for a file that is not a Sembast database.
 - A second open, in the same isolate, of a location an event store holds
   open is refused unless it asks for the same key.
-- New dependency: `pointycastle` ^4.0.0 (pure Dart AES and GCM).
+- New dependency: `pointycastle` ^4.0.0, whose pure-Dart AES block cipher
+  the library's own GCM mode runs over (`pointycastle`'s GCM is too slow
+  for a database of a few thousand events). Measured on a desktop in an
+  AOT build, a database of 10,000 events opens in about 1.5 s encrypted
+  (0.3 s unencrypted) and converts in about 6.6 s.
 
 ## 0.7.4
 

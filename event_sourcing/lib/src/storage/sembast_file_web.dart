@@ -9,6 +9,14 @@ import 'package:meta/meta.dart' show internal;
 @internal
 String sembastConversionCopyPath(String path) => '$path.encrypting';
 
+/// The lock file of a conversion of [path].
+@internal
+String sembastConversionLockPath(String path) => '$path.encryption-lock';
+
+/// No database file exists in the browser, so nothing is beside one.
+@internal
+Future<void> deleteSembastFileCompanions(String path) => Future<void>.value();
+
 /// No database file exists in the browser.
 @internal
 Future<SembastFileEncryption> inspectSembastFile(String path) =>

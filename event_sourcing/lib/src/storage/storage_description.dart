@@ -332,13 +332,19 @@ Future<SembastBackend> _openSembast(SembastStorage storage) async {
 }
 
 /// Deletes the Sembast database [storage] names, through the factory the
-/// library opens it with. A database an earlier data format wrote is
+/// library opens it with. For a database file it also deletes what an
+/// encrypted open leaves beside the file: an encrypted copy an interrupted
+/// conversion left, the files sembast compacts into, and the conversion's
+/// lock file. A database an earlier data format wrote is
 /// refused at open as one that must be reset; this is how the application
 /// resets it. Deleting a database that does not exist does nothing.
 ///
 /// Throws [StateError], deleting nothing, while an event store of the
 /// calling isolate holds the database open: close it first. An event store
 /// whose open failed has already closed its storage.
+// Implements: EVS-DEV-sembast-encryption/O
+// the delete also removes every file an encrypted open leaves beside the
+//   database file.
 // Implements: EVS-DEV-storage-capability/L
 // the library deletes the Sembast database a description names, and
 //   refuses with StateError while an event store of the calling isolate
@@ -351,4 +357,7 @@ Future<void> deleteSembastDatabase(SembastStorage storage) async {
     );
   }
   await sembastFactoryFor(storage._kind).deleteDatabase(storage.location);
+  if (storage._kind == SembastLocationKind.file) {
+    await deleteSembastFileCompanions(storage.location);
+  }
 }

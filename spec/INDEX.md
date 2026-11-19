@@ -66,7 +66,7 @@
 | EVS-DEV-scope-value-json                   | Sealed ScopeValue JSON contract                              | scoped-permissions.md                   | 35e57fd0 |
 | EVS-DEV-scoped-permissions-match-algorithm | TableBackedAuthorizationPolicy match semantics               | scoped-permissions.md                   | f186081d |
 | EVS-DEV-security-findings                  | Security findings                                            | dev-security-findings.md                | 58a4280f |
-| EVS-DEV-sembast-encryption                 | Encrypted Sembast database files                             | dev-sembast-encryption.md               | d27e2d2d |
+| EVS-DEV-sembast-encryption                 | Encrypted Sembast database files                             | dev-sembast-encryption.md               | 06daca32 |
 | EVS-DEV-sender-succession                  | Sender succession                                            | delivery-continuity.md                  | c24246dc |
 | EVS-DEV-severe-log-default                 | Severe log records reach standard error                      | dev-severe-log-default.md               | 2019159d |
 | EVS-DEV-storage-capability                 | The storage capability the library keeps                     | dev-storage-capability.md               | 2747db23 |

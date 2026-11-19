@@ -16,7 +16,7 @@ import 'dart:typed_data';
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing/src/storage/sembast_file_io.dart'
-    show sembastConversionCopyPath;
+    show sembastConversionCopyPath, sembastConversionLockPath;
 import 'package:event_sourcing/src/storage/storage_encryption.dart'
     show SembastConversionPoint, aesGcmEncrypt, encryptingSembastCodec;
 import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
@@ -26,6 +26,7 @@ import 'package:sembast/sembast.dart' as sembast;
 import 'package:sembast/sembast_io.dart' show databaseFactoryIo;
 
 import '../test_support/declarations.dart';
+import '../test_support/tool_subprocess.dart';
 
 const Source _source = Source(
   hopId: 'encryption-test',
@@ -533,6 +534,111 @@ void main() {
       expect(await _notes(store), notes);
       expect(File(compacted).existsSync(), isFalse);
     });
+  });
+
+  group('the conversion', () {
+    // Verifies: EVS-DEV-sembast-encryption/N
+    test('waits while another process holds its lock', () async {
+      final path = _path();
+      final notes = await _seed(path);
+      final script = File(p.join(_dir.path, 'hold_lock.dart'))
+        ..writeAsStringSync('''
+import 'dart:io';
+
+Future<void> main(List<String> args) async {
+  final file = await File(args.single).open(mode: FileMode.append);
+  await file.lock(FileLock.exclusive);
+  stdout.writeln('locked');
+  await stdin.first;
+  await file.close();
+}
+''');
+      final process = await Process.start(sdkTool('dart'), <String>[
+        script.path,
+        sembastConversionLockPath(path),
+      ]);
+      addTearDown(process.kill);
+      final locked = await process.stdout
+          .transform(utf8.decoder)
+          .transform(const LineSplitter())
+          .firstWhere((line) => line.trim() == 'locked', orElse: () => '')
+          .timeout(const Duration(minutes: 2), onTimeout: () => '');
+      if (locked.isEmpty) {
+        const reason = 'the lock-holding process did not start';
+        if (prerequisitesRequired) fail(reason);
+        markTestSkipped(reason);
+        return;
+      }
+
+      final key = StorageEncryptionKey.generate();
+      var opened = false;
+      final opening = _open(SembastStorage.file(path, encryptionKey: key)).then(
+        (store) {
+          opened = true;
+          return store;
+        },
+      );
+      await Future<void>.delayed(const Duration(seconds: 2));
+      expect(opened, isFalse);
+      expect(
+        await SembastStorage.inspectFile(path),
+        SembastFileEncryption.unencrypted,
+      );
+
+      process.stdin.writeln('release');
+      await process.stdin.flush();
+      final store = await opening;
+      addTearDown(store.close);
+      expect(await _notes(store), notes);
+      expect(
+        await SembastStorage.inspectFile(path),
+        SembastFileEncryption.encrypted,
+      );
+    });
+  });
+
+  group('deleting a database', () {
+    // Verifies: EVS-DEV-sembast-encryption/O
+    test(
+      'also deletes every file an encrypted open leaves beside it',
+      () async {
+        final path = _path();
+        await _seed(path);
+        final key = StorageEncryptionKey.generate();
+        await expectLater(
+          runWithDeliveryTestHooks(
+            DeliveryTestHooks(
+              failSembastConversion: (at) =>
+                  at == SembastConversionPoint.copyVerified,
+            ),
+            () => _open(SembastStorage.file(path, encryptionKey: key)),
+          ),
+          throwsA(isA<InjectedFailure>()),
+        );
+        final copyPath = sembastConversionCopyPath(path);
+        String compactionOf(String of) =>
+            p.join(p.dirname(of), '~${p.basename(of)}');
+        File(path).copySync(compactionOf(path));
+        File(copyPath).copySync(compactionOf(copyPath));
+        final companions = <String>[
+          copyPath,
+          compactionOf(copyPath),
+          compactionOf(path),
+          sembastConversionLockPath(path),
+        ];
+        for (final companion in companions) {
+          expect(File(companion).existsSync(), isTrue, reason: companion);
+        }
+
+        await deleteSembastDatabase(SembastStorage.file(path));
+
+        expect(File(path).existsSync(), isFalse);
+        for (final companion in companions) {
+          expect(File(companion).existsSync(), isFalse, reason: companion);
+        }
+        expect(_dir.listSync().map((e) => p.basename(e.path)), isEmpty);
+      },
+    );
   });
 
   group('a location held open in this isolate', () {

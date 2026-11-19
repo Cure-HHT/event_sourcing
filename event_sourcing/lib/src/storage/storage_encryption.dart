@@ -10,10 +10,8 @@ import 'dart:convert';
 import 'dart:math' show Random;
 import 'dart:typed_data';
 
+import 'package:event_sourcing/src/storage/aes_gcm.dart';
 import 'package:meta/meta.dart' show internal, visibleForTesting;
-import 'package:pointycastle/api.dart' show AEADParameters, KeyParameter;
-import 'package:pointycastle/block/aes.dart' show AESEngine;
-import 'package:pointycastle/block/modes/gcm.dart' show GCMBlockCipher;
 import 'package:sembast/sembast.dart' show SembastCodec;
 
 /// The key an encrypted Sembast database is stored under: 32 bytes, used
@@ -138,25 +136,8 @@ SembastCodec encryptingSembastCodec(StorageEncryptionKey key) =>
 /// by the authentication tag. Exposed for the known-answer tests.
 @visibleForTesting
 @internal
-Uint8List aesGcmEncrypt(Uint8List key, Uint8List nonce, Uint8List plaintext) {
-  final cipher = GCMBlockCipher(AESEngine())
-    ..init(
-      true,
-      AEADParameters(KeyParameter(key), _tagBits, nonce, Uint8List(0)),
-    );
-  return cipher.process(plaintext);
-}
-
-/// Decrypts [sealed] (ciphertext then tag) under [key] with [nonce].
-/// Throws when the tag does not verify.
-Uint8List _aesGcmDecrypt(Uint8List key, Uint8List nonce, Uint8List sealed) {
-  final cipher = GCMBlockCipher(AESEngine())
-    ..init(
-      false,
-      AEADParameters(KeyParameter(key), _tagBits, nonce, Uint8List(0)),
-    );
-  return cipher.process(sealed);
-}
+Uint8List aesGcmEncrypt(Uint8List key, Uint8List nonce, Uint8List plaintext) =>
+    AesGcm(key).seal(nonce, plaintext);
 
 /// A line codec: a JSON-encodable value to one line of base64 holding the
 /// nonce, the ciphertext of its JSON text and the tag, and back.
@@ -166,9 +147,9 @@ Uint8List _aesGcmDecrypt(Uint8List key, Uint8List nonce, Uint8List sealed) {
 /// [Exception], which is how a database whose last line a crash cut short
 /// still opens.
 class _AesGcmLineCodec extends Codec<Object?, String> {
-  _AesGcmLineCodec(this._key);
+  _AesGcmLineCodec(Uint8List key) : _cipher = AesGcm(key);
 
-  final Uint8List _key;
+  final AesGcm _cipher;
   final Random _random = Random.secure();
 
   @override
@@ -183,7 +164,7 @@ class _AesGcmLineCodec extends Codec<Object?, String> {
       nonce[i] = _random.nextInt(256);
     }
     final plaintext = Uint8List.fromList(utf8.encode(json.encode(input)));
-    final sealed = aesGcmEncrypt(_key, nonce, plaintext);
+    final sealed = _cipher.seal(nonce, plaintext);
     final line = Uint8List(_nonceLength + sealed.length)
       ..setAll(0, nonce)
       ..setAll(_nonceLength, sealed);
@@ -195,20 +176,10 @@ class _AesGcmLineCodec extends Codec<Object?, String> {
     if (bytes.length < _nonceLength + _tagBits ~/ 8) {
       throw const FormatException('encrypted line too short');
     }
-    final Uint8List plaintext;
-    try {
-      plaintext = _aesGcmDecrypt(
-        _key,
-        Uint8List.sublistView(bytes, 0, _nonceLength),
-        Uint8List.sublistView(bytes, _nonceLength),
-      );
-    } on Object {
-      // pointycastle reports a tag that does not verify as an
-      // InvalidCipherTextException, and an input it cannot process as an
-      // ArgumentError or a StateError; each is a line that does not decrypt
-      // under this key.
-      throw const FormatException('line does not decrypt under this key');
-    }
+    final plaintext = _cipher.open(
+      Uint8List.sublistView(bytes, 0, _nonceLength),
+      Uint8List.sublistView(bytes, _nonceLength),
+    );
     return json.decode(utf8.decode(plaintext));
   }
 }
