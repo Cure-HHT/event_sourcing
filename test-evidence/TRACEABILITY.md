@@ -23,6 +23,7 @@
 | EVS-DEV-ingest-promotes-before-fold | Ingest-time promoter chain | DEV | Active | A-D (100%) | A,C,D (75%) [3P 0F 0A] | A,C,D (75%) | 0/4 (0%) | 0/4 (0%) | n/a | n/a |
 | EVS-DEV-postgres-backend | Postgres backend reference impl | DEV | Active | B-Z (100%) | B-D,F-Z (96%) [24P 0F 0A] | B-D,F-Z (96%) | 0/25 (0%) | 0/25 (0%) | n/a | n/a |
 | EVS-DEV-security-findings | Security findings | DEV | Active | A-M,O,Q-V (100%) | A-M,O,Q-V (100%) [20P 0F 0A] | A-M,O,Q-V (100%) | 0/20 (0%) | 0/20 (0%) | n/a | n/a |
+| EVS-DEV-sembast-encryption | Encrypted Sembast database files | DEV | Active | A-O (100%) | A-F,H-O (93%) [14P 0F 0A] | A-F,H-O (93%) | 0/15 (0%) | 0/15 (0%) | n/a | n/a |
 | EVS-DEV-severe-log-default | Severe log records reach standard error | DEV | Active | A (100%) | A (100%) [1P 0F 0A] | A (100%) | 0/1 (0%) | 0/1 (0%) | n/a | n/a |
 | EVS-DEV-storage-capability | The storage capability the library keeps | DEV | Active | A-L (100%) | A-L (100%) [12P 0F 0A] | A-L (100%) | 0/12 (0%) | 0/12 (0%) | n/a | n/a |
 | EVS-DEV-version-compatibility | Entry-type and data-format versions | DEV | Active | A-D,F-K,N,O,Q (93%) | A-D,F-K,N,O,Q (93%) [13P 0F 0A] | A-D,F-K,N,O,Q (93%) | 0/14 (0%) | 0/14 (0%) | n/a | n/a |
@@ -48,7 +49,7 @@
 | EVS-PRD-reaction-scope | Reaction Scope | PRD | Active | A-E (100%) | A-E (100%) [5P 0F 0A] | A-E (100%) | 0/5 (0%) | 0/5 (0%) | n/a | n/a |
 | EVS-PRD-reaction-widget-contract | Reaction Widget Contract | PRD | Active | A-O (100%) | A-O (100%) [15P 0F 0A] | A-O (100%) | 0/15 (0%) | 0/15 (0%) | n/a | n/a |
 | EVS-PRD-regulatory-alignment | Regulatory Alignment | PRD | Active | A-D (100%) | 0/4 (0%) | 0/4 (0%) | 0/4 (0%) | 0/4 (0%) | n/a | n/a |
-| EVS-PRD-storage-barrier | Storage barrier | PRD | Active | A-J (100%) | A-J (100%) [10P 0F 0A] | A-J (100%) | 0/10 (0%) | 0/10 (0%) | n/a | n/a |
+| EVS-PRD-storage-barrier | Storage barrier | PRD | Active | A-M (100%) | A-M (100%) [13P 0F 0A] | A-M (100%) | 0/13 (0%) | 0/13 (0%) | n/a | n/a |
 | EVS-PRD-subscription | Subscription | PRD | Active | A-E (100%) | A-E (100%) [5P 0F 0A] | A-E (100%) | 0/5 (0%) | 0/5 (0%) | n/a | n/a |
 | EVS-DEV-authz-watcher | Mid-session permission-change signalling | DEV | Active | A-G (100%) | A,F,G (43%) [3P 0F 0A] | A,F,G (43%) | 0/7 (0%) | 0/7 (0%) | n/a | n/a |
 | EVS-PRD-scoped-permissions | Scope-aware authorization model | PRD | Active | A-I (100%) | A-I (100%) [9P 0F 0A] | A-I (100%) | 0/9 (0%) | 0/9 (0%) | n/a | n/a |
@@ -6721,6 +6722,191 @@ Tests:
 
 </details>
 
+### EVS-DEV-sembast-encryption: Encrypted Sembast database files
+
+<details><summary>Evidence</summary>
+
+**A**
+
+Code:
+
+- event_sourcing/lib/src/storage/storage_encryption.dart:4
+
+Tests:
+
+- event_sourcing/test/storage/sembast_encryption_test.dart:125 the encryption key is exactly 32 bytes; any other length is refused -- passed
+- event_sourcing/test/storage/sembast_encryption_test.dart:142 the encryption key copies the bytes it is given and hands out copies -- passed
+
+**B**
+
+Code:
+
+- event_sourcing/lib/src/storage/storage_encryption.dart:4
+
+Tests:
+
+- event_sourcing/test/storage/sembast_encryption_test.dart:125 the encryption key is exactly 32 bytes; any other length is refused -- passed
+
+**C**
+
+Code:
+
+- event_sourcing/lib/src/storage/aes_gcm.dart:1
+- event_sourcing/lib/src/storage/storage_encryption.dart:4
+
+Tests:
+
+- event_sourcing/test/storage/aes_gcm_test.dart:10 meets the GCM specification known answers for a 256-bit key -- passed
+- event_sourcing/test/storage/aes_gcm_test.dart:16 matches an independent GCM implementation at every length -- passed
+- event_sourcing/test/storage/aes_gcm_test.dart:22 refuses an altered ciphertext, tag or nonce, and another key -- passed
+- event_sourcing/test/storage/sembast_encryption_test.dart:193 the cipher is AES-256-GCM with a 128-bit tag (known answers) -- passed
+- event_sourcing/test/storage/sembast_encryption_test.dart:227 the cipher an altered line fails to decode rather than reading back changed -- passed
+- event_sourcing/test/storage/sembast_encryption_test.dart:243 a database opened with a key holds no readable record content on disk, before and after a compaction -- passed
+- event_sourcing/test/storage/sembast_encryption_test.dart:289 a database opened with a key whose last line a crash cut short still opens with every complete record -- passed
+- event_sourcing/test/web/aes_gcm_web_test.dart:13 meets the GCM specification known answers for a 256-bit key -- passed
+- event_sourcing/test/web/aes_gcm_web_test.dart:19 matches an independent GCM implementation at every length -- passed
+- event_sourcing/test/web/aes_gcm_web_test.dart:25 refuses an altered ciphertext, tag or nonce, and another key -- passed
+
+**D**
+
+Code:
+
+- event_sourcing/lib/src/storage/storage_encryption.dart:4
+
+Tests:
+
+- event_sourcing/test/storage/sembast_encryption_test.dart:152 the encryption key a generated key is 32 bytes and differs from the next -- passed
+- event_sourcing/test/storage/sembast_encryption_test.dart:210 the cipher encrypts the same line under a fresh nonce each time -- passed
+
+**E**
+
+Code:
+
+- event_sourcing/lib/src/storage/storage_description.dart:19
+
+Tests:
+
+- event_sourcing/test/storage/sembast_encryption_test.dart:309 a key that does not decrypt the database is refused, and the file is byte-identical afterwards -- passed
+- event_sourcing/test/storage/sembast_encryption_test.dart:340 a key that does not decrypt the database no key for an encrypted database is refused, and the file is byte-identical afterwards -- passed
+- event_sourcing/test/storage/sembast_encryption_test.dart:365 a key that does not decrypt the database sembast compares the codec signature before it writes: an unencrypted file opened directly with the codec is refused unchanged -- passed
+
+**F**
+
+Code:
+
+- event_sourcing/lib/src/storage/sembast_file_io.dart:9
+
+Tests:
+
+- event_sourcing/test/storage/sembast_encryption_fixture_test.dart:61 a database the earlier release wrote unencrypted opens encrypted with every event -- passed
+- event_sourcing/test/storage/sembast_encryption_test.dart:405 an unencrypted database opened with a key is converted, holding every event and view row -- passed
+- event_sourcing/test/storage/sembast_encryption_test.dart:433 an unencrypted database opened with a key a crash at copyVerified leaves a file the next open opens with every event -- passed
+- event_sourcing/test/storage/sembast_encryption_test.dart:433 an unencrypted database opened with a key a crash at copyWritten leaves a file the next open opens with every event -- passed
+- event_sourcing/test/storage/sembast_encryption_test.dart:433 an unencrypted database opened with a key a crash at replaced leaves a file the next open opens with every event -- passed
+- event_sourcing/test/storage/sembast_encryption_test.dart:482 an unencrypted database opened with a key whose last line a crash cut short is converted with every complete record -- passed
+- event_sourcing/test/storage/sembast_encryption_test.dart:524 an unencrypted database opened with a key with a stale compacted file beside it leaves no unencrypted copy behind -- passed
+
+**G**
+
+Code:
+
+- event_sourcing/lib/src/storage/sembast_file_io.dart:9
+
+Tests:
+
+- none
+
+**H**
+
+Code:
+
+- event_sourcing/lib/src/storage/sembast_file_io.dart:9
+
+Tests:
+
+- event_sourcing/test/storage/sembast_encryption_test.dart:433 an unencrypted database opened with a key a crash at copyVerified leaves a file the next open opens with every event -- passed
+- event_sourcing/test/storage/sembast_encryption_test.dart:433 an unencrypted database opened with a key a crash at copyWritten leaves a file the next open opens with every event -- passed
+- event_sourcing/test/storage/sembast_encryption_test.dart:433 an unencrypted database opened with a key a crash at replaced leaves a file the next open opens with every event -- passed
+
+**I**
+
+Code:
+
+- event_sourcing/lib/src/storage/sembast_file_io.dart:9
+
+Tests:
+
+- event_sourcing/test/storage/sembast_encryption_test.dart:504 an unencrypted database opened with a key left by an interrupted sembast compaction (the file missing, the compacted file beside it) is converted with every event -- passed
+
+**J**
+
+Code:
+
+- event_sourcing/lib/src/storage/sembast_file_io.dart:9
+- event_sourcing/lib/src/storage/storage_description.dart:97
+
+Tests:
+
+- event_sourcing/test/storage/sembast_encryption_test.dart:700 inspecting a file reports a missing or empty file absent, and creates nothing -- passed
+- event_sourcing/test/storage/sembast_encryption_test.dart:718 inspecting a file reports unencrypted and encrypted files, writing nothing -- passed
+- event_sourcing/test/storage/sembast_encryption_test.dart:739 inspecting a file refuses a file that is not a Sembast database -- passed
+
+**K**
+
+Code:
+
+- event_sourcing/lib/src/storage/storage_description.dart:19
+
+Tests:
+
+- event_sourcing/test/storage/sembast_encryption_test.dart:646 a location held open in this isolate is shared only under the same key -- passed
+- event_sourcing/test/storage/sembast_encryption_test.dart:682 a location held open in this isolate held unencrypted, refuses an open with a key -- passed
+
+**L**
+
+Code:
+
+- event_sourcing/lib/src/storage/storage_encryption.dart:4
+
+Tests:
+
+- event_sourcing/test/storage/sembast_encryption_test.dart:160 the encryption key neither the key nor a description carrying it shows its bytes as text -- passed
+
+**M**
+
+Code:
+
+- event_sourcing/lib/src/storage/sembast_file_io.dart:9
+
+Tests:
+
+- event_sourcing/test/storage/sembast_encryption_test.dart:433 an unencrypted database opened with a key a crash at copyVerified leaves a file the next open opens with every event -- passed
+- event_sourcing/test/storage/sembast_encryption_test.dart:433 an unencrypted database opened with a key a crash at copyWritten leaves a file the next open opens with every event -- passed
+- event_sourcing/test/storage/sembast_encryption_test.dart:433 an unencrypted database opened with a key a crash at replaced leaves a file the next open opens with every event -- passed
+
+**N**
+
+Code:
+
+- event_sourcing/lib/src/storage/sembast_file_io.dart:9
+
+Tests:
+
+- event_sourcing/test/storage/sembast_encryption_test.dart:541 the conversion waits while another process holds its lock -- passed
+
+**O**
+
+Code:
+
+- event_sourcing/lib/src/storage/sembast_file_io.dart:9
+- event_sourcing/lib/src/storage/storage_description.dart:345
+
+Tests:
+
+- event_sourcing/test/storage/sembast_encryption_test.dart:602 deleting a database also deletes every file an encrypted open leaves beside it -- passed
+
+</details>
+
 ### EVS-DEV-severe-log-default: Severe log records reach standard error
 
 <details><summary>Evidence</summary>
@@ -6879,8 +7065,8 @@ Tests:
 - event_sourcing/test/barrier/handed_out_surface_test.dart:110 the handed-out surface no public constructor in the security or Postgres storage code builds a store over storage the library opened -- passed
 - event_sourcing/test/storage/postgres/postgres_idempotency_store_conformance_test.dart:133 over a pool the application opened, an outcome round-trips -- passed, skipped
 - event_sourcing/test/storage/postgres/postgres_idempotency_store_conformance_test.dart:80 the event store builds the idempotency store over its own storage -- passed, skipped
-- event_sourcing/test/sync/public_surface_scan_test.dart:1280 synthetic fixtures fail the rules (i) a policy that takes, holds or yields a backend or a pool fails -- passed
-- event_sourcing/test/sync/public_surface_scan_test.dart:925 library surface (i) the authorization policy holds no storage backend or pool -- passed
+- event_sourcing/test/sync/public_surface_scan_test.dart:1281 synthetic fixtures fail the rules (i) a policy that takes, holds or yields a backend or a pool fails -- passed
+- event_sourcing/test/sync/public_surface_scan_test.dart:926 library surface (i) the authorization policy holds no storage backend or pool -- passed
 
 **J**
 
@@ -6908,7 +7094,7 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/storage/sembast_factory.dart:5
-- event_sourcing/lib/src/storage/storage_description.dart:239
+- event_sourcing/lib/src/storage/storage_description.dart:348
 
 Tests:
 
@@ -8483,7 +8669,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/event_sourcing.dart:517
+- event_sourcing/lib/event_sourcing.dart:524
 - event_sourcing/lib/src/event_store.dart:2523
 - event_sourcing/lib/src/event_store.dart:503
 - event_sourcing/lib/src/security/security_context_store.dart:42
@@ -8500,13 +8686,13 @@ Code:
 Tests:
 
 - event_sourcing/test/sync/internal_member_fixture_test.dart:214 a consumer package is reported for each internal use, through the barrel, a src import or a third-party backend's annotated override, and not for the public reads, transaction or close -- passed
-- event_sourcing/test/sync/public_surface_scan_test.dart:785 library surface (a) StorageBackend mutators and their overrides are internal -- passed
-- event_sourcing/test/sync/public_surface_scan_test.dart:807 library surface (a) concrete-only backend members are reads, named operations or internal -- passed
-- event_sourcing/test/sync/public_surface_scan_test.dart:824 library surface (b) the barrel exports neither drain nor fillBatch -- passed
-- event_sourcing/test/sync/public_surface_scan_test.dart:832 library surface (c) no unannotated raw handle on any type, and no function-typed state on the backends -- passed
-- event_sourcing/test/sync/public_surface_scan_test.dart:880 library surface (f) the must-be-internal set is internal -- passed
-- event_sourcing/test/sync/public_surface_scan_test.dart:896 library surface (f) exported functions and bundle members are library operations or internal -- passed
-- event_sourcing/test/sync/public_surface_scan_test.dart:910 library surface (g) the unexported surface a src import reaches is internal or a named operation -- passed
+- event_sourcing/test/sync/public_surface_scan_test.dart:786 library surface (a) StorageBackend mutators and their overrides are internal -- passed
+- event_sourcing/test/sync/public_surface_scan_test.dart:808 library surface (a) concrete-only backend members are reads, named operations or internal -- passed
+- event_sourcing/test/sync/public_surface_scan_test.dart:825 library surface (b) the barrel exports neither drain nor fillBatch -- passed
+- event_sourcing/test/sync/public_surface_scan_test.dart:833 library surface (c) no unannotated raw handle on any type, and no function-typed state on the backends -- passed
+- event_sourcing/test/sync/public_surface_scan_test.dart:881 library surface (f) the must-be-internal set is internal -- passed
+- event_sourcing/test/sync/public_surface_scan_test.dart:897 library surface (f) exported functions and bundle members are library operations or internal -- passed
+- event_sourcing/test/sync/public_surface_scan_test.dart:911 library surface (g) the unexported surface a src import reaches is internal or a named operation -- passed
 
 **L**
 
@@ -9813,7 +9999,7 @@ Tests:
 - event_sourcing/test/event_store/append_runs_projections_test.dart:88 a local append whose fold cannot key the event still throws to its caller -- passed
 - event_sourcing/test/ingest/ingest_batch_happy_path_test.dart:352 delivery ingest — happy path batch with an identity-mismatching subject keeps it in a finding and admits the rest -- passed
 - event_sourcing/test/storage/postgres/delivery_receiver_postgres_test.dart:159 a delivered record carrying U+0000, which no backend the library ships can store as an event, is kept in one event_malformed finding (unstorable_character); the rest of the delivery is admitted and folds normally -- passed, skipped
-- event_sourcing/test/sync/public_surface_scan_test.dart:938 library surface ingestEvent is not reachable from the public API -- passed
+- event_sourcing/test/sync/public_surface_scan_test.dart:939 library surface ingestEvent is not reachable from the public API -- passed
 - event_sourcing/test/test_support/delivery_receiver_conformance.dart:1023 receiver accept path (postgres) a delivered event a table fold cannot key is passed over; the delivery is accepted whole, the copy stays current and one fold_failed finding is recorded -- passed, skipped
 - event_sourcing/test/test_support/delivery_receiver_conformance.dart:1023 receiver accept path (sembast) a delivered event a table fold cannot key is passed over; the delivery is accepted whole, the copy stays current and one fold_failed finding is recorded -- passed
 - event_sourcing/test/test_support/delivery_receiver_conformance.dart:1235 receiver accept path (postgres) a view whose interest includes ingest.delivery_accepted stays current after an accepted delivery -- passed, skipped
@@ -11783,7 +11969,7 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/event_store.dart:1374
-- event_sourcing/lib/src/storage/storage_description.dart:152
+- event_sourcing/lib/src/storage/storage_description.dart:199
 
 Tests:
 
@@ -11820,6 +12006,42 @@ Tests:
 
 - event_sourcing/test/testing/hooks_release_probe_test.dart:113 a compiled executable ignores installed seams -- passed
 - event_sourcing/test/testing/hooks_release_probe_test.dart:96 without assertions (dart run --no-enable-asserts) no seam fires -- passed
+
+**K**
+
+Code:
+
+- event_sourcing/lib/src/storage/storage_encryption.dart:1
+
+Tests:
+
+- event_sourcing/test/storage/sembast_encryption_test.dart:243 a database opened with a key holds no readable record content on disk, before and after a compaction -- passed
+
+**L**
+
+Code:
+
+- event_sourcing/lib/src/storage/storage_description.dart:16
+
+Tests:
+
+- event_sourcing/test/storage/sembast_encryption_test.dart:309 a key that does not decrypt the database is refused, and the file is byte-identical afterwards -- passed
+- event_sourcing/test/storage/sembast_encryption_test.dart:340 a key that does not decrypt the database no key for an encrypted database is refused, and the file is byte-identical afterwards -- passed
+
+**M**
+
+Code:
+
+- event_sourcing/lib/src/storage/sembast_file_io.dart:6
+
+Tests:
+
+- event_sourcing/test/storage/sembast_encryption_fixture_test.dart:61 a database the earlier release wrote unencrypted opens encrypted with every event -- passed
+- event_sourcing/test/storage/sembast_encryption_test.dart:405 an unencrypted database opened with a key is converted, holding every event and view row -- passed
+- event_sourcing/test/storage/sembast_encryption_test.dart:433 an unencrypted database opened with a key a crash at copyVerified leaves a file the next open opens with every event -- passed
+- event_sourcing/test/storage/sembast_encryption_test.dart:433 an unencrypted database opened with a key a crash at copyWritten leaves a file the next open opens with every event -- passed
+- event_sourcing/test/storage/sembast_encryption_test.dart:433 an unencrypted database opened with a key a crash at replaced leaves a file the next open opens with every event -- passed
+- event_sourcing/test/storage/sembast_encryption_test.dart:482 an unencrypted database opened with a key whose last line a crash cut short is converted with every complete record -- passed
 
 </details>
 
