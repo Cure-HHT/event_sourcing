@@ -14,6 +14,7 @@ import 'package:event_sourcing/src/projections/primitives/row_key.dart';
 import 'package:event_sourcing/src/projections/projection_spec.dart';
 import 'package:event_sourcing/src/security/system_entry_types.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
+import 'package:meta/meta.dart' show internal;
 
 /// The library's default destination-wedges view: a Table view with one row
 /// per wedged destination, folded from the wedge events and the recovery and
@@ -66,7 +67,7 @@ const TableProjectionSpec defaultDestinationWedgesSpec = TableProjectionSpec(
       kDestinationDeletedEventType,
     },
     aggregateTypes: <String>{kDestinationAuditAggregateType},
-    predicate: _notReceivedFromOwnIdentity,
+    predicate: notReceivedFromOwnIdentity,
   ),
   insertEventTypes: <String>{kDestinationWedgedEventType},
   removeEventTypes: <String>{
@@ -105,8 +106,10 @@ const TableProjectionSpec defaultDestinationWedgesSpec = TableProjectionSpec(
 /// which the holding database stamped when it stored the copy, names the
 /// database the originator entry names. Such a copy reached the log by
 /// ingest (a second live copy of the database appended it, or a peer forged
-/// it), and the view folds none of it.
-bool _notReceivedFromOwnIdentity(StoredEvent event) {
+/// it), and the view folds none of it. The default destination-holds view
+/// admits events by the same predicate.
+@internal
+bool notReceivedFromOwnIdentity(StoredEvent event) {
   final provenance = event.metadata['provenance'];
   if (provenance is! List || provenance.length < 2) return true;
   final first = provenance.first;

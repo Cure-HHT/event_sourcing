@@ -1010,6 +1010,7 @@ final class SyncCycle {
         declaredFingerprint: declared?.fingerprint,
         registrationId: _registry.localRegistrationId(destination.id),
         databaseId: _registry.eventStore.databaseId,
+        registry: _registry,
       );
     } on DrainLockLostException catch (e) {
       _lockLost(held, e.message);

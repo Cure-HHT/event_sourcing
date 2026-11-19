@@ -1,5 +1,98 @@
 # Changelog
 
+## 0.8.0
+
+Data: data format 3.1, a minor step: keyed destinations. Postgres schema
+version 10 adds the queue item's block key and release hold id and raises
+the minimum compatible schema version to 10, so deploying it is
+stop-then-start, and a rollback to a build of schema 9 is a restore of
+the database, for every consumer, including one that keys no destination.
+A persisted Sembast database that holds a keyed destination is opened only
+by a build of 3.1 or later (EVS-DEV-version-compatibility/C).
+
+Breaking: `EventStore.open` now refuses a sealed projection registry that
+holds `defaultDestinationWedgesSpec` but not `defaultDestinationHoldsSpec`;
+register `defaultDestinationHoldsSpec` before sealing. The sealed
+`RowDataExtractor` gains four subclasses (`CombinedRowData`,
+`ConstantFields`, `ListLengthField`, `EventTimestampField`), so an
+exhaustive `switch` over it no longer compiles; add arms for the new
+row-data types. Every deletion event now carries `key_lists`, `[]` for a
+destination that holds no key.
+
+### Destinations
+
+- A destination may declare itself keyed (`Destination.keyed`,
+  `Destination.blockKeyOf`), and `SendPermanent.scope` states whether a
+  permanent failure concerns the destination or only the refused item's
+  key. The queue item records its block key and the hold id a release
+  enqueued it under, and the backends keep per-key key lists and release
+  failure records beside the queue. The reserved entry types
+  `system.destination_held`, `system.destination_hold_released` and
+  `system.destination_hold_cleared` are declared
+  (EVS-DEV-destination-key-hold).
+- `Destination` gains three members with defaults, `keyed`,
+  `blockKeyOf` and `keyScheme`. A class that writes `implements
+  Destination` rather than `extends Destination` inherits none and must
+  declare them (`keyed => false`, a `blockKeyOf` that returns null and a
+  null `keyScheme` keep its behaviour). A keyed destination names a
+  non-empty `keyScheme`; `addDestination` throws `ArgumentError` before
+  anything is written otherwise.
+- Every registration records the destination's keying (`DestinationKeying`:
+  `keyed` and `keyScheme`) in its persisted schedule
+  (`DestinationSchedule.keying`) and its registration event (`keyed`,
+  `key_scheme`). While the destination has key lists, `addDestination`
+  throws `ArgumentError`, writing only the registry check record
+  (`refused_keying_changed`), for a keying other than the recorded one; a
+  schedule that records none takes the registration's. A fill, replay or
+  release step under a keying other than the recorded one writes nothing,
+  and a key-scoped refusal drained under one wedges the head
+  (EVS-DEV-destination-key-hold-guards).
+- A hold that cannot be committed (the queue or the log is not as it
+  requires) is rolled back and the head is wedged with cause
+  `permanent_refusal`, instead of the pass ending with the attempt alone.
+  A recovery that cannot return a released item to its key list throws
+  `StateError` writing only its registry check record
+  (`refused_released_item_unreturnable`), and a hold removes its key's
+  release failure record, so the new hold's release starts with the
+  whole retry budget.
+- `DestinationRegistry.readDeliveryStatus` shows each destination's key
+  lists (`DestinationDeliveryStatus.keyLists`), and
+  `DestinationRegistry.readDeliveryStatusInTxn` reads the same status
+  inside a transaction the caller holds, opening none of its own
+  (EVS-DEV-destination-key-hold/Z).
+- `addDestination` throws `ArgumentError`, with nothing written, for a
+  destination that is both keyed and natively serializing
+  (EVS-DEV-destination-key-hold/F).
+- `addDestination` throws `ArgumentError`, writing only the registry check
+  record, for a destination that is not keyed while the database holds key
+  lists for its id; register it keyed, or delete its key lists with
+  `deleteDestination` (EVS-PRD-destination-key-hold/L).
+- `deleteDestination` removes the destination's key lists and release
+  failure records and names the key lists it removed in its deletion event
+  (`key_lists`, one `{key, hold_id}` per list).
+- `EventStore.open` registers a second default view,
+  `default_destination_holds` (`defaultDestinationHoldsSpec`), one row per
+  held key keyed `<database_id>|<id>|<key>`, in state `held` or
+  `releasing`. A projection registry passed to `open` sealed without it,
+  or holding another spec under its name, is refused.
+
+### Documentation
+
+- The guide's "Key-scoped holds" section states the one rule, how a
+  destination opts in, what a hold, a release and a recovery do, how to
+  read holds, the failures that stay destination-wide, and the
+  stop-then-start deployment the schema minimum requires.
+
+### Projections
+
+- `TableProjectionSpec` gains optional `updateEventTypes` with
+  `updateData` (merge fields into an existing row), `matchField` (an update
+  or remove changes a row only when that field matches the event's), and
+  `listedRemovals` (`ListedRowKeys`: an event removes every row it names in
+  a list). New row-data primitives: `CombinedRowData`, `ConstantFields`,
+  `ListLengthField` and `EventTimestampField`. A table view that sets none
+  of them keeps its fingerprint.
+
 ## 0.7.4
 
 Data: data format 3.0, unchanged; nothing to migrate.

@@ -209,6 +209,8 @@ class ThirdPartyBackend extends StorageBackend {
     String? wireFormat,
     String? transformVersion,
     int? resendsDeliveryNumber,
+    String? blockKey,
+    String? releasedHoldId,
   }) => throw UnimplementedError();
 
   @override
@@ -324,6 +326,36 @@ class ThirdPartyBackend extends StorageBackend {
   Future<void> clearTransformFailureRecordTxn(
     Transaction txn,
     String destinationId,
+  ) => throw UnimplementedError();
+
+  @internal
+  @override
+  Future<Map<String, KeyList>> readKeyListsTxn(
+    Transaction txn,
+    String destinationId,
+  ) => throw UnimplementedError();
+
+  @internal
+  @override
+  Future<void> writeKeyListsTxn(
+    Transaction txn,
+    String destinationId,
+    Map<String, KeyList> lists,
+  ) => throw UnimplementedError();
+
+  @internal
+  @override
+  Future<Map<String, ReleaseFailureRecord>> readReleaseFailuresTxn(
+    Transaction txn,
+    String destinationId,
+  ) => throw UnimplementedError();
+
+  @internal
+  @override
+  Future<void> writeReleaseFailuresTxn(
+    Transaction txn,
+    String destinationId,
+    Map<String, ReleaseFailureRecord> records,
   ) => throw UnimplementedError();
 
   @internal
@@ -727,6 +759,20 @@ class ThirdPartyBackend extends StorageBackend {
     String destinationId,
     int afterSequenceInQueue,
   ) => throw UnimplementedError();
+
+  @internal
+  @override
+  Future<List<FifoEntry>> deletePendingRowsForKeyAfterTxn(
+    Transaction txn,
+    String destinationId,
+    String key,
+    int afterSequenceInQueue,
+  ) => throw UnimplementedError();
+
+  @internal
+  @override
+  Future<bool> hasPendingKeylessRowTxn(Transaction txn, String destinationId) =>
+      throw UnimplementedError();
 
   @override
   Stream<StoredEvent> readEventsReverse({Set<String>? eventTypes}) =>

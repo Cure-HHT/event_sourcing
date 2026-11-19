@@ -442,7 +442,11 @@ deployment — see the guide's "Advanced" chapter for detail:
   library's default destination-wedges view (`default_destination_wedges`,
   registered by `EventStore.open`): one row per wedged destination, keyed
   by the appending database's identity and the destination, removed by
-  the recovery or deletion that ends the wedge. Only the library appends
+  the recovery or deletion that ends the wedge, and its default
+  destination-holds view (`default_destination_holds`): one row per held
+  key of a keyed destination, keyed by the database identity, the
+  destination and the key, in state `held` or `releasing`, removed by the
+  clearing event or the deletion. Only the library appends
   reserved system events such as these: `append` and `appendInTxn` refuse
   them, and ingest stores no event for one in a shape the library does not
   append, keeping the record in a security finding.

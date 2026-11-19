@@ -17,6 +17,10 @@ import 'package:event_sourcing/src/storage/stored_event.dart';
 /// Batching: [batchCapacity] controls the size at which
 /// [canAddToBatch] returns `false`; default is `1` (single-event
 /// FIFO semantics) for drain tests that do not exercise batching.
+///
+/// Keys: with a `keyOf` given the destination is keyed and its block key of
+/// an event is what `keyOf` returns (or throws), under key scheme
+/// `keyScheme` (`test-v1` by default); with none it is not keyed.
 class FakeDestination extends Destination {
   FakeDestination({
     this.id = 'fake',
@@ -27,7 +31,10 @@ class FakeDestination extends Destination {
     this.batchCapacity = 1,
     this.maxAccumulateTime = Duration.zero,
     this.allowHardDelete = false,
-  }) : _script = script ?? <SendResult>[],
+    String? Function(StoredEvent event)? keyOf,
+    this.keyScheme = 'test-v1',
+  }) : _keyOf = keyOf,
+       _script = script ?? <SendResult>[],
        _filter = filter ?? const SubscriptionFilter(),
        _blockBeforeSend = blockBeforeSend;
 
@@ -51,6 +58,7 @@ class FakeDestination extends Destination {
   final bool allowHardDelete;
 
   final SubscriptionFilter _filter;
+  final String? Function(StoredEvent event)? _keyOf;
   final List<SendResult> _script;
   final Future<void> Function()? _blockBeforeSend;
 
@@ -67,8 +75,24 @@ class FakeDestination extends Destination {
   /// early-returns on a wedged head.
   int transformCalls = 0;
 
+  /// Count of times `blockKeyOf` has been invoked.
+  int blockKeyCalls = 0;
+
   @override
   SubscriptionFilter get filter => _filter;
+
+  @override
+  bool get keyed => _keyOf != null;
+
+  @override
+  final String? keyScheme;
+
+  @override
+  Future<String?> blockKeyOf(StoredEvent event) async {
+    blockKeyCalls += 1;
+    final keyOf = _keyOf;
+    return keyOf == null ? null : keyOf(event);
+  }
 
   @override
   bool canAddToBatch(List<StoredEvent> currentBatch, StoredEvent candidate) =>

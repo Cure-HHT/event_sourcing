@@ -133,6 +133,10 @@ Map<String, Object?> _encodeShape(ProjectionSpec spec) => switch (spec) {
     :final removeEventTypes,
     :final rowKey,
     :final rowData,
+    :final updateEventTypes,
+    :final updateData,
+    :final matchField,
+    :final listedRemovals,
   ) =>
     {
       'kind': 'table',
@@ -140,6 +144,19 @@ Map<String, Object?> _encodeShape(ProjectionSpec spec) => switch (spec) {
       'removeEventTypes': removeEventTypes.toList()..sort(),
       'rowKey': _encodeRowKey(rowKey),
       'rowData': _encodeRowData(rowData),
+      // Encoded only when set, so a table view that uses none of them
+      // keeps the fingerprint it had before they existed.
+      if (updateEventTypes.isNotEmpty) ...{
+        'updateEventTypes': updateEventTypes.toList()..sort(),
+        'updateData': _encodeRowData(updateData),
+      },
+      'matchField': ?matchField,
+      if (listedRemovals != null)
+        'listedRemovals': {
+          'eventTypes': listedRemovals.eventTypes.toList()..sort(),
+          'listField': listedRemovals.listField,
+          'paths': listedRemovals.paths,
+        },
     },
 };
 
@@ -177,6 +194,23 @@ Map<String, Object?> _encodeRowData(RowDataExtractor rowData) =>
       SelectedFields(:final fieldNames) => {
         'type': 'SelectedFields',
         'fieldNames': fieldNames,
+      },
+      CombinedRowData(:final parts) => {
+        'type': 'CombinedRowData',
+        'parts': parts.map(_encodeRowData).toList(),
+      },
+      ConstantFields(:final values) => {
+        'type': 'ConstantFields',
+        'values': values,
+      },
+      ListLengthField(:final fieldName, :final sourceField) => {
+        'type': 'ListLengthField',
+        'fieldName': fieldName,
+        'sourceField': sourceField,
+      },
+      EventTimestampField(:final fieldName) => {
+        'type': 'EventTimestampField',
+        'fieldName': fieldName,
       },
     };
 

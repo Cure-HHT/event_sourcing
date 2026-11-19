@@ -56,6 +56,8 @@ DestinationRegistry.eventStore: EventStore get eventStore
 DestinationRegistry.localRegistrationId: String? localRegistrationId(String id)
 DestinationRegistry.new: constructor DestinationRegistry({required EventStore eventStore})
 DestinationRegistry.readDeliveryStatus: Future<DeliveryStatus> readDeliveryStatus()
+DestinationRegistry.readDeliveryStatusInTxn: Future<DeliveryStatus> readDeliveryStatusInTxn(Transaction txn)
+DestinationRegistry.releaseHold: Future<ReleaseHoldResult> releaseHold(String destinationId, String key, {required String holdId, required Initiator initiator, required String requestId})
 DestinationRegistry.requestHalt: Future<String> requestHalt(String destinationId, {required Initiator initiator, required HaltPurpose purpose})
 DestinationRegistry.scheduleOf: Future<DestinationSchedule> scheduleOf(String id)
 DestinationRegistry.setEndDate: Future<SetEndDateResult> setEndDate(String id, DateTime endDate, {required Initiator initiator})
@@ -68,7 +70,8 @@ DestinationSchedule.fromJson: constructor DestinationSchedule.fromJson(Map<Strin
 DestinationSchedule.hashCode: int get hashCode
 DestinationSchedule.isActiveAt: bool isActiveAt(DateTime now)
 DestinationSchedule.isDormant: bool get isDormant
-DestinationSchedule.new: constructor DestinationSchedule({DateTime? startDate, DateTime? endDate, String? registrationId, bool allowHardDelete = false})
+DestinationSchedule.keying: field DestinationKeying? keying
+DestinationSchedule.new: constructor DestinationSchedule({DateTime? startDate, DateTime? endDate, String? registrationId, bool allowHardDelete = false, DestinationKeying? keying})
 DestinationSchedule.registrationId: field String? registrationId
 DestinationSchedule.startDate: field DateTime? startDate
 DestinationSchedule.toJson: Map<String, Object?> toJson()

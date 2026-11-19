@@ -77,6 +77,16 @@ class NativeDemoDestination implements Destination, DemoKnobs {
   @override
   bool get serializesNatively => true;
 
+  // Not keyed: every queue item carries no block key.
+  @override
+  bool get keyed => false;
+
+  @override
+  Future<String?> blockKeyOf(StoredEvent event) async => null;
+
+  @override
+  String? get keyScheme => null;
+
   // The demo's in-process hub keeps no deliveries to serve, so every pull
   // fails permanently.
   @override

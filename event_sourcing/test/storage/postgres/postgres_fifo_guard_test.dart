@@ -57,6 +57,8 @@ const Map<String, String> _immutableColumns = <String, String>{
   'transform_failed': 'transform_failed = true',
   'transform_failures': 'transform_failures = 5',
   'resends_delivery_number': 'resends_delivery_number = 100',
+  'block_key': "block_key = 'other-key'",
+  'released_hold_id': "released_hold_id = 'other-hold'",
 };
 
 /// A recorded attempt, as the drainer writes one.
@@ -102,6 +104,8 @@ void main() {
   Future<String> insertPending({
     String dest = 'd',
     List<Map<String, Object?>> attempts = const <Map<String, Object?>>[],
+    String? blockKey,
+    String? releasedHoldId,
   }) async {
     final seq = ++nextSeq;
     final entryId = 'e$seq';
@@ -112,13 +116,15 @@ void main() {
           event_ids, event_id_first_seq, event_id_last_seq,
           wire_format, transform_version, enqueued_at,
           attempts, final_status, sent_at,
-          wire_payload, envelope_metadata
+          wire_payload, envelope_metadata,
+          block_key, released_hold_id
         ) VALUES (
           @dest, @seq, @entryId,
           @eventIds:jsonb, @seq, @seq,
           'fake-v1', NULL, @at:timestamptz,
           '[]'::jsonb, NULL, NULL,
-          @payload:jsonb, NULL
+          @payload:jsonb, NULL,
+          @blockKey, @releasedHoldId
         )
       '''),
       parameters: <String, Object?>{
@@ -128,6 +134,8 @@ void main() {
         'eventIds': <String>['ev$seq'],
         'at': DateTime.utc(2026, 1, 1),
         'payload': <String, Object?>{'a': 1},
+        'blockKey': blockKey,
+        'releasedHoldId': releasedHoldId,
       },
     );
     for (final attempt in attempts) {
@@ -219,6 +227,71 @@ void main() {
           expect(await row(entryId), before, reason: '$from->$to');
         }
       }
+    }
+  });
+
+  /// Sets [entryId]'s [column] to [value] in an update that changes nothing
+  /// else, leaving the item pending.
+  Future<void> setColumn(String entryId, String column, String? value) =>
+      c.execute(
+        Sql.named('UPDATE fifo_entries SET $column = @v WHERE entry_id = @e'),
+        parameters: <String, Object?>{'v': value, 'e': entryId},
+      );
+
+  // Verifies: EVS-DEV-destination-drain/S
+  // a change to a queue item's block key is refused, from no key to a key,
+  //   from one key to another and from a key to none, and the row is
+  //   unchanged.
+  // Verifies: EVS-DEV-destination-key-hold/B
+  // the block key the fill stores on a queue item is held immutable.
+  test('guard refuses UPDATE of block_key', () async {
+    final keyless = await insertPending();
+    final before = await row(keyless);
+    await expectLater(setColumn(keyless, 'block_key', 'K'), _refusedByGuard);
+    expect(await row(keyless), before);
+
+    final withKey = await insertPending(blockKey: 'K');
+    final keyedBefore = await row(withKey);
+    expect(keyedBefore['block_key'], 'K');
+    for (final value in <String?>['L', null]) {
+      await expectLater(
+        setColumn(withKey, 'block_key', value),
+        _refusedByGuard,
+        reason: 'K -> $value',
+      );
+      expect(await row(withKey), keyedBefore, reason: 'K -> $value');
+    }
+  });
+
+  // Verifies: EVS-DEV-destination-drain/S
+  // a change to the hold id a release enqueued a queue item under is
+  //   refused, from none to one, from one to another and from one to none,
+  //   and the row is unchanged.
+  // Verifies: EVS-DEV-destination-key-hold/R+S
+  // the release hold id recorded on a queue item, or its absence, is held
+  //   immutable.
+  test('guard refuses UPDATE of released_hold_id', () async {
+    final ordinary = await insertPending(blockKey: 'K');
+    final before = await row(ordinary);
+    await expectLater(
+      setColumn(ordinary, 'released_hold_id', 'hold-1'),
+      _refusedByGuard,
+    );
+    expect(await row(ordinary), before);
+
+    final released = await insertPending(
+      blockKey: 'K',
+      releasedHoldId: 'hold-1',
+    );
+    final releasedBefore = await row(released);
+    expect(releasedBefore['released_hold_id'], 'hold-1');
+    for (final value in <String?>['hold-2', null]) {
+      await expectLater(
+        setColumn(released, 'released_hold_id', value),
+        _refusedByGuard,
+        reason: 'hold-1 -> $value',
+      );
+      expect(await row(released), releasedBefore, reason: 'hold-1 -> $value');
     }
   });
 

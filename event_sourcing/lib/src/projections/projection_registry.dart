@@ -49,19 +49,26 @@ class ProjectionRegistry {
         AggregateProjectionSpec(:final derivedFields) => <String>[
           for (final field in derivedFields) field.fieldName,
         ],
-        TableProjectionSpec(:final rowKey, :final rowData) => <String>[
-          ...switch (rowKey) {
-            AggregateIdKey() => const <String>[],
-            CompositeKey(:final paths) => <String>[
-              for (final path in paths) ...path.split('.'),
-            ],
-          },
-          ...switch (rowData) {
-            WholePayload() => const <String>[],
-            PayloadField(:final fieldName) => <String>[fieldName],
-            SelectedFields(:final fieldNames) => fieldNames,
-          },
-        ],
+        TableProjectionSpec(
+          :final rowKey,
+          :final rowData,
+          :final updateData,
+          :final matchField,
+          :final listedRemovals,
+        ) =>
+          <String>[
+            ...switch (rowKey) {
+              AggregateIdKey() => const <String>[],
+              CompositeKey(:final paths) => <String>[
+                for (final path in paths) ...path.split('.'),
+              ],
+            },
+            ..._rowDataNames(rowData),
+            ..._rowDataNames(updateData),
+            ?matchField,
+            if (listedRemovals != null)
+              for (final path in listedRemovals.paths) ...path.split('.'),
+          ],
       },
     ];
     for (final name in names) {
@@ -76,6 +83,19 @@ class ProjectionRegistry {
       }
     }
   }
+
+  static List<String> _rowDataNames(RowDataExtractor rowData) =>
+      switch (rowData) {
+        WholePayload() => const <String>[],
+        PayloadField(:final fieldName) => <String>[fieldName],
+        SelectedFields(:final fieldNames) => fieldNames,
+        CombinedRowData(:final parts) => <String>[
+          for (final part in parts) ..._rowDataNames(part),
+        ],
+        ConstantFields(:final values) => values.keys.toList(),
+        ListLengthField(:final fieldName) => <String>[fieldName],
+        EventTimestampField(:final fieldName) => <String>[fieldName],
+      };
 
   ProjectionSpec? lookup(String viewName) => _byView[viewName];
 

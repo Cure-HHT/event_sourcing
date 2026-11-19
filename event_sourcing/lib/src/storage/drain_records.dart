@@ -320,6 +320,7 @@ class DestinationDeliveryStatus {
     required this.wedge,
     required this.refillGuard,
     required this.unserved,
+    this.keyLists = const <String, KeyList>{},
   });
 
   /// The persisted schedule.
@@ -339,11 +340,16 @@ class DestinationDeliveryStatus {
   /// since the current epoch).
   final UnservedReason? unserved;
 
+  /// The key lists, by block key: each held key's events, its hold id and
+  /// whether it is held or releasing. Empty when the destination holds no
+  /// key.
+  final Map<String, KeyList> keyLists;
+
   @override
   String toString() =>
       'DestinationDeliveryStatus(schedule: $schedule, openHaltRequest: '
       '$openHaltRequest, wedge: $wedge, refillGuard: $refillGuard, '
-      'unserved: ${unserved?.wire})';
+      'unserved: ${unserved?.wire}, keyLists: $keyLists)';
 }
 
 /// The persisted delivery status of a database: the current drainer's

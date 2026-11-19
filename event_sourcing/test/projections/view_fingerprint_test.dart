@@ -1,4 +1,5 @@
 import 'package:event_sourcing/src/causal_record.dart';
+import 'package:event_sourcing/src/destinations/default_destination_wedges_spec.dart';
 import 'package:event_sourcing/src/entry_type_definition.dart';
 import 'package:event_sourcing/src/entry_type_registry.dart';
 import 'package:event_sourcing/src/projections/primitives/row_data.dart';
@@ -370,6 +371,25 @@ void main() {
       expect(
         viewFingerprint(specA, entryTypes, promoters),
         isNot(viewFingerprint(specB, entryTypes, promoters)),
+      );
+    });
+
+    // Verifies: EVS-DEV-view-convergence/A
+    // the default destination-wedges view keeps the fingerprint it had
+    //   before table specs gained update, match and listed-removal rules,
+    //   so no existing copy of it is rebuilt by an upgrade.
+    test('the default destination-wedges view keeps its fingerprint', () {
+      final entryTypes = EntryTypeRegistry();
+      for (final d in kSystemEntryTypes) {
+        entryTypes.register(d);
+      }
+      expect(
+        viewFingerprint(
+          defaultDestinationWedgesSpec,
+          entryTypes,
+          PromoterRegistry(),
+        ),
+        '88eacf0aaff10c1516485cb5684e1ef208f780137d189227ffd1ad43c2d497a9',
       );
     });
   });
