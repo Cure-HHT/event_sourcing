@@ -14,6 +14,7 @@
 | EVS-DEV-converging-view-reads | Reads of a converging view | DEV | Active | A-E,G-J,L-P (100%) | A-E,G-J,L-P (100%) [14P 0F 0A] | A-E,G-J,L-P (100%) | 0/14 (0%) | 0/14 (0%) | n/a | n/a |
 | EVS-DEV-destination-drain-lock | Delivery cycle mechanics | DEV | Active | A-G (100%) | A-G (100%) [7P 0F 0A] | A-G (100%) | 0/7 (0%) | 0/7 (0%) | n/a | n/a |
 | EVS-DEV-destination-drain | Destination queue mechanics | DEV | Active | A-V,X-Z (100%) | A-V,X-Z (100%) [25P 0F 0A] | A-V,X-Z (100%) | 0/25 (0%) | 0/25 (0%) | n/a | n/a |
+| EVS-DEV-destination-key-hold-guards | Guards on a keyed destination's holds | DEV | Active | A-I (100%) | A-I (100%) [9P 0F 0A] | A-I (100%) | 0/9 (0%) | 0/9 (0%) | n/a | n/a |
 | EVS-DEV-destination-key-hold | Key-scoped holds on a destination queue | DEV | Active | A-Z (100%) | A-Z (100%) [26P 0F 0A] | A-Z (100%) | 0/26 (0%) | 0/26 (0%) | n/a | n/a |
 | EVS-DEV-destination-retry-budget | Destination retry budget and attempt outcomes | DEV | Active | A-G (100%) | A-G (100%) [7P 0F 0A] | A-G (100%) | 0/7 (0%) | 0/7 (0%) | n/a | n/a |
 | EVS-DEV-entry-type-downgrade-refusal | Entry-type version downgrade refusal | DEV | Active | A,C (100%) | A,C (100%) [2P 0F 0A] | A,C (100%) | 0/2 (0%) | 0/2 (0%) | n/a | n/a |
@@ -30,7 +31,7 @@
 | EVS-DEV-view-convergence | View copies and their catch-up | DEV | Active | A-K,M,O,Q,S-X,Z (100%) | A-K,M,O,Q,S-X,Z (100%) [21P 0F 0A] | A-K,M,O,Q,S-X,Z (100%) | 0/21 (0%) | 0/21 (0%) | n/a | n/a |
 | EVS-PRD-action-dispatch | Action Dispatch | PRD | Active | A-F (100%) | A-F (100%) [6P 0F 0A] | A-F (100%) | 0/6 (0%) | 0/6 (0%) | n/a | n/a |
 | EVS-PRD-canonical-json | Canonical JSON Serialization | PRD | Active | A-F (100%) | A-D (67%) [4P 0F 0A] | A-D (67%) | 0/6 (0%) | 0/6 (0%) | n/a | n/a |
-| EVS-PRD-destination-key-hold | Key-scoped holds on a destination | PRD | Active | A-L (100%) | A-L (100%) [12P 0F 0A] | A-L (100%) | 0/12 (0%) | 0/12 (0%) | n/a | n/a |
+| EVS-PRD-destination-key-hold | Key-scoped holds on a destination | PRD | Active | A-M (100%) | A-M (100%) [13P 0F 0A] | A-M (100%) | 0/13 (0%) | 0/13 (0%) | n/a | n/a |
 | EVS-PRD-destinations | Destinations | PRD | Active | A-Y (100%) | A-Y (100%) [25P 0F 0A] | A-Y (100%) | 0/25 (0%) | 0/25 (0%) | n/a | n/a |
 | EVS-PRD-event-log | Event Log | PRD | Active | A-G (100%) | A-G (100%) [7P 0F 0A] | A-G (100%) | 0/7 (0%) | 0/7 (0%) | n/a | n/a |
 | EVS-PRD-hash-chain-integrity | Hash-Chain Integrity | PRD | Active | A-K (100%) | A-K (100%) [11P 0F 0A] | A-K (100%) | 0/11 (0%) | 0/11 (0%) | n/a | n/a |
@@ -947,7 +948,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/sync/drain.dart:1281
+- event_sourcing/lib/src/sync/drain.dart:1357
 
 Tests:
 
@@ -972,7 +973,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/sync/drain.dart:1590
+- event_sourcing/lib/src/sync/drain.dart:1666
 
 Tests:
 
@@ -984,7 +985,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/sync/drain.dart:1385
+- event_sourcing/lib/src/sync/drain.dart:1461
 
 Tests:
 
@@ -1020,7 +1021,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/sync/drain.dart:1594
+- event_sourcing/lib/src/sync/drain.dart:1670
 
 Tests:
 
@@ -1165,7 +1166,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/sync/drain.dart:1691
+- event_sourcing/lib/src/sync/drain.dart:1767
 
 Tests:
 
@@ -1219,7 +1220,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/destinations/destination_registry.dart:286
+- event_sourcing/lib/src/destinations/destination_registry.dart:301
 
 Tests:
 
@@ -1243,7 +1244,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/destinations/destination_registry.dart:398
+- event_sourcing/lib/src/destinations/destination_registry.dart:461
 - event_sourcing/lib/src/storage/queue_records.dart:673
 
 Tests:
@@ -1282,7 +1283,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/sync/drain.dart:304
+- event_sourcing/lib/src/sync/drain.dart:307
 
 Tests:
 
@@ -1293,7 +1294,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/sync/drain.dart:301
+- event_sourcing/lib/src/sync/drain.dart:304
 
 Tests:
 
@@ -1306,8 +1307,8 @@ Code:
 
 - event_sourcing/lib/src/storage/attempt_result.dart:104
 - event_sourcing/lib/src/storage/queue_records.dart:618
-- event_sourcing/lib/src/sync/drain.dart:312
-- event_sourcing/lib/src/sync/drain.dart:996
+- event_sourcing/lib/src/sync/drain.dart:1072
+- event_sourcing/lib/src/sync/drain.dart:315
 
 Tests:
 
@@ -1369,7 +1370,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/sync/drain.dart:1278
+- event_sourcing/lib/src/sync/drain.dart:1354
 
 Tests:
 
@@ -1380,7 +1381,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/sync/drain.dart:1208
+- event_sourcing/lib/src/sync/drain.dart:1284
 
 Tests:
 
@@ -1413,7 +1414,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/sync/drain.dart:382
+- event_sourcing/lib/src/sync/drain.dart:385
 
 Tests:
 
@@ -1835,7 +1836,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/sync/drain.dart:1268
+- event_sourcing/lib/src/sync/drain.dart:1344
 
 Tests:
 
@@ -1854,7 +1855,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/sync/drain.dart:1487
+- event_sourcing/lib/src/sync/drain.dart:1563
 
 Tests:
 
@@ -1878,8 +1879,8 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/sync/drain.dart:1381
-- event_sourcing/lib/src/sync/drain.dart:1433
+- event_sourcing/lib/src/sync/drain.dart:1457
+- event_sourcing/lib/src/sync/drain.dart:1509
 
 Tests:
 
@@ -1904,7 +1905,7 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/storage/fifo_entry.dart:384
-- event_sourcing/lib/src/sync/drain.dart:1586
+- event_sourcing/lib/src/sync/drain.dart:1662
 
 Tests:
 
@@ -1925,8 +1926,8 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/sync/drain.dart:1580
-- event_sourcing/lib/src/sync/drain.dart:1618
+- event_sourcing/lib/src/sync/drain.dart:1656
+- event_sourcing/lib/src/sync/drain.dart:1694
 
 Tests:
 
@@ -2019,7 +2020,7 @@ Code:
 
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:3026
 - event_sourcing/lib/src/storage/storage_backend.dart:1508
-- event_sourcing/lib/src/sync/drain.dart:1491
+- event_sourcing/lib/src/sync/drain.dart:1567
 
 Tests:
 
@@ -2045,7 +2046,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/sync/drain.dart:1376
+- event_sourcing/lib/src/sync/drain.dart:1452
 
 Tests:
 
@@ -2062,8 +2063,8 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/sync/drain.dart:1685
-- event_sourcing/lib/src/sync/drain.dart:1724
+- event_sourcing/lib/src/sync/drain.dart:1761
+- event_sourcing/lib/src/sync/drain.dart:1800
 
 Tests:
 
@@ -2084,7 +2085,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/sync/drain.dart:1655
+- event_sourcing/lib/src/sync/drain.dart:1731
 
 Tests:
 
@@ -2938,15 +2939,15 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/destinations/destination_registry.dart:11
-- event_sourcing/lib/src/destinations/destination_registry.dart:733
-- event_sourcing/lib/src/destinations/destination_registry.dart:751
+- event_sourcing/lib/src/destinations/destination_registry.dart:799
+- event_sourcing/lib/src/destinations/destination_registry.dart:817
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:3174
 - event_sourcing/lib/src/storage/queue_records.dart:4
 - event_sourcing/lib/src/storage/sembast_backend.dart:1769
 
 Tests:
 
-- event_sourcing/test/destinations/destination_registry_dynamic_test.dart:308 DestinationRegistry (dynamic lifecycle deleteDestination retires a wedged queue and drops the schedule when allowHardDelete is true -- passed
+- event_sourcing/test/destinations/destination_registry_dynamic_test.dart:311 DestinationRegistry (dynamic lifecycle deleteDestination retires a wedged queue and drops the schedule when allowHardDelete is true -- passed
 - event_sourcing/test/destinations/queue_rerun_test.dart:86 addDestination records the committed run's registration -- passed
 - event_sourcing/test/storage/postgres/postgres_fifo_guard_test.dart:847 deletion under the guard retains the terminal items -- passed
 - event_sourcing/test/storage/sembast_backend_watch_fifo_test.dart:359 SembastBackend.watchFifo on queue-changing writes retireQueueTxn -- passed
@@ -2970,6 +2971,8 @@ Tests:
 - event_sourcing/test/test_support/drain_wedge_conformance.dart:1873 drain wedge scenarios (postgres) recovery and deletion remove the wedge record -- passed, skipped
 - event_sourcing/test/test_support/drain_wedge_conformance.dart:1873 drain wedge scenarios (postgres, runtime role) recovery and deletion remove the wedge record -- passed
 - event_sourcing/test/test_support/drain_wedge_conformance.dart:1873 drain wedge scenarios (sembast) recovery and deletion remove the wedge record -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2779 keyed hold scenarios (postgres) a fill racing a deletion from another process enqueues nothing after the deletion, and keeps each key in order when it wins -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2779 keyed hold scenarios (sembast) a fill racing a deletion from another process enqueues nothing after the deletion, and keeps each key in order when it wins -- passed
 - event_sourcing/test/test_support/operator_halt_conformance.dart:1589 operator halt scenarios (postgres) recovery and deletion deletion waits for the drainer to honour the halt -- passed, skipped
 - event_sourcing/test/test_support/operator_halt_conformance.dart:1589 operator halt scenarios (postgres, runtime role) recovery and deletion deletion waits for the drainer to honour the halt -- passed
 - event_sourcing/test/test_support/operator_halt_conformance.dart:1589 operator halt scenarios (sembast) recovery and deletion deletion waits for the drainer to honour the halt -- passed
@@ -3023,7 +3026,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/destinations/destination_registry.dart:1803
+- event_sourcing/lib/src/destinations/destination_registry.dart:1912
 - event_sourcing/lib/src/storage/final_status.dart:48
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2865
 - event_sourcing/lib/src/storage/sembast_backend.dart:3447
@@ -3045,15 +3048,15 @@ Tests:
 - event_sourcing/test/storage/storage_backend_conformance.dart:3145 StorageBackend conformance (postgres) FIFO setFinalStatusTxn throws StateError on a missing item -- passed, skipped
 - event_sourcing/test/storage/storage_backend_conformance.dart:3145 StorageBackend conformance (postgres, runtime role) FIFO setFinalStatusTxn throws StateError on a missing item -- passed
 - event_sourcing/test/storage/storage_backend_conformance.dart:3145 StorageBackend conformance (sembast (memory)) FIFO setFinalStatusTxn throws StateError on a missing item -- passed
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:659 keyed hold scenarios (postgres) SendPermanent(scope: key) holds the key -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:659 keyed hold scenarios (sembast) SendPermanent(scope: key) holds the key -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:757 keyed hold scenarios (postgres) SendPermanent(scope: key) holds the key -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:757 keyed hold scenarios (sembast) SendPermanent(scope: key) holds the key -- passed
 
 **C**
 
 Code:
 
 - event_sourcing/lib/src/sync/drain.dart:27
-- event_sourcing/lib/src/sync/drain.dart:410
+- event_sourcing/lib/src/sync/drain.dart:413
 
 Tests:
 
@@ -3068,12 +3071,14 @@ Tests:
 - event_sourcing/test/test_support/drain_wedge_conformance.dart:793 drain wedge scenarios (postgres) atomicity a failing fallback leaves the wedge failure logged -- passed, skipped
 - event_sourcing/test/test_support/drain_wedge_conformance.dart:793 drain wedge scenarios (postgres, runtime role) atomicity a failing fallback leaves the wedge failure logged -- passed
 - event_sourcing/test/test_support/drain_wedge_conformance.dart:793 drain wedge scenarios (sembast) atomicity a failing fallback leaves the wedge failure logged -- passed
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:659 keyed hold scenarios (postgres) SendPermanent(scope: key) holds the key -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:659 keyed hold scenarios (sembast) SendPermanent(scope: key) holds the key -- passed
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:890 keyed hold scenarios (postgres) restart after a key-scoped attempt re-derives the hold -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:890 keyed hold scenarios (sembast) restart after a key-scoped attempt re-derives the hold -- passed
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:944 keyed hold scenarios (postgres) honouring a halt by id holds a key-scoped head and wedges the next head -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:944 keyed hold scenarios (sembast) honouring a halt by id holds a key-scoped head and wedges the next head -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1042 keyed hold scenarios (postgres) honouring a halt by id holds a key-scoped head and wedges the next head -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1042 keyed hold scenarios (sembast) honouring a halt by id holds a key-scoped head and wedges the next head -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2843 keyed hold scenarios (postgres) a hold re-run after a serialization failure appends one hold event under one hold id -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2843 keyed hold scenarios (sembast) a hold re-run after a serialization failure appends one hold event under one hold id -- skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:757 keyed hold scenarios (postgres) SendPermanent(scope: key) holds the key -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:757 keyed hold scenarios (sembast) SendPermanent(scope: key) holds the key -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:988 keyed hold scenarios (postgres) restart after a key-scoped attempt re-derives the hold -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:988 keyed hold scenarios (sembast) restart after a key-scoped attempt re-derives the hold -- passed
 - event_sourcing/test/test_support/queue_registry_conformance.dart:2316 queue registry scenarios (postgres) drain outcomes attempt and sent commit together -- passed, skipped
 - event_sourcing/test/test_support/queue_registry_conformance.dart:2316 queue registry scenarios (postgres, runtime role) drain outcomes attempt and sent commit together -- passed
 - event_sourcing/test/test_support/queue_registry_conformance.dart:2316 queue registry scenarios (sembast) drain outcomes attempt and sent commit together -- passed
@@ -3091,7 +3096,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/destinations/destination_registry.dart:1803
+- event_sourcing/lib/src/destinations/destination_registry.dart:1912
 - event_sourcing/lib/src/destinations/destination_registry.dart:25
 - event_sourcing/lib/src/sync/drain.dart:31
 
@@ -3122,8 +3127,8 @@ Tests:
 - event_sourcing/test/test_support/drain_wedge_conformance.dart:1569 drain wedge scenarios (postgres) guards wedgeHeadInTxn refuses anything but the pending head -- passed, skipped
 - event_sourcing/test/test_support/drain_wedge_conformance.dart:1569 drain wedge scenarios (postgres, runtime role) guards wedgeHeadInTxn refuses anything but the pending head -- passed
 - event_sourcing/test/test_support/drain_wedge_conformance.dart:1569 drain wedge scenarios (sembast) guards wedgeHeadInTxn refuses anything but the pending head -- passed
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:659 keyed hold scenarios (postgres) SendPermanent(scope: key) holds the key -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:659 keyed hold scenarios (sembast) SendPermanent(scope: key) holds the key -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:757 keyed hold scenarios (postgres) SendPermanent(scope: key) holds the key -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:757 keyed hold scenarios (sembast) SendPermanent(scope: key) holds the key -- passed
 - event_sourcing/test/test_support/queue_registry_conformance.dart:945 queue registry scenarios (postgres) deletion deletion during an in-flight send is refused; the send is recorded -- passed, skipped
 - event_sourcing/test/test_support/queue_registry_conformance.dart:945 queue registry scenarios (postgres, runtime role) deletion deletion during an in-flight send is refused; the send is recorded -- passed
 - event_sourcing/test/test_support/queue_registry_conformance.dart:945 queue registry scenarios (sembast) deletion deletion during an in-flight send is refused; the send is recorded -- passed
@@ -3134,7 +3139,7 @@ Code:
 
 - event_sourcing/lib/src/destinations/destination_registry.dart:11
 - event_sourcing/lib/src/storage/queue_records.dart:4
-- event_sourcing/lib/src/sync/drain.dart:1597
+- event_sourcing/lib/src/sync/drain.dart:1673
 - event_sourcing/lib/src/sync/fill_batch.dart:13
 - event_sourcing/lib/src/sync/historical_replay.dart:8
 - event_sourcing/lib/src/sync/sync_cycle.dart:23
@@ -3193,10 +3198,10 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/destinations/destination_registry.dart:1016
+- event_sourcing/lib/src/destinations/destination_registry.dart:1089
 - event_sourcing/lib/src/destinations/destination_registry.dart:11
-- event_sourcing/lib/src/destinations/destination_registry.dart:920
-- event_sourcing/lib/src/destinations/destination_registry.dart:995
+- event_sourcing/lib/src/destinations/destination_registry.dart:1124
+- event_sourcing/lib/src/destinations/destination_registry.dart:986
 - event_sourcing/lib/src/storage/drain_records.dart:4
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:3054
 - event_sourcing/lib/src/storage/queue_records.dart:38
@@ -3216,14 +3221,16 @@ Tests:
 - event_sourcing/test/test_support/drain_wedge_conformance.dart:1873 drain wedge scenarios (postgres) recovery and deletion remove the wedge record -- passed, skipped
 - event_sourcing/test/test_support/drain_wedge_conformance.dart:1873 drain wedge scenarios (postgres, runtime role) recovery and deletion remove the wedge record -- passed
 - event_sourcing/test/test_support/drain_wedge_conformance.dart:1873 drain wedge scenarios (sembast) recovery and deletion remove the wedge record -- passed
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1714 keyed hold scenarios (postgres) a recovery returns swept released items to their key lists and does not rewind for them -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1714 keyed hold scenarios (sembast) a recovery returns swept released items to their key lists and does not rewind for them -- passed
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1792 keyed hold scenarios (postgres) a recovery whose wedged head was itself released returns it to its list -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1792 keyed hold scenarios (sembast) a recovery whose wedged head was itself released returns it to its list -- passed
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1862 keyed hold scenarios (postgres) with only released items swept, the cursor is not rewound -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1862 keyed hold scenarios (sembast) with only released items swept, the cursor is not rewound -- passed
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1911 keyed hold scenarios (postgres) keyless and gap-replay items still count toward the rewind -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1911 keyed hold scenarios (sembast) keyless and gap-replay items still count toward the rewind -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1812 keyed hold scenarios (postgres) a recovery returns swept released items to their key lists and does not rewind for them -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1812 keyed hold scenarios (sembast) a recovery returns swept released items to their key lists and does not rewind for them -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1890 keyed hold scenarios (postgres) a recovery whose wedged head was itself released returns it to its list -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1890 keyed hold scenarios (sembast) a recovery whose wedged head was itself released returns it to its list -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1960 keyed hold scenarios (postgres) with only released items swept, the cursor is not rewound -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1960 keyed hold scenarios (sembast) with only released items swept, the cursor is not rewound -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2009 keyed hold scenarios (postgres) keyless and gap-replay items still count toward the rewind -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2009 keyed hold scenarios (sembast) keyless and gap-replay items still count toward the rewind -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2737 keyed hold scenarios (postgres) a fill racing a recovery from another process keeps each key in order and enqueues each event once -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2737 keyed hold scenarios (sembast) a fill racing a recovery from another process keeps each key in order and enqueues each event once -- passed
 - event_sourcing/test/test_support/queue_registry_conformance.dart:395 queue registry scenarios (postgres) recovery rewinds below a swept gap-replay item; the refill re-enqueues every removed event -- passed, skipped
 - event_sourcing/test/test_support/queue_registry_conformance.dart:395 queue registry scenarios (postgres, runtime role) recovery rewinds below a swept gap-replay item; the refill re-enqueues every removed event -- passed
 - event_sourcing/test/test_support/queue_registry_conformance.dart:395 queue registry scenarios (sembast) recovery rewinds below a swept gap-replay item; the refill re-enqueues every removed event -- passed
@@ -3294,8 +3301,16 @@ Tests:
 - event_sourcing/test/storage/storage_backend_conformance.dart:3917 StorageBackend conformance (postgres) records beside a queue schedule round-trips registrationId and allowHardDelete -- passed, skipped
 - event_sourcing/test/storage/storage_backend_conformance.dart:3917 StorageBackend conformance (postgres, runtime role) records beside a queue schedule round-trips registrationId and allowHardDelete -- passed
 - event_sourcing/test/storage/storage_backend_conformance.dart:3917 StorageBackend conformance (sembast (memory)) records beside a queue schedule round-trips registrationId and allowHardDelete -- passed
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:443 keyed hold scenarios (postgres) a fill computed before a list changes commits nothing -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:443 keyed hold scenarios (sembast) a fill computed before a list changes commits nothing -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2636 keyed hold scenarios (postgres) a fill racing a hold keeps each key in order and enqueues each event once -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2636 keyed hold scenarios (sembast) a fill racing a hold keeps each key in order and enqueues each event once -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2678 keyed hold scenarios (postgres) a fill racing a release from another process keeps each key in order and enqueues each event once -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2678 keyed hold scenarios (sembast) a fill racing a release from another process keeps each key in order and enqueues each event once -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2737 keyed hold scenarios (postgres) a fill racing a recovery from another process keeps each key in order and enqueues each event once -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2737 keyed hold scenarios (sembast) a fill racing a recovery from another process keeps each key in order and enqueues each event once -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2779 keyed hold scenarios (postgres) a fill racing a deletion from another process enqueues nothing after the deletion, and keeps each key in order when it wins -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2779 keyed hold scenarios (sembast) a fill racing a deletion from another process enqueues nothing after the deletion, and keeps each key in order when it wins -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:541 keyed hold scenarios (postgres) a fill computed before a list changes commits nothing -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:541 keyed hold scenarios (sembast) a fill computed before a list changes commits nothing -- passed
 - event_sourcing/test/test_support/queue_registry_conformance.dart:1927 queue registry scenarios (postgres) fill compare-and-set re-registration while the transform runs -- passed, skipped
 - event_sourcing/test/test_support/queue_registry_conformance.dart:1927 queue registry scenarios (postgres, runtime role) fill compare-and-set re-registration while the transform runs -- passed
 - event_sourcing/test/test_support/queue_registry_conformance.dart:1927 queue registry scenarios (sembast) fill compare-and-set re-registration while the transform runs -- passed
@@ -3354,7 +3369,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/destinations/destination_registry.dart:1711
+- event_sourcing/lib/src/destinations/destination_registry.dart:1819
 - event_sourcing/lib/src/destinations/destination_registry.dart:25
 - event_sourcing/lib/src/storage/fifo_entry.dart:374
 - event_sourcing/lib/src/storage/queue_records.dart:10
@@ -3413,11 +3428,11 @@ Tests:
 
 Code:
 
+- event_sourcing/lib/src/sync/drain.dart:1020
+- event_sourcing/lib/src/sync/drain.dart:1035
 - event_sourcing/lib/src/sync/drain.dart:39
-- event_sourcing/lib/src/sync/drain.dart:410
-- event_sourcing/lib/src/sync/drain.dart:701
-- event_sourcing/lib/src/sync/drain.dart:944
-- event_sourcing/lib/src/sync/drain.dart:959
+- event_sourcing/lib/src/sync/drain.dart:413
+- event_sourcing/lib/src/sync/drain.dart:717
 - event_sourcing/lib/src/sync/sync_cycle.dart:12
 
 Tests:
@@ -3469,14 +3484,14 @@ Tests:
 - event_sourcing/test/test_support/drain_wedge_conformance.dart:913 drain wedge scenarios (postgres) status derivation a spent budget recorded alone wedges without a send -- passed, skipped
 - event_sourcing/test/test_support/drain_wedge_conformance.dart:913 drain wedge scenarios (postgres, runtime role) status derivation a spent budget recorded alone wedges without a send -- passed
 - event_sourcing/test/test_support/drain_wedge_conformance.dart:913 drain wedge scenarios (sembast) status derivation a spent budget recorded alone wedges without a send -- passed
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1051 keyed hold scenarios (postgres) retry-budget exhaustion on a keyed item wedges the destination -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1051 keyed hold scenarios (sembast) retry-budget exhaustion on a keyed item wedges the destination -- passed
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1077 keyed hold scenarios (postgres) a key-scoped refusal that spends the retry budget holds the key -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1077 keyed hold scenarios (sembast) a key-scoped refusal that spends the retry budget holds the key -- passed
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:865 keyed hold scenarios (postgres) SendPermanent with destination scope on a keyed item wedges as today -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:865 keyed hold scenarios (sembast) SendPermanent with destination scope on a keyed item wedges as today -- passed
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:890 keyed hold scenarios (postgres) restart after a key-scoped attempt re-derives the hold -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:890 keyed hold scenarios (sembast) restart after a key-scoped attempt re-derives the hold -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1149 keyed hold scenarios (postgres) retry-budget exhaustion on a keyed item wedges the destination -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1149 keyed hold scenarios (sembast) retry-budget exhaustion on a keyed item wedges the destination -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1175 keyed hold scenarios (postgres) a key-scoped refusal that spends the retry budget holds the key -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1175 keyed hold scenarios (sembast) a key-scoped refusal that spends the retry budget holds the key -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:963 keyed hold scenarios (postgres) SendPermanent with destination scope on a keyed item wedges as today -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:963 keyed hold scenarios (sembast) SendPermanent with destination scope on a keyed item wedges as today -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:988 keyed hold scenarios (postgres) restart after a key-scoped attempt re-derives the hold -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:988 keyed hold scenarios (sembast) restart after a key-scoped attempt re-derives the hold -- passed
 - event_sourcing/test/test_support/operator_halt_conformance.dart:1762 operator halt scenarios (postgres) unserved destinations a recorded refusal on an unregistered destination -- passed, skipped
 - event_sourcing/test/test_support/operator_halt_conformance.dart:1762 operator halt scenarios (postgres, runtime role) unserved destinations a recorded refusal on an unregistered destination -- passed
 - event_sourcing/test/test_support/operator_halt_conformance.dart:1762 operator halt scenarios (sembast) unserved destinations a recorded refusal on an unregistered destination -- passed
@@ -3494,8 +3509,8 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/destinations/destination_registry.dart:2097
-- event_sourcing/lib/src/destinations/destination_registry.dart:319
+- event_sourcing/lib/src/destinations/destination_registry.dart:2222
+- event_sourcing/lib/src/destinations/destination_registry.dart:347
 - event_sourcing/lib/src/security/system_entry_types.dart:879
 
 Tests:
@@ -4029,7 +4044,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/destinations/destination_registry.dart:1687
+- event_sourcing/lib/src/destinations/destination_registry.dart:1795
 - event_sourcing/lib/src/destinations/destination_registry.dart:34
 
 Tests:
@@ -4076,7 +4091,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/destinations/destination_registry.dart:1195
+- event_sourcing/lib/src/destinations/destination_registry.dart:1303
 - event_sourcing/lib/src/destinations/destination_registry.dart:34
 - event_sourcing/lib/src/destinations/halt_purpose.dart:1
 
@@ -4161,8 +4176,8 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/destinations/destination_registry.dart:1089
-- event_sourcing/lib/src/destinations/destination_registry.dart:1110
+- event_sourcing/lib/src/destinations/destination_registry.dart:1197
+- event_sourcing/lib/src/destinations/destination_registry.dart:1218
 - event_sourcing/lib/src/destinations/destination_registry.dart:34
 - event_sourcing/lib/src/storage/drain_records.dart:4
 - event_sourcing/lib/src/sync/sync_cycle.dart:16
@@ -4295,8 +4310,8 @@ Code:
 
 - event_sourcing/lib/src/security/system_entry_types.dart:299
 - event_sourcing/lib/src/sync/fill_batch.dart:34
-- event_sourcing/lib/src/sync/fill_batch.dart:458
-- event_sourcing/lib/src/sync/fill_batch.dart:934
+- event_sourcing/lib/src/sync/fill_batch.dart:463
+- event_sourcing/lib/src/sync/fill_batch.dart:966
 - event_sourcing/lib/src/sync/historical_replay.dart:492
 
 Tests:
@@ -4327,12 +4342,12 @@ Tests:
 - event_sourcing/test/storage/storage_backend_conformance.dart:4106 StorageBackend conformance (postgres) records beside a queue transform failure record write, overwrite, rollback and clear -- passed, skipped
 - event_sourcing/test/storage/storage_backend_conformance.dart:4106 StorageBackend conformance (postgres, runtime role) records beside a queue transform failure record write, overwrite, rollback and clear -- passed
 - event_sourcing/test/storage/storage_backend_conformance.dart:4106 StorageBackend conformance (sembast (memory)) records beside a queue transform failure record write, overwrite, rollback and clear -- passed
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:531 keyed hold scenarios (postgres) a blockKeyOf throw in the normal fill follows the transform failure record -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:531 keyed hold scenarios (sembast) a blockKeyOf throw in the normal fill follows the transform failure record -- passed
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:570 keyed hold scenarios (postgres) a blockKeyOf throw in a gap replay records a transform failure and retries -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:570 keyed hold scenarios (sembast) a blockKeyOf throw in a gap replay records a transform failure and retries -- passed
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:624 keyed hold scenarios (postgres) a transform throw in a gap replay records a transform failure and the replay completes once it recovers -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:624 keyed hold scenarios (sembast) a transform throw in a gap replay records a transform failure and the replay completes once it recovers -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:629 keyed hold scenarios (postgres) a blockKeyOf throw in the normal fill follows the transform failure record -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:629 keyed hold scenarios (sembast) a blockKeyOf throw in the normal fill follows the transform failure record -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:668 keyed hold scenarios (postgres) a blockKeyOf throw in a gap replay records a transform failure and retries -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:668 keyed hold scenarios (sembast) a blockKeyOf throw in a gap replay records a transform failure and retries -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:722 keyed hold scenarios (postgres) a transform throw in a gap replay records a transform failure and the replay completes once it recovers -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:722 keyed hold scenarios (sembast) a transform throw in a gap replay records a transform failure and the replay completes once it recovers -- passed
 - event_sourcing/test/test_support/transform_failure_conformance.dart:224 transform failure scenarios (postgres) the first failure records one time and enqueues nothing -- passed, skipped
 - event_sourcing/test/test_support/transform_failure_conformance.dart:224 transform failure scenarios (sembast) the first failure records one time and enqueues nothing -- passed
 - event_sourcing/test/test_support/transform_failure_conformance.dart:347 transform failure scenarios (postgres) the retry budget spent by attempts enqueues a transform-failed item, advances the position and clears the record -- passed, skipped
@@ -4352,7 +4367,7 @@ Code:
 
 - event_sourcing/lib/src/storage/fifo_entry.dart:367
 - event_sourcing/lib/src/sync/drain.dart:55
-- event_sourcing/lib/src/sync/drain.dart:806
+- event_sourcing/lib/src/sync/drain.dart:882
 
 Tests:
 
@@ -4368,6 +4383,120 @@ Tests:
 
 </details>
 
+### EVS-DEV-destination-key-hold-guards: Guards on a keyed destination's holds
+
+<details><summary>Evidence</summary>
+
+**A**
+
+Code:
+
+- event_sourcing/lib/src/destinations/destination.dart:147
+- event_sourcing/lib/src/destinations/destination_registry.dart:447
+- event_sourcing/lib/src/destinations/destination_schedule.dart:136
+
+Tests:
+
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2262 keyed hold scenarios (postgres) a registration that changes the key scheme while key lists exist is refused, writing only the check record -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2262 keyed hold scenarios (sembast) a registration that changes the key scheme while key lists exist is refused, writing only the check record -- passed
+
+**B**
+
+Code:
+
+- event_sourcing/lib/src/destinations/destination_registry.dart:325
+
+Tests:
+
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2322 keyed hold scenarios (postgres) a keyed destination that names no key scheme is refused before anything is written -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2322 keyed hold scenarios (sembast) a keyed destination that names no key scheme is refused before anything is written -- passed
+
+**C**
+
+Code:
+
+- event_sourcing/lib/src/destinations/destination_registry.dart:410
+
+Tests:
+
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2262 keyed hold scenarios (postgres) a registration that changes the key scheme while key lists exist is refused, writing only the check record -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2262 keyed hold scenarios (sembast) a registration that changes the key scheme while key lists exist is refused, writing only the check record -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2341 keyed hold scenarios (postgres) a process registered keyed before another registered the destination unkeyed neither fills nor holds -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2341 keyed hold scenarios (sembast) a process registered keyed before another registered the destination unkeyed neither fills nor holds -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2399 keyed hold scenarios (postgres) a process under the old key scheme does not fill past a hold the new scheme made -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2399 keyed hold scenarios (sembast) a process under the old key scheme does not fill past a hold the new scheme made -- passed
+
+**D**
+
+Code:
+
+- event_sourcing/lib/src/sync/fill_batch.dart:640
+
+Tests:
+
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2341 keyed hold scenarios (postgres) a process registered keyed before another registered the destination unkeyed neither fills nor holds -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2341 keyed hold scenarios (sembast) a process registered keyed before another registered the destination unkeyed neither fills nor holds -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2399 keyed hold scenarios (postgres) a process under the old key scheme does not fill past a hold the new scheme made -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2399 keyed hold scenarios (sembast) a process under the old key scheme does not fill past a hold the new scheme made -- passed
+
+**E**
+
+Code:
+
+- event_sourcing/lib/src/sync/drain.dart:821
+
+Tests:
+
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2341 keyed hold scenarios (postgres) a process registered keyed before another registered the destination unkeyed neither fills nor holds -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2341 keyed hold scenarios (sembast) a process registered keyed before another registered the destination unkeyed neither fills nor holds -- passed
+
+**F**
+
+Code:
+
+- event_sourcing/lib/src/sync/drain.dart:852
+
+Tests:
+
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2533 keyed hold scenarios (postgres) a hold that throws rolls back and wedges the head destination-wide -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2533 keyed hold scenarios (sembast) a hold that throws rolls back and wedges the head destination-wide -- passed
+
+**G**
+
+Code:
+
+- event_sourcing/lib/src/destinations/destination_registry.dart:1046
+
+Tests:
+
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2574 keyed hold scenarios (postgres) a recovery that cannot return a released item to its list is refused, writing only the check record -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2574 keyed hold scenarios (sembast) a recovery that cannot return a released item to its list is refused, writing only the check record -- passed
+
+**H**
+
+Code:
+
+- event_sourcing/lib/src/destinations/destination_registry.dart:2007
+
+Tests:
+
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2487 keyed hold scenarios (postgres) a re-hold by a refusal removes the key's release failure record, so the new release gets the whole budget -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2487 keyed hold scenarios (sembast) a re-hold by a refusal removes the key's release failure record, so the new release gets the whole budget -- passed
+
+**I**
+
+Code:
+
+- event_sourcing/lib/src/destinations/destination_registry.dart:410
+
+Tests:
+
+- event_sourcing/test/storage/postgres/postgres_keyed_migration_test.dart:156 a populated schema-9 queue migrated to 10 wedges destination-wide while its keyless items are pending, and holds one key once a recovery rebuilds them with keys -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2442 keyed hold scenarios (postgres) a schedule that records no keying, as on a database migrated in place, takes the keying of the next registration -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2442 keyed hold scenarios (sembast) a schedule that records no keying, as on a database migrated in place, takes the keying of the next registration -- passed
+
+</details>
+
 ### EVS-DEV-destination-key-hold: Key-scoped holds on a destination queue
 
 <details><summary>Evidence</summary>
@@ -4378,20 +4507,20 @@ Code:
 
 - event_sourcing/lib/src/sync/fill_batch.dart:50
 - event_sourcing/lib/src/sync/fill_batch.dart:61
-- event_sourcing/lib/src/sync/fill_batch.dart:706
+- event_sourcing/lib/src/sync/fill_batch.dart:738
 - event_sourcing/lib/src/sync/historical_replay.dart:142
 - event_sourcing/lib/src/sync/historical_replay.dart:254
 
 Tests:
 
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1270 keyed hold scenarios (postgres) release re-queues the list front in sequence order at the tail with released_hold_id set, and clears the list with one cleared event when emptied -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1270 keyed hold scenarios (sembast) release re-queues the list front in sequence order at the tail with released_hold_id set, and clears the list with one cleared event when emptied -- passed
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:298 keyed hold scenarios (postgres) fill stores each item's block key -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:298 keyed hold scenarios (sembast) fill stores each item's block key -- passed
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:476 keyed hold scenarios (postgres) a first-activation replay routes a listed key's events into its list -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:476 keyed hold scenarios (sembast) a first-activation replay routes a listed key's events into its list -- passed
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:499 keyed hold scenarios (postgres) a gap replay routes a listed key's events into its list -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:499 keyed hold scenarios (sembast) a gap replay routes a listed key's events into its list -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1368 keyed hold scenarios (postgres) release re-queues the list front in sequence order at the tail with released_hold_id set, and clears the list with one cleared event when emptied -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1368 keyed hold scenarios (sembast) release re-queues the list front in sequence order at the tail with released_hold_id set, and clears the list with one cleared event when emptied -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:396 keyed hold scenarios (postgres) fill stores each item's block key -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:396 keyed hold scenarios (sembast) fill stores each item's block key -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:574 keyed hold scenarios (postgres) a first-activation replay routes a listed key's events into its list -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:574 keyed hold scenarios (sembast) a first-activation replay routes a listed key's events into its list -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:597 keyed hold scenarios (postgres) a gap replay routes a listed key's events into its list -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:597 keyed hold scenarios (sembast) a gap replay routes a listed key's events into its list -- passed
 
 **B**
 
@@ -4406,15 +4535,16 @@ Code:
 Tests:
 
 - event_sourcing/test/storage/postgres/postgres_fifo_guard_test.dart:247 guard refuses UPDATE of block_key -- passed
+- event_sourcing/test/storage/postgres/postgres_keyed_migration_test.dart:156 a populated schema-9 queue migrated to 10 wedges destination-wide while its keyless items are pending, and holds one key once a recovery rebuilds them with keys -- passed
 - event_sourcing/test/storage/storage_backend_conformance.dart:1979 StorageBackend conformance (postgres) FIFO enqueue stores block_key and released_hold_id -- passed, skipped
 - event_sourcing/test/storage/storage_backend_conformance.dart:1979 StorageBackend conformance (postgres, runtime role) FIFO enqueue stores block_key and released_hold_id -- passed
 - event_sourcing/test/storage/storage_backend_conformance.dart:1979 StorageBackend conformance (sembast (memory)) FIFO enqueue stores block_key and released_hold_id -- passed
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:298 keyed hold scenarios (postgres) fill stores each item's block key -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:298 keyed hold scenarios (sembast) fill stores each item's block key -- passed
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:476 keyed hold scenarios (postgres) a first-activation replay routes a listed key's events into its list -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:476 keyed hold scenarios (sembast) a first-activation replay routes a listed key's events into its list -- passed
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:499 keyed hold scenarios (postgres) a gap replay routes a listed key's events into its list -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:499 keyed hold scenarios (sembast) a gap replay routes a listed key's events into its list -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:396 keyed hold scenarios (postgres) fill stores each item's block key -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:396 keyed hold scenarios (sembast) fill stores each item's block key -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:574 keyed hold scenarios (postgres) a first-activation replay routes a listed key's events into its list -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:574 keyed hold scenarios (sembast) a first-activation replay routes a listed key's events into its list -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:597 keyed hold scenarios (postgres) a gap replay routes a listed key's events into its list -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:597 keyed hold scenarios (sembast) a gap replay routes a listed key's events into its list -- passed
 
 **C**
 
@@ -4426,10 +4556,10 @@ Code:
 
 Tests:
 
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:331 keyed hold scenarios (postgres) a batch never mixes keys -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:331 keyed hold scenarios (sembast) a batch never mixes keys -- passed
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:353 keyed hold scenarios (postgres) events of one key batch together, keyless ones too -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:353 keyed hold scenarios (sembast) events of one key batch together, keyless ones too -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:429 keyed hold scenarios (postgres) a batch never mixes keys -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:429 keyed hold scenarios (sembast) a batch never mixes keys -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:451 keyed hold scenarios (postgres) events of one key batch together, keyless ones too -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:451 keyed hold scenarios (sembast) events of one key batch together, keyless ones too -- passed
 
 **D**
 
@@ -4445,8 +4575,8 @@ Tests:
 - event_sourcing/test/storage/storage_backend_conformance.dart:1979 StorageBackend conformance (postgres) FIFO enqueue stores block_key and released_hold_id -- passed, skipped
 - event_sourcing/test/storage/storage_backend_conformance.dart:1979 StorageBackend conformance (postgres, runtime role) FIFO enqueue stores block_key and released_hold_id -- passed
 - event_sourcing/test/storage/storage_backend_conformance.dart:1979 StorageBackend conformance (sembast (memory)) FIFO enqueue stores block_key and released_hold_id -- passed
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:318 keyed hold scenarios (postgres) a destination that is not keyed stores no block key -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:318 keyed hold scenarios (sembast) a destination that is not keyed stores no block key -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:416 keyed hold scenarios (postgres) a destination that is not keyed stores no block key -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:416 keyed hold scenarios (sembast) a destination that is not keyed stores no block key -- passed
 
 **E**
 
@@ -4457,14 +4587,14 @@ Code:
 
 Tests:
 
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:431 keyed hold scenarios (postgres) a key containing | is queued keyless -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:431 keyed hold scenarios (sembast) a key containing | is queued keyless -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:529 keyed hold scenarios (postgres) a key containing | is queued keyless -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:529 keyed hold scenarios (sembast) a key containing | is queued keyless -- passed
 
 **F**
 
 Code:
 
-- event_sourcing/lib/src/destinations/destination_registry.dart:297
+- event_sourcing/lib/src/destinations/destination_registry.dart:312
 
 Tests:
 
@@ -4485,22 +4615,23 @@ Code:
 
 Tests:
 
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:531 keyed hold scenarios (postgres) a blockKeyOf throw in the normal fill follows the transform failure record -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:531 keyed hold scenarios (sembast) a blockKeyOf throw in the normal fill follows the transform failure record -- passed
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:570 keyed hold scenarios (postgres) a blockKeyOf throw in a gap replay records a transform failure and retries -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:570 keyed hold scenarios (sembast) a blockKeyOf throw in a gap replay records a transform failure and retries -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:629 keyed hold scenarios (postgres) a blockKeyOf throw in the normal fill follows the transform failure record -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:629 keyed hold scenarios (sembast) a blockKeyOf throw in the normal fill follows the transform failure record -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:668 keyed hold scenarios (postgres) a blockKeyOf throw in a gap replay records a transform failure and retries -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:668 keyed hold scenarios (sembast) a blockKeyOf throw in a gap replay records a transform failure and retries -- passed
 
 **H**
 
 Code:
 
-- event_sourcing/lib/src/destinations/destination_registry.dart:1798
+- event_sourcing/lib/src/destinations/destination_registry.dart:1907
 - event_sourcing/lib/src/storage/queue_records.dart:822
 - event_sourcing/lib/src/storage/storage_backend.dart:1080
 - event_sourcing/lib/src/storage/storage_backend.dart:1552
 
 Tests:
 
+- event_sourcing/test/storage/postgres/postgres_keyed_migration_test.dart:156 a populated schema-9 queue migrated to 10 wedges destination-wide while its keyless items are pending, and holds one key once a recovery rebuilds them with keys -- passed
 - event_sourcing/test/storage/storage_backend_conformance.dart:2022 StorageBackend conformance (postgres) FIFO deletePendingRowsForKeyAfter deletes only that key's pending rows after the position -- passed, skipped
 - event_sourcing/test/storage/storage_backend_conformance.dart:2022 StorageBackend conformance (postgres, runtime role) FIFO deletePendingRowsForKeyAfter deletes only that key's pending rows after the position -- passed
 - event_sourcing/test/storage/storage_backend_conformance.dart:2022 StorageBackend conformance (sembast (memory)) FIFO deletePendingRowsForKeyAfter deletes only that key's pending rows after the position -- passed
@@ -4510,75 +4641,82 @@ Tests:
 - event_sourcing/test/storage/storage_backend_conformance.dart:4176 StorageBackend conformance (postgres) records beside a queue keyLists round-trip sorted and deduplicated -- passed, skipped
 - event_sourcing/test/storage/storage_backend_conformance.dart:4176 StorageBackend conformance (postgres, runtime role) records beside a queue keyLists round-trip sorted and deduplicated -- passed
 - event_sourcing/test/storage/storage_backend_conformance.dart:4176 StorageBackend conformance (sembast (memory)) records beside a queue keyLists round-trip sorted and deduplicated -- passed
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1003 keyed hold scenarios (postgres) a hold merges with an existing list in sequence order -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1003 keyed hold scenarios (sembast) a hold merges with an existing list in sequence order -- passed
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1077 keyed hold scenarios (postgres) a key-scoped refusal that spends the retry budget holds the key -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1077 keyed hold scenarios (sembast) a key-scoped refusal that spends the retry budget holds the key -- passed
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1153 keyed hold scenarios (postgres) a hold with no queue item refuses a call that does not name exactly one of a head and a failed event, or names no list -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1153 keyed hold scenarios (sembast) a hold with no queue item refuses a call that does not name exactly one of a head and a failed event, or names no list -- passed
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1488 keyed hold scenarios (postgres) a refusal of a released item re-holds the key with the remaining list behind it -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1488 keyed hold scenarios (sembast) a refusal of a released item re-holds the key with the remaining list behind it -- passed
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1532 keyed hold scenarios (postgres) a released item carries the list key even when the key evaluates otherwise at release, and its refusal holds that key again -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1532 keyed hold scenarios (sembast) a released item carries the list key even when the key evaluates otherwise at release, and its refusal holds that key again -- passed
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:659 keyed hold scenarios (postgres) SendPermanent(scope: key) holds the key -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:659 keyed hold scenarios (sembast) SendPermanent(scope: key) holds the key -- passed
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:710 keyed hold scenarios (postgres) another key's next item is sent after a hold -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:710 keyed hold scenarios (sembast) another key's next item is sent after a hold -- passed
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:735 keyed hold scenarios (postgres) the held key's later events go to its list -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:735 keyed hold scenarios (sembast) the held key's later events go to its list -- passed
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:890 keyed hold scenarios (postgres) restart after a key-scoped attempt re-derives the hold -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:890 keyed hold scenarios (sembast) restart after a key-scoped attempt re-derives the hold -- passed
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:944 keyed hold scenarios (postgres) honouring a halt by id holds a key-scoped head and wedges the next head -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:944 keyed hold scenarios (sembast) honouring a halt by id holds a key-scoped head and wedges the next head -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1042 keyed hold scenarios (postgres) honouring a halt by id holds a key-scoped head and wedges the next head -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1042 keyed hold scenarios (sembast) honouring a halt by id holds a key-scoped head and wedges the next head -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1101 keyed hold scenarios (postgres) a hold merges with an existing list in sequence order -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1101 keyed hold scenarios (sembast) a hold merges with an existing list in sequence order -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1175 keyed hold scenarios (postgres) a key-scoped refusal that spends the retry budget holds the key -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1175 keyed hold scenarios (sembast) a key-scoped refusal that spends the retry budget holds the key -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1251 keyed hold scenarios (postgres) a hold with no queue item refuses a call that does not name exactly one of a head and a failed event, or names no list -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1251 keyed hold scenarios (sembast) a hold with no queue item refuses a call that does not name exactly one of a head and a failed event, or names no list -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1586 keyed hold scenarios (postgres) a refusal of a released item re-holds the key with the remaining list behind it -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1586 keyed hold scenarios (sembast) a refusal of a released item re-holds the key with the remaining list behind it -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1630 keyed hold scenarios (postgres) a released item carries the list key even when the key evaluates otherwise at release, and its refusal holds that key again -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1630 keyed hold scenarios (sembast) a released item carries the list key even when the key evaluates otherwise at release, and its refusal holds that key again -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2636 keyed hold scenarios (postgres) a fill racing a hold keeps each key in order and enqueues each event once -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2636 keyed hold scenarios (sembast) a fill racing a hold keeps each key in order and enqueues each event once -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2843 keyed hold scenarios (postgres) a hold re-run after a serialization failure appends one hold event under one hold id -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2843 keyed hold scenarios (sembast) a hold re-run after a serialization failure appends one hold event under one hold id -- skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:757 keyed hold scenarios (postgres) SendPermanent(scope: key) holds the key -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:757 keyed hold scenarios (sembast) SendPermanent(scope: key) holds the key -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:808 keyed hold scenarios (postgres) another key's next item is sent after a hold -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:808 keyed hold scenarios (sembast) another key's next item is sent after a hold -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:833 keyed hold scenarios (postgres) the held key's later events go to its list -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:833 keyed hold scenarios (sembast) the held key's later events go to its list -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:988 keyed hold scenarios (postgres) restart after a key-scoped attempt re-derives the hold -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:988 keyed hold scenarios (sembast) restart after a key-scoped attempt re-derives the hold -- passed
 
 **I**
 
 Code:
 
 - event_sourcing/lib/src/storage/storage_backend.dart:1565
-- event_sourcing/lib/src/sync/drain.dart:785
+- event_sourcing/lib/src/sync/drain.dart:818
 
 Tests:
 
+- event_sourcing/test/storage/postgres/postgres_keyed_migration_test.dart:156 a populated schema-9 queue migrated to 10 wedges destination-wide while its keyless items are pending, and holds one key once a recovery rebuilds them with keys -- passed
 - event_sourcing/test/storage/storage_backend_conformance.dart:2196 StorageBackend conformance (postgres) FIFO hasPendingKeylessRow -- passed, skipped
 - event_sourcing/test/storage/storage_backend_conformance.dart:2196 StorageBackend conformance (postgres, runtime role) FIFO hasPendingKeylessRow -- passed
 - event_sourcing/test/storage/storage_backend_conformance.dart:2196 StorageBackend conformance (sembast (memory)) FIFO hasPendingKeylessRow -- passed
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:817 keyed hold scenarios (postgres) a key-scoped failure while any keyless pending item exists wedges the destination -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:817 keyed hold scenarios (sembast) a key-scoped failure while any keyless pending item exists wedges the destination -- passed
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:840 keyed hold scenarios (postgres) a key-scoped failure on a keyless item wedges the destination -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:840 keyed hold scenarios (sembast) a key-scoped failure on a keyless item wedges the destination -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:915 keyed hold scenarios (postgres) a key-scoped failure while any keyless pending item exists wedges the destination -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:915 keyed hold scenarios (sembast) a key-scoped failure while any keyless pending item exists wedges the destination -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:938 keyed hold scenarios (postgres) a key-scoped failure on a keyless item wedges the destination -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:938 keyed hold scenarios (sembast) a key-scoped failure on a keyless item wedges the destination -- passed
 
 **J**
 
 Code:
 
 - event_sourcing/lib/src/storage/attempt_result.dart:114
-- event_sourcing/lib/src/sync/drain.dart:1017
+- event_sourcing/lib/src/sync/drain.dart:1093
 
 Tests:
 
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:659 keyed hold scenarios (postgres) SendPermanent(scope: key) holds the key -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:659 keyed hold scenarios (sembast) SendPermanent(scope: key) holds the key -- passed
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:865 keyed hold scenarios (postgres) SendPermanent with destination scope on a keyed item wedges as today -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:865 keyed hold scenarios (sembast) SendPermanent with destination scope on a keyed item wedges as today -- passed
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:890 keyed hold scenarios (postgres) restart after a key-scoped attempt re-derives the hold -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:890 keyed hold scenarios (sembast) restart after a key-scoped attempt re-derives the hold -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:757 keyed hold scenarios (postgres) SendPermanent(scope: key) holds the key -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:757 keyed hold scenarios (sembast) SendPermanent(scope: key) holds the key -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:963 keyed hold scenarios (postgres) SendPermanent with destination scope on a keyed item wedges as today -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:963 keyed hold scenarios (sembast) SendPermanent with destination scope on a keyed item wedges as today -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:988 keyed hold scenarios (postgres) restart after a key-scoped attempt re-derives the hold -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:988 keyed hold scenarios (sembast) restart after a key-scoped attempt re-derives the hold -- passed
 
 **K**
 
 Code:
 
-- event_sourcing/lib/src/destinations/destination_registry.dart:1798
+- event_sourcing/lib/src/destinations/destination_registry.dart:1907
 - event_sourcing/lib/src/security/system_entry_types.dart:98
 
 Tests:
 
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1106 keyed hold scenarios (postgres) a hold with no queue item names the event a release failed to build -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1106 keyed hold scenarios (sembast) a hold with no queue item names the event a release failed to build -- passed
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1569 keyed hold scenarios (postgres) a release transform failure retries under the per-key record and, once the budget is spent, re-holds with cause transform_failed and row_id null, never wedging the destination -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1569 keyed hold scenarios (sembast) a release transform failure retries under the per-key record and, once the budget is spent, re-holds with cause transform_failed and row_id null, never wedging the destination -- passed
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:659 keyed hold scenarios (postgres) SendPermanent(scope: key) holds the key -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:659 keyed hold scenarios (sembast) SendPermanent(scope: key) holds the key -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1204 keyed hold scenarios (postgres) a hold with no queue item names the event a release failed to build -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1204 keyed hold scenarios (sembast) a hold with no queue item names the event a release failed to build -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1667 keyed hold scenarios (postgres) a release transform failure retries under the per-key record and, once the budget is spent, re-holds with cause transform_failed and row_id null, never wedging the destination -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1667 keyed hold scenarios (sembast) a release transform failure retries under the per-key record and, once the budget is spent, re-holds with cause transform_failed and row_id null, never wedging the destination -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2843 keyed hold scenarios (postgres) a hold re-run after a serialization failure appends one hold event under one hold id -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2843 keyed hold scenarios (sembast) a hold re-run after a serialization failure appends one hold event under one hold id -- skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:757 keyed hold scenarios (postgres) SendPermanent(scope: key) holds the key -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:757 keyed hold scenarios (sembast) SendPermanent(scope: key) holds the key -- passed
 
 **L**
 
@@ -4595,20 +4733,24 @@ Tests:
 - event_sourcing/test/storage/storage_backend_conformance.dart:4176 StorageBackend conformance (postgres) records beside a queue keyLists round-trip sorted and deduplicated -- passed, skipped
 - event_sourcing/test/storage/storage_backend_conformance.dart:4176 StorageBackend conformance (postgres, runtime role) records beside a queue keyLists round-trip sorted and deduplicated -- passed
 - event_sourcing/test/storage/storage_backend_conformance.dart:4176 StorageBackend conformance (sembast (memory)) records beside a queue keyLists round-trip sorted and deduplicated -- passed
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1456 keyed hold scenarios (postgres) events of the key arriving during release join the list -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1456 keyed hold scenarios (sembast) events of the key arriving during release join the list -- passed
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1981 keyed hold scenarios (postgres) a rewind below a list's front inserts the older event in sorted position and the release waits for the re-walk -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1981 keyed hold scenarios (sembast) a rewind below a list's front inserts the older event in sorted position and the release waits for the re-walk -- passed
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:372 keyed hold scenarios (postgres) an event of a listed key is inserted into its list, not queued, untransformed -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:372 keyed hold scenarios (sembast) an event of a listed key is inserted into its list, not queued, untransformed -- passed
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:401 keyed hold scenarios (postgres) an event routed ahead of a later listed event lands at its sequence position -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:401 keyed hold scenarios (sembast) an event routed ahead of a later listed event lands at its sequence position -- passed
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:476 keyed hold scenarios (postgres) a first-activation replay routes a listed key's events into its list -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:476 keyed hold scenarios (sembast) a first-activation replay routes a listed key's events into its list -- passed
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:499 keyed hold scenarios (postgres) a gap replay routes a listed key's events into its list -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:499 keyed hold scenarios (sembast) a gap replay routes a listed key's events into its list -- passed
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:735 keyed hold scenarios (postgres) the held key's later events go to its list -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:735 keyed hold scenarios (sembast) the held key's later events go to its list -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1554 keyed hold scenarios (postgres) events of the key arriving during release join the list -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1554 keyed hold scenarios (sembast) events of the key arriving during release join the list -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2079 keyed hold scenarios (postgres) a rewind below a list's front inserts the older event in sorted position and the release waits for the re-walk -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2079 keyed hold scenarios (sembast) a rewind below a list's front inserts the older event in sorted position and the release waits for the re-walk -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2636 keyed hold scenarios (postgres) a fill racing a hold keeps each key in order and enqueues each event once -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2636 keyed hold scenarios (sembast) a fill racing a hold keeps each key in order and enqueues each event once -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2737 keyed hold scenarios (postgres) a fill racing a recovery from another process keeps each key in order and enqueues each event once -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2737 keyed hold scenarios (sembast) a fill racing a recovery from another process keeps each key in order and enqueues each event once -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:470 keyed hold scenarios (postgres) an event of a listed key is inserted into its list, not queued, untransformed -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:470 keyed hold scenarios (sembast) an event of a listed key is inserted into its list, not queued, untransformed -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:499 keyed hold scenarios (postgres) an event routed ahead of a later listed event lands at its sequence position -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:499 keyed hold scenarios (sembast) an event routed ahead of a later listed event lands at its sequence position -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:574 keyed hold scenarios (postgres) a first-activation replay routes a listed key's events into its list -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:574 keyed hold scenarios (sembast) a first-activation replay routes a listed key's events into its list -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:597 keyed hold scenarios (postgres) a gap replay routes a listed key's events into its list -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:597 keyed hold scenarios (sembast) a gap replay routes a listed key's events into its list -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:833 keyed hold scenarios (postgres) the held key's later events go to its list -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:833 keyed hold scenarios (sembast) the held key's later events go to its list -- passed
 
 **M**
 
@@ -4623,66 +4765,72 @@ Tests:
 - event_sourcing/test/storage/storage_backend_conformance.dart:4176 StorageBackend conformance (postgres) records beside a queue keyLists round-trip sorted and deduplicated -- passed, skipped
 - event_sourcing/test/storage/storage_backend_conformance.dart:4176 StorageBackend conformance (postgres, runtime role) records beside a queue keyLists round-trip sorted and deduplicated -- passed
 - event_sourcing/test/storage/storage_backend_conformance.dart:4176 StorageBackend conformance (sembast (memory)) records beside a queue keyLists round-trip sorted and deduplicated -- passed
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1981 keyed hold scenarios (postgres) a rewind below a list's front inserts the older event in sorted position and the release waits for the re-walk -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1981 keyed hold scenarios (sembast) a rewind below a list's front inserts the older event in sorted position and the release waits for the re-walk -- passed
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:417 keyed hold scenarios (postgres) an event its list already holds leaves the list unchanged -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:417 keyed hold scenarios (sembast) an event its list already holds leaves the list unchanged -- passed
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:499 keyed hold scenarios (postgres) a gap replay routes a listed key's events into its list -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:499 keyed hold scenarios (sembast) a gap replay routes a listed key's events into its list -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2079 keyed hold scenarios (postgres) a rewind below a list's front inserts the older event in sorted position and the release waits for the re-walk -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2079 keyed hold scenarios (sembast) a rewind below a list's front inserts the older event in sorted position and the release waits for the re-walk -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:515 keyed hold scenarios (postgres) an event its list already holds leaves the list unchanged -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:515 keyed hold scenarios (sembast) an event its list already holds leaves the list unchanged -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:597 keyed hold scenarios (postgres) a gap replay routes a listed key's events into its list -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:597 keyed hold scenarios (sembast) a gap replay routes a listed key's events into its list -- passed
 
 **N**
 
 Code:
 
-- event_sourcing/lib/src/destinations/destination_registry.dart:1290
+- event_sourcing/lib/src/destinations/destination_registry.dart:1398
 
 Tests:
 
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1251 keyed hold scenarios (postgres) releaseHold with a stale holdId returns Stale -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1251 keyed hold scenarios (sembast) releaseHold with a stale holdId returns Stale -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1349 keyed hold scenarios (postgres) releaseHold with a stale holdId returns Stale -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1349 keyed hold scenarios (sembast) releaseHold with a stale holdId returns Stale -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2678 keyed hold scenarios (postgres) a fill racing a release from another process keeps each key in order and enqueues each event once -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2678 keyed hold scenarios (sembast) a fill racing a release from another process keeps each key in order and enqueues each event once -- passed
 
 **O**
 
 Code:
 
-- event_sourcing/lib/src/destinations/destination_registry.dart:1290
+- event_sourcing/lib/src/destinations/destination_registry.dart:1398
 - event_sourcing/lib/src/security/system_entry_types.dart:104
 
 Tests:
 
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1196 keyed hold scenarios (postgres) releaseHold moves the list to releasing and appends one release event -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1196 keyed hold scenarios (sembast) releaseHold moves the list to releasing and appends one release event -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1294 keyed hold scenarios (postgres) releaseHold moves the list to releasing and appends one release event -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1294 keyed hold scenarios (sembast) releaseHold moves the list to releasing and appends one release event -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2678 keyed hold scenarios (postgres) a fill racing a release from another process keeps each key in order and enqueues each event once -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2678 keyed hold scenarios (sembast) a fill racing a release from another process keeps each key in order and enqueues each event once -- passed
 
 **P**
 
 Code:
 
-- event_sourcing/lib/src/destinations/destination_registry.dart:1290
+- event_sourcing/lib/src/destinations/destination_registry.dart:1398
 
 Tests:
 
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1230 keyed hold scenarios (postgres) releaseHold twice with one holdId returns AlreadyReleasing and appends nothing -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1230 keyed hold scenarios (sembast) releaseHold twice with one holdId returns AlreadyReleasing and appends nothing -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1328 keyed hold scenarios (postgres) releaseHold twice with one holdId returns AlreadyReleasing and appends nothing -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1328 keyed hold scenarios (sembast) releaseHold twice with one holdId returns AlreadyReleasing and appends nothing -- passed
 
 **Q**
 
 Code:
 
 - event_sourcing/lib/src/sync/fill_batch.dart:61
-- event_sourcing/lib/src/sync/fill_batch.dart:706
+- event_sourcing/lib/src/sync/fill_batch.dart:738
 
 Tests:
 
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1270 keyed hold scenarios (postgres) release re-queues the list front in sequence order at the tail with released_hold_id set, and clears the list with one cleared event when emptied -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1270 keyed hold scenarios (sembast) release re-queues the list front in sequence order at the tail with released_hold_id set, and clears the list with one cleared event when emptied -- passed
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1400 keyed hold scenarios (postgres) release waits while the fill position is below the list front or a replay request is pending -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1400 keyed hold scenarios (sembast) release waits while the fill position is below the list front or a replay request is pending -- passed
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1456 keyed hold scenarios (postgres) events of the key arriving during release join the list -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1456 keyed hold scenarios (sembast) events of the key arriving during release join the list -- passed
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1532 keyed hold scenarios (postgres) a released item carries the list key even when the key evaluates otherwise at release, and its refusal holds that key again -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1532 keyed hold scenarios (sembast) a released item carries the list key even when the key evaluates otherwise at release, and its refusal holds that key again -- passed
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1981 keyed hold scenarios (postgres) a rewind below a list's front inserts the older event in sorted position and the release waits for the re-walk -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1981 keyed hold scenarios (sembast) a rewind below a list's front inserts the older event in sorted position and the release waits for the re-walk -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1368 keyed hold scenarios (postgres) release re-queues the list front in sequence order at the tail with released_hold_id set, and clears the list with one cleared event when emptied -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1368 keyed hold scenarios (sembast) release re-queues the list front in sequence order at the tail with released_hold_id set, and clears the list with one cleared event when emptied -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1498 keyed hold scenarios (postgres) release waits while the fill position is below the list front or a replay request is pending -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1498 keyed hold scenarios (sembast) release waits while the fill position is below the list front or a replay request is pending -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1554 keyed hold scenarios (postgres) events of the key arriving during release join the list -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1554 keyed hold scenarios (sembast) events of the key arriving during release join the list -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1630 keyed hold scenarios (postgres) a released item carries the list key even when the key evaluates otherwise at release, and its refusal holds that key again -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1630 keyed hold scenarios (sembast) a released item carries the list key even when the key evaluates otherwise at release, and its refusal holds that key again -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2079 keyed hold scenarios (postgres) a rewind below a list's front inserts the older event in sorted position and the release waits for the re-walk -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2079 keyed hold scenarios (sembast) a rewind below a list's front inserts the older event in sorted position and the release waits for the re-walk -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2678 keyed hold scenarios (postgres) a fill racing a release from another process keeps each key in order and enqueues each event once -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2678 keyed hold scenarios (sembast) a fill racing a release from another process keeps each key in order and enqueues each event once -- passed
 
 **R**
 
@@ -4691,7 +4839,7 @@ Code:
 - event_sourcing/lib/src/storage/fifo_entry.dart:402
 - event_sourcing/lib/src/storage/storage_backend.dart:754
 - event_sourcing/lib/src/sync/fill_batch.dart:61
-- event_sourcing/lib/src/sync/fill_batch.dart:706
+- event_sourcing/lib/src/sync/fill_batch.dart:738
 
 Tests:
 
@@ -4699,10 +4847,10 @@ Tests:
 - event_sourcing/test/storage/storage_backend_conformance.dart:1979 StorageBackend conformance (postgres) FIFO enqueue stores block_key and released_hold_id -- passed, skipped
 - event_sourcing/test/storage/storage_backend_conformance.dart:1979 StorageBackend conformance (postgres, runtime role) FIFO enqueue stores block_key and released_hold_id -- passed
 - event_sourcing/test/storage/storage_backend_conformance.dart:1979 StorageBackend conformance (sembast (memory)) FIFO enqueue stores block_key and released_hold_id -- passed
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1270 keyed hold scenarios (postgres) release re-queues the list front in sequence order at the tail with released_hold_id set, and clears the list with one cleared event when emptied -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1270 keyed hold scenarios (sembast) release re-queues the list front in sequence order at the tail with released_hold_id set, and clears the list with one cleared event when emptied -- passed
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1532 keyed hold scenarios (postgres) a released item carries the list key even when the key evaluates otherwise at release, and its refusal holds that key again -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1532 keyed hold scenarios (sembast) a released item carries the list key even when the key evaluates otherwise at release, and its refusal holds that key again -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1368 keyed hold scenarios (postgres) release re-queues the list front in sequence order at the tail with released_hold_id set, and clears the list with one cleared event when emptied -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1368 keyed hold scenarios (sembast) release re-queues the list front in sequence order at the tail with released_hold_id set, and clears the list with one cleared event when emptied -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1630 keyed hold scenarios (postgres) a released item carries the list key even when the key evaluates otherwise at release, and its refusal holds that key again -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1630 keyed hold scenarios (sembast) a released item carries the list key even when the key evaluates otherwise at release, and its refusal holds that key again -- passed
 
 **S**
 
@@ -4717,39 +4865,39 @@ Tests:
 - event_sourcing/test/storage/storage_backend_conformance.dart:1979 StorageBackend conformance (postgres) FIFO enqueue stores block_key and released_hold_id -- passed, skipped
 - event_sourcing/test/storage/storage_backend_conformance.dart:1979 StorageBackend conformance (postgres, runtime role) FIFO enqueue stores block_key and released_hold_id -- passed
 - event_sourcing/test/storage/storage_backend_conformance.dart:1979 StorageBackend conformance (sembast (memory)) FIFO enqueue stores block_key and released_hold_id -- passed
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1270 keyed hold scenarios (postgres) release re-queues the list front in sequence order at the tail with released_hold_id set, and clears the list with one cleared event when emptied -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1270 keyed hold scenarios (sembast) release re-queues the list front in sequence order at the tail with released_hold_id set, and clears the list with one cleared event when emptied -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1368 keyed hold scenarios (postgres) release re-queues the list front in sequence order at the tail with released_hold_id set, and clears the list with one cleared event when emptied -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1368 keyed hold scenarios (sembast) release re-queues the list front in sequence order at the tail with released_hold_id set, and clears the list with one cleared event when emptied -- passed
 
 **T**
 
 Code:
 
-- event_sourcing/lib/src/destinations/destination_registry.dart:1927
+- event_sourcing/lib/src/destinations/destination_registry.dart:2047
 - event_sourcing/lib/src/security/system_entry_types.dart:111
 - event_sourcing/lib/src/sync/fill_batch.dart:61
-- event_sourcing/lib/src/sync/fill_batch.dart:706
+- event_sourcing/lib/src/sync/fill_batch.dart:738
 
 Tests:
 
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1270 keyed hold scenarios (postgres) release re-queues the list front in sequence order at the tail with released_hold_id set, and clears the list with one cleared event when emptied -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1270 keyed hold scenarios (sembast) release re-queues the list front in sequence order at the tail with released_hold_id set, and clears the list with one cleared event when emptied -- passed
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1323 keyed hold scenarios (postgres) a peer database's hold and clearing events under the same hold id leave the clearing and a recovery to this database -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1323 keyed hold scenarios (sembast) a peer database's hold and clearing events under the same hold id leave the clearing and a recovery to this database -- passed
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:2059 keyed hold scenarios (postgres) an existing list keeps its state and hold id; a missing list is created releasing under the item's released_hold_id; emptying it appends a cleared event only if none exists for that hold id -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:2059 keyed hold scenarios (sembast) an existing list keeps its state and hold id; a missing list is created releasing under the item's released_hold_id; emptying it appends a cleared event only if none exists for that hold id -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1368 keyed hold scenarios (postgres) release re-queues the list front in sequence order at the tail with released_hold_id set, and clears the list with one cleared event when emptied -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1368 keyed hold scenarios (sembast) release re-queues the list front in sequence order at the tail with released_hold_id set, and clears the list with one cleared event when emptied -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1421 keyed hold scenarios (postgres) a peer database's hold and clearing events under the same hold id leave the clearing and a recovery to this database -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1421 keyed hold scenarios (sembast) a peer database's hold and clearing events under the same hold id leave the clearing and a recovery to this database -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2157 keyed hold scenarios (postgres) an existing list keeps its state and hold id; a missing list is created releasing under the item's released_hold_id; emptying it appends a cleared event only if none exists for that hold id -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2157 keyed hold scenarios (sembast) an existing list keeps its state and hold id; a missing list is created releasing under the item's released_hold_id; emptying it appends a cleared event only if none exists for that hold id -- passed
 
 **U**
 
 Code:
 
-- event_sourcing/lib/src/destinations/destination_registry.dart:1933
+- event_sourcing/lib/src/destinations/destination_registry.dart:2053
 
 Tests:
 
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1323 keyed hold scenarios (postgres) a peer database's hold and clearing events under the same hold id leave the clearing and a recovery to this database -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1323 keyed hold scenarios (sembast) a peer database's hold and clearing events under the same hold id leave the clearing and a recovery to this database -- passed
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:2059 keyed hold scenarios (postgres) an existing list keeps its state and hold id; a missing list is created releasing under the item's released_hold_id; emptying it appends a cleared event only if none exists for that hold id -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:2059 keyed hold scenarios (sembast) an existing list keeps its state and hold id; a missing list is created releasing under the item's released_hold_id; emptying it appends a cleared event only if none exists for that hold id -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1421 keyed hold scenarios (postgres) a peer database's hold and clearing events under the same hold id leave the clearing and a recovery to this database -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1421 keyed hold scenarios (sembast) a peer database's hold and clearing events under the same hold id leave the clearing and a recovery to this database -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2157 keyed hold scenarios (postgres) an existing list keeps its state and hold id; a missing list is created releasing under the item's released_hold_id; emptying it appends a cleared event only if none exists for that hold id -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2157 keyed hold scenarios (sembast) an existing list keeps its state and hold id; a missing list is created releasing under the item's released_hold_id; emptying it appends a cleared event only if none exists for that hold id -- passed
 
 **V**
 
@@ -4759,8 +4907,8 @@ Code:
 
 Tests:
 
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1632 keyed hold scenarios (postgres) release runs while the destination's window is dormant or ended -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1632 keyed hold scenarios (sembast) release runs while the destination's window is dormant or ended -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1730 keyed hold scenarios (postgres) release runs while the destination's window is dormant or ended -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1730 keyed hold scenarios (sembast) release runs while the destination's window is dormant or ended -- passed
 
 **W**
 
@@ -4769,55 +4917,58 @@ Code:
 - event_sourcing/lib/src/storage/queue_records.dart:953
 - event_sourcing/lib/src/storage/storage_backend.dart:1102
 - event_sourcing/lib/src/sync/fill_batch.dart:61
-- event_sourcing/lib/src/sync/fill_batch.dart:706
+- event_sourcing/lib/src/sync/fill_batch.dart:738
 
 Tests:
 
 - event_sourcing/test/storage/storage_backend_conformance.dart:4243 StorageBackend conformance (postgres) records beside a queue release failures write, overwrite, rollback and clear -- passed, skipped
 - event_sourcing/test/storage/storage_backend_conformance.dart:4243 StorageBackend conformance (postgres, runtime role) records beside a queue release failures write, overwrite, rollback and clear -- passed
 - event_sourcing/test/storage/storage_backend_conformance.dart:4243 StorageBackend conformance (sembast (memory)) records beside a queue release failures write, overwrite, rollback and clear -- passed
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1106 keyed hold scenarios (postgres) a hold with no queue item names the event a release failed to build -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1106 keyed hold scenarios (sembast) a hold with no queue item names the event a release failed to build -- passed
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1569 keyed hold scenarios (postgres) a release transform failure retries under the per-key record and, once the budget is spent, re-holds with cause transform_failed and row_id null, never wedging the destination -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1569 keyed hold scenarios (sembast) a release transform failure retries under the per-key record and, once the budget is spent, re-holds with cause transform_failed and row_id null, never wedging the destination -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1204 keyed hold scenarios (postgres) a hold with no queue item names the event a release failed to build -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1204 keyed hold scenarios (sembast) a hold with no queue item names the event a release failed to build -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1667 keyed hold scenarios (postgres) a release transform failure retries under the per-key record and, once the budget is spent, re-holds with cause transform_failed and row_id null, never wedging the destination -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1667 keyed hold scenarios (sembast) a release transform failure retries under the per-key record and, once the budget is spent, re-holds with cause transform_failed and row_id null, never wedging the destination -- passed
 
 **X**
 
 Code:
 
-- event_sourcing/lib/src/destinations/destination_registry.dart:1983
-- event_sourcing/lib/src/destinations/destination_registry.dart:994
+- event_sourcing/lib/src/destinations/destination_registry.dart:1088
+- event_sourcing/lib/src/destinations/destination_registry.dart:2105
 
 Tests:
 
 - event_sourcing/test/ops/tombstone_and_refill_test.dart:500 tombstoneAndRefill() a swept released item returns to its key list and does not count toward the rewind -- passed
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1323 keyed hold scenarios (postgres) a peer database's hold and clearing events under the same hold id leave the clearing and a recovery to this database -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1323 keyed hold scenarios (sembast) a peer database's hold and clearing events under the same hold id leave the clearing and a recovery to this database -- passed
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1714 keyed hold scenarios (postgres) a recovery returns swept released items to their key lists and does not rewind for them -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1714 keyed hold scenarios (sembast) a recovery returns swept released items to their key lists and does not rewind for them -- passed
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1792 keyed hold scenarios (postgres) a recovery whose wedged head was itself released returns it to its list -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1792 keyed hold scenarios (sembast) a recovery whose wedged head was itself released returns it to its list -- passed
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1862 keyed hold scenarios (postgres) with only released items swept, the cursor is not rewound -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1862 keyed hold scenarios (sembast) with only released items swept, the cursor is not rewound -- passed
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:2059 keyed hold scenarios (postgres) an existing list keeps its state and hold id; a missing list is created releasing under the item's released_hold_id; emptying it appends a cleared event only if none exists for that hold id -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:2059 keyed hold scenarios (sembast) an existing list keeps its state and hold id; a missing list is created releasing under the item's released_hold_id; emptying it appends a cleared event only if none exists for that hold id -- passed
+- event_sourcing/test/storage/postgres/postgres_keyed_migration_test.dart:156 a populated schema-9 queue migrated to 10 wedges destination-wide while its keyless items are pending, and holds one key once a recovery rebuilds them with keys -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1421 keyed hold scenarios (postgres) a peer database's hold and clearing events under the same hold id leave the clearing and a recovery to this database -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1421 keyed hold scenarios (sembast) a peer database's hold and clearing events under the same hold id leave the clearing and a recovery to this database -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1812 keyed hold scenarios (postgres) a recovery returns swept released items to their key lists and does not rewind for them -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1812 keyed hold scenarios (sembast) a recovery returns swept released items to their key lists and does not rewind for them -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1890 keyed hold scenarios (postgres) a recovery whose wedged head was itself released returns it to its list -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1890 keyed hold scenarios (sembast) a recovery whose wedged head was itself released returns it to its list -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1960 keyed hold scenarios (postgres) with only released items swept, the cursor is not rewound -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1960 keyed hold scenarios (sembast) with only released items swept, the cursor is not rewound -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2157 keyed hold scenarios (postgres) an existing list keeps its state and hold id; a missing list is created releasing under the item's released_hold_id; emptying it appends a cleared event only if none exists for that hold id -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2157 keyed hold scenarios (sembast) an existing list keeps its state and hold id; a missing list is created releasing under the item's released_hold_id; emptying it appends a cleared event only if none exists for that hold id -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2737 keyed hold scenarios (postgres) a fill racing a recovery from another process keeps each key in order and enqueues each event once -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2737 keyed hold scenarios (sembast) a fill racing a recovery from another process keeps each key in order and enqueues each event once -- passed
 
 **Y**
 
 Code:
 
-- event_sourcing/lib/src/destinations/destination_registry.dart:1580
+- event_sourcing/lib/src/destinations/destination_registry.dart:1688
 
 Tests:
 
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:944 keyed hold scenarios (postgres) honouring a halt by id holds a key-scoped head and wedges the next head -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:944 keyed hold scenarios (sembast) honouring a halt by id holds a key-scoped head and wedges the next head -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1042 keyed hold scenarios (postgres) honouring a halt by id holds a key-scoped head and wedges the next head -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1042 keyed hold scenarios (sembast) honouring a halt by id holds a key-scoped head and wedges the next head -- passed
 
 **Z**
 
 Code:
 
-- event_sourcing/lib/src/destinations/destination_registry.dart:1107
+- event_sourcing/lib/src/destinations/destination_registry.dart:1215
 
 Tests:
 
@@ -4835,8 +4986,8 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/sync/drain.dart:893
-- event_sourcing/lib/src/sync/drain.dart:914
+- event_sourcing/lib/src/sync/drain.dart:969
+- event_sourcing/lib/src/sync/drain.dart:990
 
 Tests:
 
@@ -4857,7 +5008,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/sync/drain.dart:915
+- event_sourcing/lib/src/sync/drain.dart:991
 - event_sourcing/lib/src/sync/fill_batch.dart:56
 - event_sourcing/lib/src/sync/historical_replay.dart:364
 
@@ -4876,7 +5027,7 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/storage/send_result.dart:143
-- event_sourcing/lib/src/sync/drain.dart:351
+- event_sourcing/lib/src/sync/drain.dart:354
 
 Tests:
 
@@ -4890,7 +5041,7 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/storage/send_result.dart:144
-- event_sourcing/lib/src/sync/drain.dart:352
+- event_sourcing/lib/src/sync/drain.dart:355
 
 Tests:
 
@@ -4902,37 +5053,37 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/sync/fill_batch.dart:707
 - event_sourcing/lib/src/sync/fill_batch.dart:71
+- event_sourcing/lib/src/sync/fill_batch.dart:739
 
 Tests:
 
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1569 keyed hold scenarios (postgres) a release transform failure retries under the per-key record and, once the budget is spent, re-holds with cause transform_failed and row_id null, never wedging the destination -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1569 keyed hold scenarios (sembast) a release transform failure retries under the per-key record and, once the budget is spent, re-holds with cause transform_failed and row_id null, never wedging the destination -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1667 keyed hold scenarios (postgres) a release transform failure retries under the per-key record and, once the budget is spent, re-holds with cause transform_failed and row_id null, never wedging the destination -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1667 keyed hold scenarios (sembast) a release transform failure retries under the per-key record and, once the budget is spent, re-holds with cause transform_failed and row_id null, never wedging the destination -- passed
 
 **F**
 
 Code:
 
-- event_sourcing/lib/src/sync/fill_batch.dart:707
 - event_sourcing/lib/src/sync/fill_batch.dart:71
+- event_sourcing/lib/src/sync/fill_batch.dart:739
 
 Tests:
 
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1569 keyed hold scenarios (postgres) a release transform failure retries under the per-key record and, once the budget is spent, re-holds with cause transform_failed and row_id null, never wedging the destination -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1569 keyed hold scenarios (sembast) a release transform failure retries under the per-key record and, once the budget is spent, re-holds with cause transform_failed and row_id null, never wedging the destination -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1667 keyed hold scenarios (postgres) a release transform failure retries under the per-key record and, once the budget is spent, re-holds with cause transform_failed and row_id null, never wedging the destination -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1667 keyed hold scenarios (sembast) a release transform failure retries under the per-key record and, once the budget is spent, re-holds with cause transform_failed and row_id null, never wedging the destination -- passed
 
 **G**
 
 Code:
 
-- event_sourcing/lib/src/sync/fill_batch.dart:707
 - event_sourcing/lib/src/sync/fill_batch.dart:71
+- event_sourcing/lib/src/sync/fill_batch.dart:739
 
 Tests:
 
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1569 keyed hold scenarios (postgres) a release transform failure retries under the per-key record and, once the budget is spent, re-holds with cause transform_failed and row_id null, never wedging the destination -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1569 keyed hold scenarios (sembast) a release transform failure retries under the per-key record and, once the budget is spent, re-holds with cause transform_failed and row_id null, never wedging the destination -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1667 keyed hold scenarios (postgres) a release transform failure retries under the per-key record and, once the budget is spent, re-holds with cause transform_failed and row_id null, never wedging the destination -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1667 keyed hold scenarios (sembast) a release transform failure retries under the per-key record and, once the budget is spent, re-holds with cause transform_failed and row_id null, never wedging the destination -- passed
 
 </details>
 
@@ -8016,9 +8167,9 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/destinations/destination_registry.dart:1743
-- event_sourcing/lib/src/destinations/destination_registry.dart:1916
-- event_sourcing/lib/src/destinations/destination_registry.dart:1966
+- event_sourcing/lib/src/destinations/destination_registry.dart:1851
+- event_sourcing/lib/src/destinations/destination_registry.dart:2036
+- event_sourcing/lib/src/destinations/destination_registry.dart:2086
 - event_sourcing/lib/src/event_store.dart:2227
 - event_sourcing/lib/src/event_store.dart:3609
 - event_sourcing/lib/src/projections/interpreter/projection_interpreter.dart:174
@@ -8029,7 +8180,7 @@ Code:
 - event_sourcing/lib/src/storage/sembast_backend.dart:527
 - event_sourcing/lib/src/storage/storage_backend.dart:215
 - event_sourcing/lib/src/storage/storage_backend.dart:648
-- event_sourcing/lib/src/sync/drain.dart:1673
+- event_sourcing/lib/src/sync/drain.dart:1749
 - event_sourcing/lib/src/sync/succession_restore.dart:406
 
 Tests:
@@ -8799,12 +8950,12 @@ Tests:
 Code:
 
 - event_sourcing/lib/src/destinations/destination.dart:117
-- event_sourcing/lib/src/destinations/destination.dart:128
+- event_sourcing/lib/src/destinations/destination.dart:135
 - event_sourcing/lib/src/storage/send_result.dart:95
 
 Tests:
 
-- none
+- event_sourcing/test/storage/postgres/postgres_keyed_migration_test.dart:156 a populated schema-9 queue migrated to 10 wedges destination-wide while its keyless items are pending, and holds one key once a recovery rebuilds them with keys -- passed
 
 **B**
 
@@ -8814,19 +8965,30 @@ Code:
 
 Tests:
 
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1677 keyed hold scenarios (postgres) no other key's delivered event is sent again by a release -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1677 keyed hold scenarios (sembast) no other key's delivered event is sent again by a release -- passed
+- event_sourcing/test/storage/postgres/postgres_keyed_migration_test.dart:156 a populated schema-9 queue migrated to 10 wedges destination-wide while its keyless items are pending, and holds one key once a recovery rebuilds them with keys -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1775 keyed hold scenarios (postgres) no other key's delivered event is sent again by a release -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1775 keyed hold scenarios (sembast) no other key's delivered event is sent again by a release -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2636 keyed hold scenarios (postgres) a fill racing a hold keeps each key in order and enqueues each event once -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2636 keyed hold scenarios (sembast) a fill racing a hold keeps each key in order and enqueues each event once -- passed
 
 **C**
 
 Code:
 
-- event_sourcing/lib/src/sync/fill_batch.dart:708
+- event_sourcing/lib/src/sync/fill_batch.dart:740
 
 Tests:
 
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1270 keyed hold scenarios (postgres) release re-queues the list front in sequence order at the tail with released_hold_id set, and clears the list with one cleared event when emptied -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1270 keyed hold scenarios (sembast) release re-queues the list front in sequence order at the tail with released_hold_id set, and clears the list with one cleared event when emptied -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1368 keyed hold scenarios (postgres) release re-queues the list front in sequence order at the tail with released_hold_id set, and clears the list with one cleared event when emptied -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1368 keyed hold scenarios (sembast) release re-queues the list front in sequence order at the tail with released_hold_id set, and clears the list with one cleared event when emptied -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2341 keyed hold scenarios (postgres) a process registered keyed before another registered the destination unkeyed neither fills nor holds -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2341 keyed hold scenarios (sembast) a process registered keyed before another registered the destination unkeyed neither fills nor holds -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2399 keyed hold scenarios (postgres) a process under the old key scheme does not fill past a hold the new scheme made -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2399 keyed hold scenarios (sembast) a process under the old key scheme does not fill past a hold the new scheme made -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2636 keyed hold scenarios (postgres) a fill racing a hold keeps each key in order and enqueues each event once -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2636 keyed hold scenarios (sembast) a fill racing a hold keeps each key in order and enqueues each event once -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2678 keyed hold scenarios (postgres) a fill racing a release from another process keeps each key in order and enqueues each event once -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2678 keyed hold scenarios (sembast) a fill racing a release from another process keeps each key in order and enqueues each event once -- passed
 
 **D**
 
@@ -8836,32 +8998,34 @@ Code:
 
 Tests:
 
-- none
+- event_sourcing/test/storage/postgres/postgres_keyed_migration_test.dart:156 a populated schema-9 queue migrated to 10 wedges destination-wide while its keyless items are pending, and holds one key once a recovery rebuilds them with keys -- passed
 
 **E**
 
 Code:
 
-- event_sourcing/lib/src/destinations/destination_registry.dart:1295
-- event_sourcing/lib/src/sync/fill_batch.dart:708
+- event_sourcing/lib/src/destinations/destination_registry.dart:1403
+- event_sourcing/lib/src/sync/fill_batch.dart:740
 
 Tests:
 
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1270 keyed hold scenarios (postgres) release re-queues the list front in sequence order at the tail with released_hold_id set, and clears the list with one cleared event when emptied -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1270 keyed hold scenarios (sembast) release re-queues the list front in sequence order at the tail with released_hold_id set, and clears the list with one cleared event when emptied -- passed
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1677 keyed hold scenarios (postgres) no other key's delivered event is sent again by a release -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1677 keyed hold scenarios (sembast) no other key's delivered event is sent again by a release -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1368 keyed hold scenarios (postgres) release re-queues the list front in sequence order at the tail with released_hold_id set, and clears the list with one cleared event when emptied -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1368 keyed hold scenarios (sembast) release re-queues the list front in sequence order at the tail with released_hold_id set, and clears the list with one cleared event when emptied -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1775 keyed hold scenarios (postgres) no other key's delivered event is sent again by a release -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1775 keyed hold scenarios (sembast) no other key's delivered event is sent again by a release -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2678 keyed hold scenarios (postgres) a fill racing a release from another process keeps each key in order and enqueues each event once -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2678 keyed hold scenarios (sembast) a fill racing a release from another process keeps each key in order and enqueues each event once -- passed
 
 **F**
 
 Code:
 
-- event_sourcing/lib/src/sync/fill_batch.dart:708
+- event_sourcing/lib/src/sync/fill_batch.dart:740
 
 Tests:
 
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1569 keyed hold scenarios (postgres) a release transform failure retries under the per-key record and, once the budget is spent, re-holds with cause transform_failed and row_id null, never wedging the destination -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1569 keyed hold scenarios (sembast) a release transform failure retries under the per-key record and, once the budget is spent, re-holds with cause transform_failed and row_id null, never wedging the destination -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1667 keyed hold scenarios (postgres) a release transform failure retries under the per-key record and, once the budget is spent, re-holds with cause transform_failed and row_id null, never wedging the destination -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1667 keyed hold scenarios (sembast) a release transform failure retries under the per-key record and, once the budget is spent, re-holds with cause transform_failed and row_id null, never wedging the destination -- passed
 
 **G**
 
@@ -8887,24 +9051,24 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/destinations/destination_registry.dart:1295
+- event_sourcing/lib/src/destinations/destination_registry.dart:1403
 
 Tests:
 
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1196 keyed hold scenarios (postgres) releaseHold moves the list to releasing and appends one release event -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1196 keyed hold scenarios (sembast) releaseHold moves the list to releasing and appends one release event -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1294 keyed hold scenarios (postgres) releaseHold moves the list to releasing and appends one release event -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1294 keyed hold scenarios (sembast) releaseHold moves the list to releasing and appends one release event -- passed
 
 **J**
 
 Code:
 
-- event_sourcing/lib/src/destinations/destination_registry.dart:1930
-- event_sourcing/lib/src/sync/fill_batch.dart:708
+- event_sourcing/lib/src/destinations/destination_registry.dart:2050
+- event_sourcing/lib/src/sync/fill_batch.dart:740
 
 Tests:
 
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1270 keyed hold scenarios (postgres) release re-queues the list front in sequence order at the tail with released_hold_id set, and clears the list with one cleared event when emptied -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1270 keyed hold scenarios (sembast) release re-queues the list front in sequence order at the tail with released_hold_id set, and clears the list with one cleared event when emptied -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1368 keyed hold scenarios (postgres) release re-queues the list front in sequence order at the tail with released_hold_id set, and clears the list with one cleared event when emptied -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1368 keyed hold scenarios (sembast) release re-queues the list front in sequence order at the tail with released_hold_id set, and clears the list with one cleared event when emptied -- passed
 
 **K**
 
@@ -8925,12 +9089,23 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/destinations/destination_registry.dart:357
+- event_sourcing/lib/src/destinations/destination_registry.dart:385
 
 Tests:
 
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:756 keyed hold scenarios (postgres) a destination registered without a key while it has key lists is refused, and registers once they are deleted -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:756 keyed hold scenarios (sembast) a destination registered without a key while it has key lists is refused, and registers once they are deleted -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:854 keyed hold scenarios (postgres) a destination registered without a key while it has key lists is refused, and registers once they are deleted -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:854 keyed hold scenarios (sembast) a destination registered without a key while it has key lists is refused, and registers once they are deleted -- passed
+
+**M**
+
+Code:
+
+- event_sourcing/lib/src/destinations/destination_registry.dart:411
+
+Tests:
+
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2262 keyed hold scenarios (postgres) a registration that changes the key scheme while key lists exist is refused, writing only the check record -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2262 keyed hold scenarios (sembast) a registration that changes the key scheme while key lists exist is refused, writing only the check record -- passed
 
 </details>
 
@@ -8956,7 +9131,7 @@ Tests:
 
 - event_sourcing/example/test/app_state_test.dart:125 AppState destination registry binding addDestination persists via registry and notifies -- passed
 - event_sourcing/example/test/app_state_test.dart:138 AppState destination registry binding destinations reflects every registered destination -- passed
-- event_sourcing/test/destinations/destination_registry_dynamic_test.dart:105 DestinationRegistry (dynamic lifecycle setStartDate assigns a startDate and persists it -- passed
+- event_sourcing/test/destinations/destination_registry_dynamic_test.dart:108 DestinationRegistry (dynamic lifecycle setStartDate assigns a startDate and persists it -- passed
 - event_sourcing/test/destinations/destination_registry_dynamic_test.dart:45 DestinationRegistry (dynamic lifecycle addDestination registers and seeds a dormant schedule -- passed
 - event_sourcing/test/destinations/destination_registry_test.dart:230 DestinationRegistry (instance-based byId returns null for unknown ids -- passed
 - event_sourcing/test/destinations/destination_registry_test.dart:95 DestinationRegistry (instance-based addDestination adds a destination and all() returns it -- passed
@@ -9118,8 +9293,8 @@ Tests:
 
 - event_sourcing/example/test/app_state_test.dart:125 AppState destination registry binding addDestination persists via registry and notifies -- passed
 - event_sourcing/example/test/app_state_test.dart:138 AppState destination registry binding destinations reflects every registered destination -- passed
-- event_sourcing/test/destinations/destination_registry_dynamic_test.dart:308 DestinationRegistry (dynamic lifecycle deleteDestination retires a wedged queue and drops the schedule when allowHardDelete is true -- passed
-- event_sourcing/test/destinations/destination_registry_dynamic_test.dart:87 DestinationRegistry (dynamic lifecycle registry does NOT freeze on first read; subsequent addDestination succeeds -- passed
+- event_sourcing/test/destinations/destination_registry_dynamic_test.dart:311 DestinationRegistry (dynamic lifecycle deleteDestination retires a wedged queue and drops the schedule when allowHardDelete is true -- passed
+- event_sourcing/test/destinations/destination_registry_dynamic_test.dart:90 DestinationRegistry (dynamic lifecycle registry does NOT freeze on first read; subsequent addDestination succeeds -- passed
 - event_sourcing/test/destinations/destination_registry_test.dart:171 DestinationRegistry (instance-based first all() read does NOT freeze the registry; a subsequent addDestination succeeds -- passed
 - event_sourcing/test/sync/sync_cycle_test.dart:205 SyncCycle a destination added between passes is drained by the next pass -- passed
 
@@ -9215,7 +9390,7 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/event_sourcing.dart:545
+- event_sourcing/lib/event_sourcing.dart:546
 - event_sourcing/lib/src/event_store.dart:2542
 - event_sourcing/lib/src/event_store.dart:505
 - event_sourcing/lib/src/security/security_context_store.dart:42
@@ -9304,8 +9479,8 @@ Tests:
 
 Code:
 
+- event_sourcing/lib/src/destinations/destination_registry.dart:1090
 - event_sourcing/lib/src/destinations/destination_registry.dart:6
-- event_sourcing/lib/src/destinations/destination_registry.dart:996
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:22
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2430
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2631
@@ -9317,12 +9492,12 @@ Code:
 Tests:
 
 - event_sourcing/test/ops/tombstone_and_refill_test.dart:500 tombstoneAndRefill() a swept released item returns to its key list and does not count toward the rewind -- passed
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1714 keyed hold scenarios (postgres) a recovery returns swept released items to their key lists and does not rewind for them -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1714 keyed hold scenarios (sembast) a recovery returns swept released items to their key lists and does not rewind for them -- passed
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1792 keyed hold scenarios (postgres) a recovery whose wedged head was itself released returns it to its list -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1792 keyed hold scenarios (sembast) a recovery whose wedged head was itself released returns it to its list -- passed
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1911 keyed hold scenarios (postgres) keyless and gap-replay items still count toward the rewind -- passed, skipped
-- event_sourcing/test/test_support/keyed_hold_conformance.dart:1911 keyed hold scenarios (sembast) keyless and gap-replay items still count toward the rewind -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1812 keyed hold scenarios (postgres) a recovery returns swept released items to their key lists and does not rewind for them -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1812 keyed hold scenarios (sembast) a recovery returns swept released items to their key lists and does not rewind for them -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1890 keyed hold scenarios (postgres) a recovery whose wedged head was itself released returns it to its list -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:1890 keyed hold scenarios (sembast) a recovery whose wedged head was itself released returns it to its list -- passed
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2009 keyed hold scenarios (postgres) keyless and gap-replay items still count toward the rewind -- passed, skipped
+- event_sourcing/test/test_support/keyed_hold_conformance.dart:2009 keyed hold scenarios (sembast) keyless and gap-replay items still count toward the rewind -- passed
 - event_sourcing/test/test_support/queue_registry_conformance.dart:395 queue registry scenarios (postgres) recovery rewinds below a swept gap-replay item; the refill re-enqueues every removed event -- passed, skipped
 - event_sourcing/test/test_support/queue_registry_conformance.dart:395 queue registry scenarios (postgres, runtime role) recovery rewinds below a swept gap-replay item; the refill re-enqueues every removed event -- passed
 - event_sourcing/test/test_support/queue_registry_conformance.dart:395 queue registry scenarios (sembast) recovery rewinds below a swept gap-replay item; the refill re-enqueues every removed event -- passed
@@ -9354,7 +9529,7 @@ Tests:
 - event_sourcing/example/test/hub_delete_destination_test.dart:106 a deleted destination keeps its retained rows visible -- passed
 - event_sourcing/example/test/hub_delete_destination_test.dart:76 delete is refused while the head is pending -- passed
 - event_sourcing/example/test/hub_halt_recover_test.dart:572 delete is refused on a pending head and points at Halt; after a halt it deletes, keeping the delivered items -- passed
-- event_sourcing/test/destinations/destination_registry_dynamic_test.dart:308 DestinationRegistry (dynamic lifecycle deleteDestination retires a wedged queue and drops the schedule when allowHardDelete is true -- passed
+- event_sourcing/test/destinations/destination_registry_dynamic_test.dart:311 DestinationRegistry (dynamic lifecycle deleteDestination retires a wedged queue and drops the schedule when allowHardDelete is true -- passed
 - event_sourcing/test/storage/postgres/postgres_fifo_guard_test.dart:847 deletion under the guard retains the terminal items -- passed
 - event_sourcing/test/test_support/queue_registry_conformance.dart:1210 queue registry scenarios (postgres) persisted state the latest registration's opt-in is in effect -- passed, skipped
 - event_sourcing/test/test_support/queue_registry_conformance.dart:1210 queue registry scenarios (postgres, runtime role) persisted state the latest registration's opt-in is in effect -- passed
@@ -9438,7 +9613,7 @@ Code:
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2784
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2845
 - event_sourcing/lib/src/sync/drain.dart:35
-- event_sourcing/lib/src/sync/drain.dart:386
+- event_sourcing/lib/src/sync/drain.dart:389
 
 Tests:
 
@@ -9529,8 +9704,8 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/destinations/destination_registry.dart:1020
-- event_sourcing/lib/src/destinations/destination_registry.dart:758
+- event_sourcing/lib/src/destinations/destination_registry.dart:1128
+- event_sourcing/lib/src/destinations/destination_registry.dart:824
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:22
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2430
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2631
@@ -9644,7 +9819,7 @@ Code:
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2759
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2784
 - event_sourcing/lib/src/storage/postgres/postgres_backend.dart:2845
-- event_sourcing/lib/src/sync/drain.dart:894
+- event_sourcing/lib/src/sync/drain.dart:970
 
 Tests:
 
@@ -12558,8 +12733,8 @@ Tests:
 
 Code:
 
-- event_sourcing/lib/src/destinations/destination_registry.dart:2136
-- event_sourcing/lib/src/destinations/destination_registry.dart:2186
+- event_sourcing/lib/src/destinations/destination_registry.dart:2261
+- event_sourcing/lib/src/destinations/destination_registry.dart:2311
 - event_sourcing/lib/src/event_store.dart:3673
 - event_sourcing/lib/src/event_store.dart:3711
 - event_sourcing/lib/src/event_store.dart:3740
