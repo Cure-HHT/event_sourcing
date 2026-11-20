@@ -108,6 +108,9 @@ void main() {
     expect(added.map((e) => e.entryType), ['lib_version_changed']);
     expect((await store.reader.verifyChains()).findings, isEmpty);
 
+    // A build of a later library version rebuilds its views after the open
+    // returns, so the rows are read once the views have caught up.
+    await store.reader.viewsCaughtUp(timeout: const Duration(seconds: 30));
     final rows = await store.reader.findViewRows('fixture_notes');
     expect(json.decode(json.encode(rows.rows)), expected['fixture_notes_rows']);
 

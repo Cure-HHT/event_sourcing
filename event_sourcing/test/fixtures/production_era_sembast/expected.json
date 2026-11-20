@@ -1,32 +1,32 @@
 {
-  "library_version": "0.7.3",
+  "library_version": "0.6.1",
   "data_format": "3.0",
-  "database_id": "05d1197a-28a0-422c-97c3-e2c1c0873709",
+  "database_id": "e699ce0e-b5c8-4937-9554-e3287dc9987e",
   "events": [
     {
       "sequence_number": 1,
-      "event_id": "a191a4ab-8e84-4f36-953f-7fed93df9270",
+      "event_id": "9c80b826-d029-48a0-b66d-3d5ffe165c4d",
       "entry_type": "lib_version_initialized",
       "event_type": "lib_version_initialized",
       "aggregate_id": "_lib",
-      "event_hash": "c71773038f56df02f5b25f4a4ece7c2476028ada17562b3eab67e59fcac795bf",
+      "event_hash": "c48359824108ed026f1eef8013674416b19d5ac1c5b7e1656eba483b8cc962fb",
       "data": {
-        "version": "0.7.3",
+        "version": "0.6.1",
         "data_format": {
           "major": 3,
           "minor": 0
         },
-        "database_id": "05d1197a-28a0-422c-97c3-e2c1c0873709",
-        "initializedAt": "2026-11-19T19:51:37.249865Z"
+        "database_id": "e699ce0e-b5c8-4937-9554-e3287dc9987e",
+        "initializedAt": "2026-11-20T00:22:43.741676Z"
       }
     },
     {
       "sequence_number": 2,
-      "event_id": "31ee075e-4e73-4aa1-a19f-46cddf030dbe",
+      "event_id": "56df7b99-c754-47ff-b8cd-59968384425b",
       "entry_type": "system.entry_type_registry_initialized",
       "event_type": "finalized",
       "aggregate_id": "00000000-0000-4000-8000-00000000f1c5",
-      "event_hash": "ccedcea3dd82eeea8e5662a116354b193ac303658df49b6c6084f1004e18440f",
+      "event_hash": "68d7294253a1c764c8f9f49342f0db6ffe0e15932857fbec5fa3c710ea89e1e3",
       "data": {
         "registry": {
           "fixture_note": "1.0",
@@ -179,38 +179,16 @@
               "eligible": false
             }
           }
-        },
-        "patches": {
-          "fixture_note": 0,
-          "security_context_redacted": 0,
-          "security_context_compacted": 0,
-          "security_context_purged": 0,
-          "system.destination_registered": 0,
-          "system.destination_start_date_set": 0,
-          "system.destination_end_date_set": 0,
-          "system.destination_deleted": 0,
-          "system.destination_wedge_recovered": 0,
-          "system.destination_wedged": 0,
-          "system.destination_halt_requested": 0,
-          "system.destination_halt_cancelled": 0,
-          "system.retention_policy_applied": 0,
-          "system.entry_type_registry_initialized": 0,
-          "lib_version_initialized": 0,
-          "lib_version_changed": 0,
-          "ingest-audit": 0,
-          "system.security_finding": 0,
-          "system.destination_channel_resumed": 0,
-          "system.destination_sender_succeeded": 0
         }
       }
     },
     {
       "sequence_number": 3,
-      "event_id": "af687e90-86a8-452f-82c6-524c3783e86d",
+      "event_id": "d3da6b56-30ea-4318-9051-20c5c794b86e",
       "entry_type": "system.destination_registered",
       "event_type": "destination_registered",
       "aggregate_id": "00000000-0000-4000-8000-00000000f1c5",
-      "event_hash": "8bf94b9e6db55e7f8845bc5d2c9bc5084026adeb6520f47996fca4ae4f425be4",
+      "event_hash": "ac6fcaa4ea1e827703957d7d0276681d730e8acea81746215dc9c0a2085cd4de",
       "data": {
         "id": "fixture-outbound",
         "wire_format": "fixture-json-1",
@@ -221,30 +199,30 @@
         ],
         "filter_event_types": null,
         "filter_predicate_description": null,
-        "database_id": "05d1197a-28a0-422c-97c3-e2c1c0873709"
+        "database_id": "e699ce0e-b5c8-4937-9554-e3287dc9987e"
       }
     },
     {
       "sequence_number": 4,
-      "event_id": "e906cbc6-fc40-4c05-81ac-80c76f895f82",
+      "event_id": "1a981ba3-a21e-47f4-99c8-05d7b961f505",
       "entry_type": "system.destination_start_date_set",
       "event_type": "destination_start_date_set",
       "aggregate_id": "00000000-0000-4000-8000-00000000f1c5",
-      "event_hash": "347a170c5d8ca82c9b4d46bc8bc4d3cc7bed11e6c16ec62d8a0f757a20bd30bf",
+      "event_hash": "b14c7b5a16f00c01c1a10969c591febf09356a913ea30d4290c762b14ffa6b28",
       "data": {
         "id": "fixture-outbound",
         "start_date": "2026-01-01T00:00:00.000Z",
         "prior_start_date": null,
-        "database_id": "05d1197a-28a0-422c-97c3-e2c1c0873709"
+        "database_id": "e699ce0e-b5c8-4937-9554-e3287dc9987e"
       }
     },
     {
       "sequence_number": 5,
-      "event_id": "ec7751ab-9dfc-4784-b1e8-499eccdc6ab7",
+      "event_id": "d0508df9-34e8-4c6b-ad24-b0803490945d",
       "entry_type": "fixture_note",
       "event_type": "written",
       "aggregate_id": "note-1",
-      "event_hash": "a1b1c7f1e818cb6e847a4d7a4cdbe05e2655e96256be5aac8002d917d5bd7459",
+      "event_hash": "12f0e854061ea8535ac658d586e58b72bc222e527c1168a301a9740114c94497",
       "data": {
         "text": "fixture nosebleed record 1",
         "severity": 1
@@ -252,11 +230,11 @@
     },
     {
       "sequence_number": 6,
-      "event_id": "f32819d5-d9d4-4cdb-acb9-7b4f4cfa04af",
+      "event_id": "2e9943aa-0be6-49fc-af2c-88618722d144",
       "entry_type": "fixture_note",
       "event_type": "written",
       "aggregate_id": "note-2",
-      "event_hash": "e0d656cfe4e05839287d6389b1dffde2230e3007c3daf98aa3cb09ced1be0cca",
+      "event_hash": "7e4c559abc1e200224d3d406e855739dc71626c059931e258789595b8b93fc4c",
       "data": {
         "text": "fixture nosebleed record 2",
         "severity": 2
@@ -264,11 +242,11 @@
     },
     {
       "sequence_number": 7,
-      "event_id": "af42efc1-72be-4462-8e34-bceec2043098",
+      "event_id": "b393d8b2-f40d-42c8-96bb-0c29a3aa21dd",
       "entry_type": "fixture_note",
       "event_type": "written",
       "aggregate_id": "note-3",
-      "event_hash": "71a93f8ab25f96b533c19cc5762ee26071af3df159612c76181887d2f49dce8a",
+      "event_hash": "4e7f35f055316754cb28c9d085935b05d3a947c3e638b51df767e1c643364775",
       "data": {
         "text": "fixture nosebleed record 3",
         "severity": 3
@@ -276,11 +254,11 @@
     },
     {
       "sequence_number": 8,
-      "event_id": "13c69775-2794-4215-a66c-ce925fe0a6c2",
+      "event_id": "28a31a1d-6186-4d5b-b7d1-808eeff664b7",
       "entry_type": "fixture_note",
       "event_type": "written",
       "aggregate_id": "note-4",
-      "event_hash": "4f90fbb10cb042fe97f25cdd09f04e2c1834217d7e39c607e8574eaba1709ba4",
+      "event_hash": "1fcd24ad82f57697eb2b1cecf73beb5bdc6ecf1070117445bd437dc945e25194",
       "data": {
         "text": "fixture nosebleed record 4",
         "severity": 4
@@ -288,11 +266,11 @@
     },
     {
       "sequence_number": 9,
-      "event_id": "71b11788-95bd-471b-a429-f3971e0aadea",
+      "event_id": "8e8fb509-34e8-493a-9c3f-ccf9279758a5",
       "entry_type": "fixture_note",
       "event_type": "written",
       "aggregate_id": "note-5",
-      "event_hash": "c9e96e0b6adc30abb4575b6c26e3b5a6bee47bdda0c4ca6247397f9ea7aad4e6",
+      "event_hash": "30011917c67ff4975ae937634d85fb6265285d443e7dbed66306be0a8a652a31",
       "data": {
         "text": "fixture nosebleed record 5",
         "severity": 5
@@ -300,11 +278,11 @@
     },
     {
       "sequence_number": 10,
-      "event_id": "d14652b6-6f3e-4e93-81cc-b4b9d2c17cf6",
+      "event_id": "e79b5d66-74d4-4a31-94e4-0757eeea1b0e",
       "entry_type": "fixture_note",
       "event_type": "written",
       "aggregate_id": "note-6",
-      "event_hash": "6190e2e1a68d049cb60cb5f50b2fe3aef7a965715da642457a075f83654ce5da",
+      "event_hash": "8c08ecb9ee7eddce3822d6d80cc78ce36ee25f1d6d2b113b71cda2145a53447b",
       "data": {
         "text": "fixture nosebleed record 6",
         "severity": 6
@@ -312,11 +290,11 @@
     },
     {
       "sequence_number": 11,
-      "event_id": "09f51105-bc42-4cc4-b175-419430272fce",
+      "event_id": "dcb6f769-3ae3-40be-b14b-848e0f426aaa",
       "entry_type": "fixture_note",
       "event_type": "removed",
       "aggregate_id": "note-2",
-      "event_hash": "3acf4a193fdb6734437489ed24139d9264d5a23cfb1075141dc03a60e042d8fb",
+      "event_hash": "1a5aafff85dde6be313b2318e95b5af4cdd107f375aa1f988a303d082a673570",
       "data": {}
     }
   ],
@@ -327,9 +305,9 @@
       "aggregateId": "note-1",
       "entryType": "fixture_note",
       "aggregateType": "FixtureNote",
-      "latestEventId": "ec7751ab-9dfc-4784-b1e8-499eccdc6ab7",
-      "updatedAt": "2026-11-19T19:51:37.287155Z",
-      "firstEventTimestamp": "2026-11-19T19:51:37.287155Z",
+      "latestEventId": "d0508df9-34e8-4c6b-ad24-b0803490945d",
+      "updatedAt": "2026-11-20T00:22:43.778755Z",
+      "firstEventTimestamp": "2026-11-20T00:22:43.778755Z",
       "sequence": 5,
       "$integrity": {
         "security_findings": []
@@ -341,9 +319,9 @@
       "aggregateId": "note-3",
       "entryType": "fixture_note",
       "aggregateType": "FixtureNote",
-      "latestEventId": "af42efc1-72be-4462-8e34-bceec2043098",
-      "updatedAt": "2026-11-19T19:51:37.290331Z",
-      "firstEventTimestamp": "2026-11-19T19:51:37.290331Z",
+      "latestEventId": "b393d8b2-f40d-42c8-96bb-0c29a3aa21dd",
+      "updatedAt": "2026-11-20T00:22:43.782618Z",
+      "firstEventTimestamp": "2026-11-20T00:22:43.782618Z",
       "sequence": 7,
       "$integrity": {
         "security_findings": []
@@ -355,9 +333,9 @@
       "aggregateId": "note-4",
       "entryType": "fixture_note",
       "aggregateType": "FixtureNote",
-      "latestEventId": "13c69775-2794-4215-a66c-ce925fe0a6c2",
-      "updatedAt": "2026-11-19T19:51:37.293037Z",
-      "firstEventTimestamp": "2026-11-19T19:51:37.293037Z",
+      "latestEventId": "28a31a1d-6186-4d5b-b7d1-808eeff664b7",
+      "updatedAt": "2026-11-20T00:22:43.785779Z",
+      "firstEventTimestamp": "2026-11-20T00:22:43.785779Z",
       "sequence": 8,
       "$integrity": {
         "security_findings": []
@@ -369,9 +347,9 @@
       "aggregateId": "note-5",
       "entryType": "fixture_note",
       "aggregateType": "FixtureNote",
-      "latestEventId": "71b11788-95bd-471b-a429-f3971e0aadea",
-      "updatedAt": "2026-11-19T19:51:37.293956Z",
-      "firstEventTimestamp": "2026-11-19T19:51:37.293956Z",
+      "latestEventId": "8e8fb509-34e8-493a-9c3f-ccf9279758a5",
+      "updatedAt": "2026-11-20T00:22:43.786948Z",
+      "firstEventTimestamp": "2026-11-20T00:22:43.786948Z",
       "sequence": 9,
       "$integrity": {
         "security_findings": []
@@ -383,9 +361,9 @@
       "aggregateId": "note-6",
       "entryType": "fixture_note",
       "aggregateType": "FixtureNote",
-      "latestEventId": "d14652b6-6f3e-4e93-81cc-b4b9d2c17cf6",
-      "updatedAt": "2026-11-19T19:51:37.295014Z",
-      "firstEventTimestamp": "2026-11-19T19:51:37.295014Z",
+      "latestEventId": "e79b5d66-74d4-4a31-94e4-0757eeea1b0e",
+      "updatedAt": "2026-11-20T00:22:43.787897Z",
+      "firstEventTimestamp": "2026-11-20T00:22:43.787897Z",
       "sequence": 10,
       "$integrity": {
         "security_findings": []

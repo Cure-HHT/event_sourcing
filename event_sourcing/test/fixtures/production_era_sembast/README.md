@@ -1,10 +1,11 @@
 # An unencrypted Sembast database of data format 3.0
 
 `diary.db` is a Sembast database file written, unencrypted, by the library
-at commit `26912f87009cb085b508ae412765ee6773f59f22` (package version 0.7.3,
-data format 3.0): the build deployed applications held their databases in
-before the library could encrypt one. It holds the library's boot records,
-an entry type with a registered view, a registered destination with a start
+at commit `bc4a09069fea48b313bb54ed482c0dc97fb15709` (package version 0.6.1,
+data format 3.0): the build an application release already in use was
+built with, before the library could encrypt a database. It holds the
+library's boot records, an entry type with a registered view, a registered
+destination with a start
 date, and events of that entry type, one of them a removal.
 `expected.json` lists every event it holds, with its hash, and the rows of
 its view, as that build read them back.
