@@ -88,7 +88,6 @@ sdks:
 ''';
 
 void main() {
-  // Verifies: EVS-DEV-chain-verification/T
   test('holds each hosted dependency the baseline shares with the current '
       'tree at the version the current tree resolved', () {
     final overrides = baselineDependencyOverrides(
@@ -103,7 +102,6 @@ void main() {
     });
   });
 
-  // Verifies: EVS-DEV-chain-verification/T
   test('the overrides file pins exactly those versions', () {
     final overrides = baselineDependencyOverrides(
       baselinePubspec: _baselinePubspec,
