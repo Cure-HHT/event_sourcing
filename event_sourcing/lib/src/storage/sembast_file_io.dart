@@ -62,8 +62,10 @@ Future<SembastFileEncryption> inspectSembastFile(String path) async {
         .transform(const LineSplitter())
         .cast<String?>()
         .firstWhere((_) => true, orElse: () => null);
-  } on FileSystemException {
-    // Removed between the existence check and the read.
+  } on PathNotFoundException {
+    // Removed between the existence check and the read. Any other failure
+    // to read the file reaches the caller: a file that exists but cannot be
+    // read is not an absent database.
     return SembastFileEncryption.absent;
   }
   if (first == null || first.isEmpty) return SembastFileEncryption.absent;
@@ -116,6 +118,10 @@ Future<void> prepareEncryptedSembastFile(
   String path,
   StorageEncryptionKey key,
 ) async {
+  // The lock file sits beside the database file, so the directory the
+  // database is created in exists before it, as sembast creates it for an
+  // open without a key.
+  await Directory(p.dirname(path)).create(recursive: true);
   final lock = await File(
     sembastConversionLockPath(path),
   ).open(mode: FileMode.append);
@@ -207,7 +213,8 @@ bool _isMeta(Object? value) =>
 /// Writes the database file at [path] to [copyPath] line by line, each
 /// record line encoded by [codec] and each metadata line carrying [codec]'s
 /// encoded signature: the file sembast writes for the same records under
-/// [codec]. One line is held in memory at a time.
+/// [codec]. The file's writes pace the reads, so the lines held in memory
+/// stay bounded however large the database is.
 Future<void> _writeCopy(
   String path,
   String copyPath,
@@ -217,21 +224,22 @@ Future<void> _writeCopy(
   final signature = lineCodec.encode(<String, Object?>{
     'signature': codec.signature,
   });
-  final sink = File(copyPath).openWrite();
-  try {
+  Stream<List<int>> encodedLines() async* {
     await for (final line in _lines(path)) {
       final value = json.decode(line);
-      if (_isMeta(value)) {
-        sink.writeln(
-          json.encode(<String, Object?>{
-            ...(value as Map).cast<String, Object?>(),
-            'codec': signature,
-          }),
-        );
-      } else {
-        sink.writeln(lineCodec.encode(value));
-      }
+      final encoded = _isMeta(value)
+          ? json.encode(<String, Object?>{
+              ...(value as Map).cast<String, Object?>(),
+              'codec': signature,
+            })
+          : lineCodec.encode(value);
+      yield utf8.encode('$encoded\n');
     }
+  }
+
+  final sink = File(copyPath).openWrite();
+  try {
+    await sink.addStream(encodedLines());
   } finally {
     await sink.close();
   }

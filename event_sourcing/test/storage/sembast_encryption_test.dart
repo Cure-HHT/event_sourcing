@@ -286,6 +286,19 @@ void main() {
     });
 
     // Verifies: EVS-DEV-sembast-encryption/C
+    test('is created, encrypted, at a location whose directory does not '
+        'exist yet', () async {
+      final path = p.join(_dir.path, 'missing', 'nested', 'diary.db');
+      final key = StorageEncryptionKey.generate();
+      final notes = await _seed(path, key: key, count: 2);
+      expect(notes, hasLength(2));
+      expect(
+        await SembastStorage.inspectFile(path),
+        SembastFileEncryption.encrypted,
+      );
+    });
+
+    // Verifies: EVS-DEV-sembast-encryption/C
     test('whose last line a crash cut short still opens with every complete '
         'record', () async {
       final path = _path();
@@ -733,6 +746,30 @@ Future<void> main(List<String> args) async {
       );
       expect(File(plainPath).readAsBytesSync(), plainBefore);
       expect(File(encryptedPath).readAsBytesSync(), encryptedBefore);
+    });
+
+    // Verifies: EVS-DEV-sembast-encryption/J
+    test('reports a file it cannot read as a failure, not as absent', () async {
+      final path = _path();
+      await _seed(path);
+      await Process.run('chmod', <String>['000', path]);
+      addTearDown(() => Process.run('chmod', <String>['600', path]));
+      final readable = await () async {
+        try {
+          File(path).readAsBytesSync();
+          return true;
+        } on FileSystemException {
+          return false;
+        }
+      }();
+      if (readable) {
+        markTestSkipped('this process reads a file whose mode denies reads');
+        return;
+      }
+      await expectLater(
+        SembastStorage.inspectFile(path),
+        throwsA(isA<FileSystemException>()),
+      );
     });
 
     // Verifies: EVS-DEV-sembast-encryption/J

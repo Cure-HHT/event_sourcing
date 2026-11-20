@@ -7496,7 +7496,8 @@ Tests:
 - event_sourcing/test/storage/sembast_encryption_test.dart:193 the cipher is AES-256-GCM with a 128-bit tag (known answers) -- passed
 - event_sourcing/test/storage/sembast_encryption_test.dart:227 the cipher an altered line fails to decode rather than reading back changed -- passed
 - event_sourcing/test/storage/sembast_encryption_test.dart:243 a database opened with a key holds no readable record content on disk, before and after a compaction -- passed
-- event_sourcing/test/storage/sembast_encryption_test.dart:289 a database opened with a key whose last line a crash cut short still opens with every complete record -- passed
+- event_sourcing/test/storage/sembast_encryption_test.dart:289 a database opened with a key is created, encrypted, at a location whose directory does not exist yet -- passed
+- event_sourcing/test/storage/sembast_encryption_test.dart:302 a database opened with a key whose last line a crash cut short still opens with every complete record -- passed
 - event_sourcing/test/web/aes_gcm_web_test.dart:13 meets the GCM specification known answers for a 256-bit key -- passed
 - event_sourcing/test/web/aes_gcm_web_test.dart:19 matches an independent GCM implementation at every length -- passed
 - event_sourcing/test/web/aes_gcm_web_test.dart:25 refuses an altered ciphertext, tag or nonce, and another key -- passed
@@ -7520,9 +7521,9 @@ Code:
 
 Tests:
 
-- event_sourcing/test/storage/sembast_encryption_test.dart:309 a key that does not decrypt the database is refused, and the file is byte-identical afterwards -- passed
-- event_sourcing/test/storage/sembast_encryption_test.dart:340 a key that does not decrypt the database no key for an encrypted database is refused, and the file is byte-identical afterwards -- passed
-- event_sourcing/test/storage/sembast_encryption_test.dart:365 a key that does not decrypt the database sembast compares the codec signature before it writes: an unencrypted file opened directly with the codec is refused unchanged -- passed
+- event_sourcing/test/storage/sembast_encryption_test.dart:322 a key that does not decrypt the database is refused, and the file is byte-identical afterwards -- passed
+- event_sourcing/test/storage/sembast_encryption_test.dart:353 a key that does not decrypt the database no key for an encrypted database is refused, and the file is byte-identical afterwards -- passed
+- event_sourcing/test/storage/sembast_encryption_test.dart:378 a key that does not decrypt the database sembast compares the codec signature before it writes: an unencrypted file opened directly with the codec is refused unchanged -- passed
 
 **F**
 
@@ -7533,12 +7534,12 @@ Code:
 Tests:
 
 - event_sourcing/test/storage/sembast_encryption_fixture_test.dart:61 a database the earlier release wrote unencrypted opens encrypted with every event -- passed
-- event_sourcing/test/storage/sembast_encryption_test.dart:405 an unencrypted database opened with a key is converted, holding every event and view row -- passed
-- event_sourcing/test/storage/sembast_encryption_test.dart:433 an unencrypted database opened with a key a crash at copyVerified leaves a file the next open opens with every event -- passed
-- event_sourcing/test/storage/sembast_encryption_test.dart:433 an unencrypted database opened with a key a crash at copyWritten leaves a file the next open opens with every event -- passed
-- event_sourcing/test/storage/sembast_encryption_test.dart:433 an unencrypted database opened with a key a crash at replaced leaves a file the next open opens with every event -- passed
-- event_sourcing/test/storage/sembast_encryption_test.dart:482 an unencrypted database opened with a key whose last line a crash cut short is converted with every complete record -- passed
-- event_sourcing/test/storage/sembast_encryption_test.dart:524 an unencrypted database opened with a key with a stale compacted file beside it leaves no unencrypted copy behind -- passed
+- event_sourcing/test/storage/sembast_encryption_test.dart:418 an unencrypted database opened with a key is converted, holding every event and view row -- passed
+- event_sourcing/test/storage/sembast_encryption_test.dart:446 an unencrypted database opened with a key a crash at copyVerified leaves a file the next open opens with every event -- passed
+- event_sourcing/test/storage/sembast_encryption_test.dart:446 an unencrypted database opened with a key a crash at copyWritten leaves a file the next open opens with every event -- passed
+- event_sourcing/test/storage/sembast_encryption_test.dart:446 an unencrypted database opened with a key a crash at replaced leaves a file the next open opens with every event -- passed
+- event_sourcing/test/storage/sembast_encryption_test.dart:495 an unencrypted database opened with a key whose last line a crash cut short is converted with every complete record -- passed
+- event_sourcing/test/storage/sembast_encryption_test.dart:537 an unencrypted database opened with a key with a stale compacted file beside it leaves no unencrypted copy behind -- passed
 
 **G**
 
@@ -7558,9 +7559,9 @@ Code:
 
 Tests:
 
-- event_sourcing/test/storage/sembast_encryption_test.dart:433 an unencrypted database opened with a key a crash at copyVerified leaves a file the next open opens with every event -- passed
-- event_sourcing/test/storage/sembast_encryption_test.dart:433 an unencrypted database opened with a key a crash at copyWritten leaves a file the next open opens with every event -- passed
-- event_sourcing/test/storage/sembast_encryption_test.dart:433 an unencrypted database opened with a key a crash at replaced leaves a file the next open opens with every event -- passed
+- event_sourcing/test/storage/sembast_encryption_test.dart:446 an unencrypted database opened with a key a crash at copyVerified leaves a file the next open opens with every event -- passed
+- event_sourcing/test/storage/sembast_encryption_test.dart:446 an unencrypted database opened with a key a crash at copyWritten leaves a file the next open opens with every event -- passed
+- event_sourcing/test/storage/sembast_encryption_test.dart:446 an unencrypted database opened with a key a crash at replaced leaves a file the next open opens with every event -- passed
 
 **I**
 
@@ -7570,7 +7571,7 @@ Code:
 
 Tests:
 
-- event_sourcing/test/storage/sembast_encryption_test.dart:504 an unencrypted database opened with a key left by an interrupted sembast compaction (the file missing, the compacted file beside it) is converted with every event -- passed
+- event_sourcing/test/storage/sembast_encryption_test.dart:517 an unencrypted database opened with a key left by an interrupted sembast compaction (the file missing, the compacted file beside it) is converted with every event -- passed
 
 **J**
 
@@ -7581,9 +7582,10 @@ Code:
 
 Tests:
 
-- event_sourcing/test/storage/sembast_encryption_test.dart:700 inspecting a file reports a missing or empty file absent, and creates nothing -- passed
-- event_sourcing/test/storage/sembast_encryption_test.dart:718 inspecting a file reports unencrypted and encrypted files, writing nothing -- passed
-- event_sourcing/test/storage/sembast_encryption_test.dart:739 inspecting a file refuses a file that is not a Sembast database -- passed
+- event_sourcing/test/storage/sembast_encryption_test.dart:713 inspecting a file reports a missing or empty file absent, and creates nothing -- passed
+- event_sourcing/test/storage/sembast_encryption_test.dart:731 inspecting a file reports unencrypted and encrypted files, writing nothing -- passed
+- event_sourcing/test/storage/sembast_encryption_test.dart:752 inspecting a file reports a file it cannot read as a failure, not as absent -- passed
+- event_sourcing/test/storage/sembast_encryption_test.dart:776 inspecting a file refuses a file that is not a Sembast database -- passed
 
 **K**
 
@@ -7593,8 +7595,8 @@ Code:
 
 Tests:
 
-- event_sourcing/test/storage/sembast_encryption_test.dart:646 a location held open in this isolate is shared only under the same key -- passed
-- event_sourcing/test/storage/sembast_encryption_test.dart:682 a location held open in this isolate held unencrypted, refuses an open with a key -- passed
+- event_sourcing/test/storage/sembast_encryption_test.dart:659 a location held open in this isolate is shared only under the same key -- passed
+- event_sourcing/test/storage/sembast_encryption_test.dart:695 a location held open in this isolate held unencrypted, refuses an open with a key -- passed
 
 **L**
 
@@ -7614,9 +7616,9 @@ Code:
 
 Tests:
 
-- event_sourcing/test/storage/sembast_encryption_test.dart:433 an unencrypted database opened with a key a crash at copyVerified leaves a file the next open opens with every event -- passed
-- event_sourcing/test/storage/sembast_encryption_test.dart:433 an unencrypted database opened with a key a crash at copyWritten leaves a file the next open opens with every event -- passed
-- event_sourcing/test/storage/sembast_encryption_test.dart:433 an unencrypted database opened with a key a crash at replaced leaves a file the next open opens with every event -- passed
+- event_sourcing/test/storage/sembast_encryption_test.dart:446 an unencrypted database opened with a key a crash at copyVerified leaves a file the next open opens with every event -- passed
+- event_sourcing/test/storage/sembast_encryption_test.dart:446 an unencrypted database opened with a key a crash at copyWritten leaves a file the next open opens with every event -- passed
+- event_sourcing/test/storage/sembast_encryption_test.dart:446 an unencrypted database opened with a key a crash at replaced leaves a file the next open opens with every event -- passed
 
 **N**
 
@@ -7626,7 +7628,7 @@ Code:
 
 Tests:
 
-- event_sourcing/test/storage/sembast_encryption_test.dart:541 the conversion waits while another process holds its lock -- passed
+- event_sourcing/test/storage/sembast_encryption_test.dart:554 the conversion waits while another process holds its lock -- passed
 
 **O**
 
@@ -7637,7 +7639,7 @@ Code:
 
 Tests:
 
-- event_sourcing/test/storage/sembast_encryption_test.dart:602 deleting a database also deletes every file an encrypted open leaves beside it -- passed
+- event_sourcing/test/storage/sembast_encryption_test.dart:615 deleting a database also deletes every file an encrypted open leaves beside it -- passed
 
 </details>
 
@@ -12949,8 +12951,8 @@ Code:
 
 Tests:
 
-- event_sourcing/test/storage/sembast_encryption_test.dart:309 a key that does not decrypt the database is refused, and the file is byte-identical afterwards -- passed
-- event_sourcing/test/storage/sembast_encryption_test.dart:340 a key that does not decrypt the database no key for an encrypted database is refused, and the file is byte-identical afterwards -- passed
+- event_sourcing/test/storage/sembast_encryption_test.dart:322 a key that does not decrypt the database is refused, and the file is byte-identical afterwards -- passed
+- event_sourcing/test/storage/sembast_encryption_test.dart:353 a key that does not decrypt the database no key for an encrypted database is refused, and the file is byte-identical afterwards -- passed
 
 **M**
 
@@ -12961,11 +12963,11 @@ Code:
 Tests:
 
 - event_sourcing/test/storage/sembast_encryption_fixture_test.dart:61 a database the earlier release wrote unencrypted opens encrypted with every event -- passed
-- event_sourcing/test/storage/sembast_encryption_test.dart:405 an unencrypted database opened with a key is converted, holding every event and view row -- passed
-- event_sourcing/test/storage/sembast_encryption_test.dart:433 an unencrypted database opened with a key a crash at copyVerified leaves a file the next open opens with every event -- passed
-- event_sourcing/test/storage/sembast_encryption_test.dart:433 an unencrypted database opened with a key a crash at copyWritten leaves a file the next open opens with every event -- passed
-- event_sourcing/test/storage/sembast_encryption_test.dart:433 an unencrypted database opened with a key a crash at replaced leaves a file the next open opens with every event -- passed
-- event_sourcing/test/storage/sembast_encryption_test.dart:482 an unencrypted database opened with a key whose last line a crash cut short is converted with every complete record -- passed
+- event_sourcing/test/storage/sembast_encryption_test.dart:418 an unencrypted database opened with a key is converted, holding every event and view row -- passed
+- event_sourcing/test/storage/sembast_encryption_test.dart:446 an unencrypted database opened with a key a crash at copyVerified leaves a file the next open opens with every event -- passed
+- event_sourcing/test/storage/sembast_encryption_test.dart:446 an unencrypted database opened with a key a crash at copyWritten leaves a file the next open opens with every event -- passed
+- event_sourcing/test/storage/sembast_encryption_test.dart:446 an unencrypted database opened with a key a crash at replaced leaves a file the next open opens with every event -- passed
+- event_sourcing/test/storage/sembast_encryption_test.dart:495 an unencrypted database opened with a key whose last line a crash cut short is converted with every complete record -- passed
 
 </details>
 
