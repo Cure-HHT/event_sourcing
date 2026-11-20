@@ -21,6 +21,9 @@
 //   missing grants (A), return PolicyFailSafe on parse/validation failure
 //   (B), return PolicyReady with a TableBackedAuthorizationPolicy on
 //   success (C), and emit zero events on already-seeded re-runs (D).
+// Implements: EVS-DEV-bootstrap-action-permissions/F+G
+// the caller's [changeReason] is set on every permission_granted event the
+//   run appends (F), and PolicyReady names the pairs the run granted (G).
 
 import 'package:event_sourcing/event_sourcing.dart';
 
@@ -39,6 +42,11 @@ import 'package:event_sourcing/event_sourcing.dart';
 /// [timeout] bounds how long the seed application waits for
 /// `role_permission_grants` to become current for the instance before
 /// reading it (EVS-DEV-converging-view-reads/I).
+///
+/// [changeReason], when given, is recorded as the change reason of every
+/// `permission_granted` event this run appends, so a reader of the log can
+/// tell which seed revision caused a grant. Omitted, the events carry the
+/// substrate's default change reason.
 Future<AuthorizationBootstrapResult> bootstrapActionPermissions({
   required EventStore eventStore,
   required Set<Permission> declaredPermissions,
@@ -49,6 +57,7 @@ Future<AuthorizationBootstrapResult> bootstrapActionPermissions({
     service: 'event_sourcing_permissions_seed',
   ),
   Duration timeout = const Duration(seconds: 30),
+  String? changeReason,
 }) async {
   if ((yamlPath == null) == (yamlSource == null)) {
     throw ArgumentError(
@@ -78,8 +87,13 @@ Future<AuthorizationBootstrapResult> bootstrapActionPermissions({
   final applier = PermissionSeedApplier(
     eventStore: eventStore,
     seedInitiator: seedInitiator,
+    changeReason: changeReason,
   );
-  await applier.apply(seed, declaredPermissions, timeout: timeout);
+  final applied = await applier.apply(
+    seed,
+    declaredPermissions,
+    timeout: timeout,
+  );
 
   // 4. Wrap in TableBackedAuthorizationPolicy reading
   //    role_permission_grants and user_role_scopes directly.
@@ -92,5 +106,5 @@ Future<AuthorizationBootstrapResult> bootstrapActionPermissions({
     reader: eventStore.reader,
     scopeClassRegistry: registry,
   );
-  return PolicyReady(policy);
+  return PolicyReady(policy, grantsEmitted: applied.grantsEmittedIds);
 }

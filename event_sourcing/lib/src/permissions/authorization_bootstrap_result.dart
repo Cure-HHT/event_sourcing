@@ -25,8 +25,13 @@ sealed class AuthorizationBootstrapResult {
 }
 
 final class PolicyReady extends AuthorizationBootstrapResult {
-  const PolicyReady(this._policy);
+  const PolicyReady(this._policy, {this.grantsEmitted = const <String>[]});
   final AuthorizationPolicy _policy;
+
+  /// The `<role>:<permission>` pair ids of the grants the bootstrap run
+  /// appended, sorted; empty when the log already held every seeded grant.
+  // Implements: EVS-DEV-bootstrap-action-permissions/G
+  final List<String> grantsEmitted;
 
   @override
   AuthorizationPolicy get policy => _policy;

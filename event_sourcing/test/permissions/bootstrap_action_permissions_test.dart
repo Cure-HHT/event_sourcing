@@ -125,6 +125,73 @@ grants:
       expect(eventsAfter.length, eventsBefore.length);
     });
 
+    // Verifies: EVS-DEV-bootstrap-action-permissions/F+G
+    test('change reason is set on every granted event; PolicyReady names the '
+        'granted pairs', () async {
+      const yaml = '''
+roles:
+  - admin
+grants:
+  admin:
+    - user.invite
+    - user.remove
+''';
+      final declared = <Permission>{
+        const Permission('user.invite'),
+        const Permission('user.remove'),
+      };
+      final boot = await bootstrapActionPermissions(
+        eventStore: eventStore,
+        declaredPermissions: declared,
+        yamlSource: yaml,
+        changeReason: 'seed sha256:abc (rev-1)',
+      );
+      expect((boot as PolicyReady).grantsEmitted, <String>[
+        'admin:user.invite',
+        'admin:user.remove',
+      ]);
+      final grants = (await eventStore.reader.findAllEvents(
+        limit: 1000,
+      )).where((e) => e.eventType == 'permission_granted').toList();
+      expect(grants, hasLength(2));
+      for (final e in grants) {
+        expect(e.metadata['change_reason'], 'seed sha256:abc (rev-1)');
+      }
+
+      // A re-run that appends nothing names no pair.
+      final again = await bootstrapActionPermissions(
+        eventStore: eventStore,
+        declaredPermissions: declared,
+        yamlSource: yaml,
+        changeReason: 'seed sha256:abc (rev-2)',
+      );
+      expect((again as PolicyReady).grantsEmitted, isEmpty);
+    });
+
+    // Verifies: EVS-DEV-bootstrap-action-permissions/F
+    test(
+      'without a change reason the granted events carry the default',
+      () async {
+        const yaml = '''
+roles:
+  - admin
+grants:
+  admin:
+    - user.invite
+''';
+        await bootstrapActionPermissions(
+          eventStore: eventStore,
+          declaredPermissions: <Permission>{const Permission('user.invite')},
+          yamlSource: yaml,
+        );
+        final grant = (await eventStore.reader.findAllEvents(
+          limit: 1000,
+        )).singleWhere((e) => e.eventType == 'permission_granted');
+        // The substrate's default for an append that names no change reason.
+        expect(grant.metadata['change_reason'], 'initial');
+      },
+    );
+
     test('requires exactly one of yamlPath or yamlSource', () async {
       expect(
         () => bootstrapActionPermissions(

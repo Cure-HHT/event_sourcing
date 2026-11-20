@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.9.1
+
+Data: data format 3.1, unchanged.
+
+### Permissions
+
+- `bootstrapActionPermissions` and `PermissionSeedApplier` take an optional
+  `changeReason`, recorded as the change reason of every `permission_granted`
+  event the run appends, so a reader of the log can tell which seed revision
+  caused a grant (EVS-DEV-bootstrap-action-permissions/F). Omitted, the
+  events carry the substrate's default, as before.
+- `PolicyReady.grantsEmitted` and `SeedApplyResult.grantsEmittedIds` name
+  the `<role>:<permission>` pairs the run granted, sorted
+  (EVS-DEV-bootstrap-action-permissions/G).
+
 ## 0.9.0
 
 Data: data format 3.1, unchanged. A Sembast database file opened with an

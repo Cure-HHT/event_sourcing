@@ -23,6 +23,9 @@
 // the grants one run of the seed appends are appended in one transaction
 //   of the store, so the run waits once, not once per grant, for the lock
 //   every transaction that appends takes.
+// Implements: EVS-DEV-bootstrap-action-permissions/F+G
+// every grant the run appends carries the applier's [changeReason], and the
+//   result names the pairs it appended.
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing/src/library_declarations_check.dart';
@@ -37,9 +40,14 @@ class SeedApplyResult {
     required this.grantsEmitted,
     required this.grantsAlreadyPresent,
     required this.grantsInViewNotInSeed,
+    this.grantsEmittedIds = const <String>[],
   });
 
   final int grantsEmitted;
+
+  /// The `<role>:<permission>` pair ids of the grants this run appended,
+  /// sorted.
+  final List<String> grantsEmittedIds;
   final int grantsAlreadyPresent;
   final List<String> grantsInViewNotInSeed; // aggregate ids
 }
@@ -48,6 +56,7 @@ class PermissionSeedApplier {
   PermissionSeedApplier({
     required this.eventStore,
     required this.seedInitiator,
+    this.changeReason,
   }) {
     requireLibraryDeclarations(
       eventStore.entryTypes,
@@ -58,6 +67,10 @@ class PermissionSeedApplier {
 
   final EventStore eventStore;
   final Initiator seedInitiator;
+
+  /// Recorded as the change reason of every `permission_granted` event this
+  /// applier appends; null records the substrate's default.
+  final String? changeReason;
 
   /// [timeout] bounds how long this waits for `role_permission_grants` to
   /// become current for the instance before reading it
@@ -150,7 +163,7 @@ class PermissionSeedApplier {
             metadata: null,
             security: null,
             checkpointReason: null,
-            changeReason: null,
+            changeReason: changeReason,
             dedupeByContent: false,
             collector: collector,
           );
@@ -162,6 +175,7 @@ class PermissionSeedApplier {
       grantsEmitted: missing.length,
       grantsAlreadyPresent: present.length,
       grantsInViewNotInSeed: drift,
+      grantsEmittedIds: missing.toList()..sort(),
     );
   }
 }

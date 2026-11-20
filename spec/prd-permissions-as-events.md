@@ -57,15 +57,22 @@ D. Seed application SHALL be idempotent: re-running `bootstrapActionPermissions`
 
 E. `bootstrapActionPermissions` SHALL append every `permission_granted` event of one run in one transaction of the substrate.
 
+F. When the caller passes a change reason, `bootstrapActionPermissions` SHALL record it as the change reason of every `permission_granted` event the run appends; when the caller passes none, the events SHALL carry the change reason the substrate records for any append that names none.
+
+G. A `PolicyReady` returned by `bootstrapActionPermissions` SHALL name the (role, permission) pairs whose `permission_granted` events the run appended, and SHALL name none when the run appended no event.
+
 ### Rationale
 
 **Why one transaction for the whole seed (assertion E)?** A first boot on an empty log seeds every grant a deployment declares, several dozen for a production configuration. On Postgres every transaction that appends writes the table holding the sequence counter, and so waits for the lock each view catch-up transaction holds on that table while it runs (EVS-DEV-view-convergence/L). With one transaction per grant the boot waited once per grant; on a cloud database, where each such wait ran to seconds, a seed of some seventy grants ran several minutes past the budget the application gave its whole permission boot, and the boot failed although every grant had been stored. The same seed in one transaction waits once, so the time the boot spends waiting does not grow with the number of grants. The grants also commit together: a run that fails mid-way leaves no partial seed for the next boot to complete, which assertions A and D already allow but never required a reader to reason about.
 
+**Why a caller-supplied change reason (assertions F and G)?** The seed is a file the application reviews and ships with its build, and a change to it changes who may do what. A `permission_granted` event that names only an automation initiator does not tell a reader of the log which revision of that file caused it. The library does not know the file's identity or the build that carried it, so the application supplies the reason, for example a content hash of the seed and its deployment revision. Naming the granted pairs in the result lets the application report what a boot changed without reading the log a second time.
+
 ### Changelog
 
+- 2026-11-20 | 1c7419c2 | - | sethfarris-dev (<305877068+sethfarris-dev@users.noreply.github.com>) | Auto-fix: update hash
 - 2026-10-15 | ee6ce7e8 | - | sethfarris-dev (<305877068+sethfarris-dev@users.noreply.github.com>) | Auto-fix: update hash
 - 2026-08-10 | c76af2cd | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-05-24 | fe9d9a46 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-05-24 | - | - | Michael Lewis (<michael.lewis.c@gmail.com>) | Initial authoring; locks in shipped bootstrapActionPermissions surface
 
-*End* *YAML-seeded role/permission bootstrap* | **Hash**: ee6ce7e8
+*End* *YAML-seeded role/permission bootstrap* | **Hash**: 1c7419c2
