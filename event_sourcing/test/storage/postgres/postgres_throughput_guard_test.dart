@@ -23,6 +23,7 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 
+import '../../test_support/throughput_baseline_overrides.dart';
 import '../../test_support/throughput_guard_worktree.dart';
 import '../../test_support/tool_subprocess.dart';
 import 'test_postgres_url.dart';
@@ -115,6 +116,20 @@ void main() {
         },
         body: (worktreePath) async {
           final baselineEventSourcing = p.join(worktreePath, 'event_sourcing');
+          // The baseline resolves each hosted dependency it shares with this
+          // tree at the version this tree resolved, so the ratio measures the
+          // library's code rather than two releases of a driver.
+          final pins = baselineDependencyOverrides(
+            baselinePubspec: File(
+              p.join(baselineEventSourcing, 'pubspec.yaml'),
+            ).readAsStringSync(),
+            currentLock: File(
+              p.join(Directory.current.path, 'pubspec.lock'),
+            ).readAsStringSync(),
+          );
+          File(
+            p.join(baselineEventSourcing, 'pubspec_overrides.yaml'),
+          ).writeAsStringSync(pins.yaml);
           await _runTool(sdkTool('flutter'), [
             'pub',
             'get',
@@ -177,7 +192,8 @@ void main() {
             '${current.appendPerSec.toStringAsFixed(1)}, ingest '
             '${current.ingestPerSec.toStringAsFixed(1)}; ratios: append '
             '${appendRatio.toStringAsFixed(3)}, ingest '
-            '${ingestRatio.toStringAsFixed(3)}',
+            '${ingestRatio.toStringAsFixed(3)}; baseline pinned to: '
+            '${pins.versions.entries.map((e) => '${e.key} ${e.value}').join(', ')}',
           );
 
           expect(

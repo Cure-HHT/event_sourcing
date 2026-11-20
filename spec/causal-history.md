@@ -120,7 +120,7 @@ W. A chain verification interrupted by a failure SHALL fail carrying each findin
 
 **Why report how far an interrupted walk verified (assertions U, V and W)?** A verification of a whole log can fail part-way, for instance when the connection to the database drops. Without a position, the next verification starts again from the first event and meets the same failure at the same cost. The interruption names the highest local sequence number whose checks completed and carries the findings reported until then, so a caller verifies the rest with a range starting just above that number. Assertion D already makes that range check the link from the event before it into its first event, so a break exactly at the seam is found. An open event store records the findings the interruption carries, as it records those of a verdict, and does so before the interruption reaches the caller, so an anomaly met before the failure is not lost with it. A resumed verification can report again a finding of the event that was being checked when the failure came, or a fork already reported; recording keeps one finding of each identity, so a caller reads the two lists together by identity, not by concatenation.
 
-**Why a throughput bound (assertion T)?** The chains and the causal stamping add reads and writes to every append and every ingested event. Measured against the last release of the preceding major on the same workload and host, a fixed baseline the test pins, the bound keeps that cost proportionate and makes a regression fail the suite.
+**Why a throughput bound (assertion T)?** The chains and the causal stamping add reads and writes to every append and every ingested event. Measured against the last release of the preceding major on the same workload and host, a fixed baseline the test pins, the bound keeps that cost proportionate and makes a regression fail the suite. The baseline pins no dependency versions of its own and would resolve the newest release each dependency allows. The throughput test therefore holds each hosted dependency the baseline shares with the library at the version the library resolves, so a newer driver cannot move the baseline while the library's code stands still.
 
 **Succession.** A successor is a new database with its own identity, so its authored events form their own origin chain, rooted at its first event, and its predecessor's events form the predecessor's chain as the successor restored them, forks included. A succession therefore creates no fork, and the walk verifies the two chains separately. Continuity of authorship across a succession is a Layer 2 interpretation. The Layer 1 facts are the two chains and the succession event.
 
@@ -128,6 +128,8 @@ W. A chain verification interrupted by a failure SHALL fail carrying each findin
 
 ### Changelog
 
+- 2026-11-19 | 09fb6e24 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: sync changelog hash
+- 2026-11-19 | - | - | Michael Lewis (<michael@anspar.org>) | Rationale of T: the throughput test measures the baseline with the library's resolved versions of the dependencies they share.
 - 2026-10-31 | 09fb6e24 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-10-31 | 8e5e6e3c | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-10-31 | - | - | Michael Lewis (<michael@anspar.org>) | U, V and W: a verification interrupted by a failure reports how far it verified and the findings it had reported, and an open event store records them.

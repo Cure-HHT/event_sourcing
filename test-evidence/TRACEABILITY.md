@@ -2,7 +2,7 @@
 
 | ID | Title | Level | Status | Implemented | Tested | Passing | UAT Covered | UAT Passed | Code Tested | LCOV Tested |
 |----|----|----|----|----|----|----|----|----|----|----|
-| EVS-DEV-chain-verification | Storage and origin chain verification | DEV | Active | A-G,I-L,P-W (100%) | A-G,I-L,P-W (100%) [18P 0F 1A] | A-G,I-L,P-S,U-W (95%) | 0/19 (0%) | 0/19 (0%) | n/a | n/a |
+| EVS-DEV-chain-verification | Storage and origin chain verification | DEV | Active | A-G,I-L,P-W (100%) | A-G,I-L,P-W (100%) [19P 0F 0A] | A-G,I-L,P-W (100%) | 0/19 (0%) | 0/19 (0%) | n/a | n/a |
 | EVS-DEV-causal-parents | Causal parents within an aggregate | DEV | Active | A-H,K,L,T (100%) | A-H,K,L,T (100%) [11P 0F 0A] | A-H,K,L,T (100%) | 0/11 (0%) | 0/11 (0%) | n/a | n/a |
 | EVS-PRD-delivery-channel | Delivery channel continuity | PRD | Active | A-F,H,I,L,P-R,T,U,X,Z (100%) | A-F,H,I,L,P-R,T,U,X,Z (100%) [16P 0F 0A] | A-F,H,I,L,P-R,T,U,X,Z (100%) | 0/16 (0%) | 0/16 (0%) | n/a | n/a |
 | EVS-DEV-delivery-channel | Delivery channel sender mechanics | DEV | Active | A-E,G-N,Q-S (100%) | A-E,G-N,Q-S (100%) [16P 0F 0A] | A-E,G-N,Q-S (100%) | 0/16 (0%) | 0/16 (0%) | n/a | n/a |
@@ -511,7 +511,9 @@ Code:
 
 Tests:
 
-- event_sourcing/test/storage/postgres/postgres_throughput_guard_test.dart:100 append and ingest throughput stay at least half the baseline build's -- skipped
+- event_sourcing/test/storage/postgres/postgres_throughput_guard_test.dart:101 append and ingest throughput stay at least half the baseline build's -- skipped
+- event_sourcing/test/storage/throughput_baseline_overrides_test.dart:107 the overrides file pins exactly those versions -- passed
+- event_sourcing/test/storage/throughput_baseline_overrides_test.dart:92 holds each hosted dependency the baseline shares with the current tree at the version the current tree resolved -- passed
 
 **U**
 
