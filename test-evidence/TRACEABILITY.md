@@ -512,7 +512,7 @@ Code:
 
 Tests:
 
-- event_sourcing/test/storage/postgres/postgres_throughput_guard_test.dart:100 append and ingest throughput stay at least half the baseline build's -- skipped
+- event_sourcing/test/storage/postgres/postgres_throughput_guard_test.dart:101 append and ingest throughput stay at least half the baseline build's -- skipped
 
 **U**
 
