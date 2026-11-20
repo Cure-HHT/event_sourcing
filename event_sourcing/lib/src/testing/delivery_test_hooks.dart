@@ -6,6 +6,8 @@ import 'dart:async';
 
 import 'package:event_sourcing/src/logging.dart';
 import 'package:event_sourcing/src/storage/postgres_migration_step.dart';
+import 'package:event_sourcing/src/storage/storage_encryption.dart'
+    show SembastConversionPoint;
 import 'package:event_sourcing/src/versions.dart';
 import 'package:meta/meta.dart';
 
@@ -48,6 +50,9 @@ final Object _zoneKey = Object();
 /// injection after its library-version append ([afterBootVersionEvent]),
 /// and one after its Postgres transaction's body returns
 /// ([failBootTransactionWithSerializationFailure]).
+/// A conversion of an unencrypted Sembast database to an encrypted one can
+/// be stopped at each of its points as a crash would stop it
+/// ([failSembastConversion]).
 /// The incompatible-generation guard and the Postgres lock session have
 /// seams that delay ([insideBootLock]), replace the timers of the lock
 /// session's probe, the delivery cycle's cadence and heartbeat and a
@@ -135,6 +140,7 @@ class DeliveryTestHooks {
     this.failFoldSavepointWithSerializationFailure,
     this.failCatchUpFoldFindingAppend,
     this.failUndeclaredEventTypeFindingAppend,
+    this.failSembastConversion,
   });
 
   /// Observes every line the library logs. An exception it throws is
@@ -472,6 +478,12 @@ class DeliveryTestHooks {
   /// append: the failure is logged and the refusal still reaches the
   /// caller.
   final bool Function()? failUndeclaredEventTypeFindingAppend;
+
+  /// Consulted at each point of a conversion of an unencrypted Sembast
+  /// database to an encrypted one. Returning true makes the conversion
+  /// throw [InjectedFailure] there, leaving the files as a crash at that
+  /// point would; nothing after it runs and nothing is cleaned up.
+  final bool Function(SembastConversionPoint point)? failSembastConversion;
 
   /// Read once by `SyncCycle.start`. When true, the started cycle holds its
   /// event store's trigger slot as any cycle does, but a wake runs no pass

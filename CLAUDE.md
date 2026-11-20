@@ -354,10 +354,11 @@ The currently-trusted inputs are:
   to reach it is outside the public API the barrier governs.
 - **The library's storage credentials and location.** The Postgres
   credentials of the library's runtime and lock roles, and the location
-  of a Sembast database the library opens, reach the library in the
-  storage description the application supplies. They are trusted to be
-  used by no code but the library: code that uses them opens its own
-  connection or handle, which the run-time barrier does not reach
+  of a Sembast database the library opens with the key it is encrypted
+  under, reach the library in the storage description the application
+  supplies. They are trusted to be used by no code but the library: code
+  that uses them opens its own connection or handle, or decrypts the
+  database file, which the run-time barrier does not reach
   (`EVS-PRD-destinations/L`). This is an unaudited deployment input
   with no pluggable interface (`spec/roadmap/storage.md`).
 - **Deployment-supplied Postgres lock-session path.** The connection a

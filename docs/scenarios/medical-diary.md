@@ -13,8 +13,10 @@ this app's stack.
 
 ## 1. Initialization and use
 
-**Storage.** `SembastBackend` on the patient's phone (works offline, encrypted
-at rest by Flutter Secure Storage on the database key). `PostgresBackend` on
+**Storage.** `SembastBackend` on the patient's phone (works offline; the
+database file is encrypted at rest with AES-256 under a key the app keeps in
+the platform's secure key storage and hands to the library in the storage
+description, `SembastStorage.file(path, encryptionKey: key)`). `PostgresBackend` on
 the study server. Both pass the same conformance harness, so the *substrate*
 code on both sides is identical; only the backend handle differs.
 

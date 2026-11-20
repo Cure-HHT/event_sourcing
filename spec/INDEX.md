@@ -30,7 +30,7 @@
 | EVS-PRD-reaction-widget-contract      | Reaction Widget Contract          | prd-reaction.md                      | bb877b44 |
 | EVS-PRD-regulatory-alignment          | Regulatory Alignment              | prd-regulatory-alignment.md          | d8a802ad |
 | EVS-PRD-scoped-permissions            | Scope-aware authorization model   | scoped-permissions.md                | 3442b415 |
-| EVS-PRD-storage-barrier               | Storage barrier                   | prd-storage-barrier.md               | 35fe949c |
+| EVS-PRD-storage-barrier               | Storage barrier                   | prd-storage-barrier.md               | 76dc7e15 |
 | EVS-PRD-subscription                  | Subscription                      | prd-subscription.md                  | 026033a7 |
 | EVS-PRD-view-subscriber               | View Subscriber                   | prd-reaction.md                      | 4dd6e5f0 |
 
@@ -69,9 +69,10 @@
 | EVS-DEV-scope-value-json                   | Sealed ScopeValue JSON contract                              | scoped-permissions.md                   | 35e57fd0 |
 | EVS-DEV-scoped-permissions-match-algorithm | TableBackedAuthorizationPolicy match semantics               | scoped-permissions.md                   | f186081d |
 | EVS-DEV-security-findings                  | Security findings                                            | dev-security-findings.md                | 58a4280f |
+| EVS-DEV-sembast-encryption                 | Encrypted Sembast database files                             | dev-sembast-encryption.md               | 06daca32 |
 | EVS-DEV-sender-succession                  | Sender succession                                            | delivery-continuity.md                  | c24246dc |
 | EVS-DEV-severe-log-default                 | Severe log records reach standard error                      | dev-severe-log-default.md               | 2019159d |
-| EVS-DEV-storage-capability                 | The storage capability the library keeps                     | dev-storage-capability.md               | 4cba8786 |
+| EVS-DEV-storage-capability                 | The storage capability the library keeps                     | dev-storage-capability.md               | 2747db23 |
 | EVS-DEV-transactional-authorize-execute    | Dispatch tx encompasses authorize + execute + persist        | scoped-permissions.md                   | 5e07a961 |
 | EVS-DEV-version-compatibility              | Entry-type and data-format versions                          | dev-version-compatibility.md            | 8de1eacb |
 | EVS-DEV-view-convergence                   | View copies and their catch-up                               | dev-view-convergence.md                 | 766c4e99 |

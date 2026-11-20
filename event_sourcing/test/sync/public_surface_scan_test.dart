@@ -241,6 +241,7 @@ const _seamKinds = <String, String>{
   'failFoldSavepointWithSerializationFailure': 'failure injection',
   'failCatchUpFoldFindingAppend': 'failure injection',
   'failUndeclaredEventTypeFindingAppend': 'failure injection',
+  'failSembastConversion': 'failure injection',
 };
 
 const _seamKindNames = <String>{

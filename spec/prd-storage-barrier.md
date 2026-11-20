@@ -29,6 +29,12 @@ I. When opening an event store fails after the library opened its storage, the l
 
 J. In a build with assertions disabled, no test seam and no test-only entry point SHALL change what the library writes, declares, records or locks, or admit a storage backend.
 
+K. Where a storage description carries an encryption key, the library SHALL store every record of the Sembast database it opens from that description encrypted with AES-256 under that key.
+
+L. If the encryption key a storage description carries does not decrypt the Sembast database the description names, then the library SHALL refuse to open that database, leaving its stored content unchanged.
+
+M. When a storage description that carries an encryption key names a Sembast database stored unencrypted, the library SHALL open it as a database encrypted under that key holding the same records.
+
 ## Rationale
 
 **Why a run-time barrier?** Marking the writing surface internal (EVS-PRD-destinations/K) makes a consumer's call to it an analyzer diagnostic and nothing more: an ignore comment, an import of a `src/` file, a dynamic call or a downcast still reaches the member at run time. The library runs in regulated deployments whose invariants it enforces rather than documents, so the objects the application holds carry no writing member at all. Dart's library privacy enforces this: a member whose name is private to its Dart library cannot be named from another library, by the compiler or through a dynamic call.
@@ -43,7 +49,7 @@ J. In a build with assertions disabled, no test seam and no test-only entry poin
 
 **Why the library opens and closes the storage (assertions A, H and I).** A backend the application constructs over a handle it opened leaves the handle with the application: on Sembast the `Database`, on Postgres the pool and its sessions. Taking a description -- a location, or connection settings -- lets the library be the only holder of the handle it opens, and therefore the only one that can close it. An open refused after the storage was opened would otherwise leave a pool and a lock session per attempt on Postgres, an IndexedDB connection that blocks the database's deletion in the browser, and on the native runtimes a handle that the next open of the same location in the isolate receives again.
 
-**What the barrier does not reach.** The credentials and the location in the description: code that uses them opens its own connection or handle, and sembast returns the handle already open on a location to a second open of that location in the same isolate. The administrators of a Postgres database: the owner of the library's tables, superusers, a role holding `CREATEROLE`, and a role holding the admin option over a library role. The standalone Dart VM's `dart:mirrors` and its service protocol, which can read private state. On the web, script on the page, which can walk a compiled Dart object's fields and open the library's IndexedDB database by name. A storage backend the application constructs (assertion G). These are the storage precondition (EVS-PRD-destinations/L).
+**What the barrier does not reach.** The credentials, the location and the encryption key in the description: code that uses them opens its own connection or handle, or decrypts the database file, and sembast returns the handle already open on a location to a second open of that location in the same isolate. The administrators of a Postgres database: the owner of the library's tables, superusers, a role holding `CREATEROLE`, and a role holding the admin option over a library role. The standalone Dart VM's `dart:mirrors` and its service protocol, which can read private state. On the web, script on the page, which can walk a compiled Dart object's fields and open the library's IndexedDB database by name. A storage backend the application constructs (assertion G). These are the storage precondition (EVS-PRD-destinations/L).
 
 **Why builds with assertions disabled (assertion J).** The library carries test seams -- failure injection, interleaving points, and substitutions of the versions a boot declares or the migrations a schema is provisioned with -- and a test-only constructor that takes a backend. In a build with assertions disabled, which is how the library runs in production, the seams are never read and the test-only constructor refuses. A build with assertions enabled is outside the barrier.
 
@@ -53,8 +59,12 @@ J. In a build with assertions disabled, no test seam and no test-only entry poin
 
 **The companion Postgres library (assertion G).** The library ships its Postgres backend in a companion public library, outside the main library. That library opens the backend through one internal extension point: the only storage description that a library outside the main library can extend. The analyzer reports every other use of that extension point (`invalid_use_of_internal_member`). Code that imports the library's private source files to reach it is outside the public API this barrier governs.
 
+**Why the library encrypts a Sembast database (assertions K, L and M).** A Sembast database is otherwise as confidential as the platform keeps its files, and an application that needs its records unreadable to whoever copies the file (an operating-system backup, a lost device) has no way to achieve that without handing the library code for its persistence path. The library therefore ships the encryption itself and takes only a key in the description, which is data, so no application code enters the path the barrier protects. Encryption is authenticated, so an altered record fails to decrypt rather than reading back changed. Refusing a wrong key without writing (L) keeps a database whose key has not yet reached the device recoverable. Converting an unencrypted database (M) lets an application that adopts encryption keep the records it already holds. Where the key comes from, and how it reaches a new device, is the application's concern. EVS-DEV-sembast-encryption states the cipher, the refusal and the conversion.
+
 ## Changelog
 
+- 2026-11-19 | 76dc7e15 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-11-19 | - | - | Michael Lewis (<michael@anspar.org>) | Add K-M: a Sembast database opened from a description carrying an encryption key is stored encrypted with AES-256 under it; a key that does not decrypt it is refused with its content unchanged; an unencrypted one is opened as an encrypted database holding the same records. Rationale of K-M
 - 2026-10-05 | 35fe949c | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: sync changelog hash
 - 2026-10-05 | - | - | Michael Lewis (<michael@anspar.org>) | Rationale of G: the companion Postgres library opens its backend through one internal extension point, the only storage description a library outside the main library can extend, and the analyzer reports every other use of it; code that imports the library's private source files is outside the public API the barrier governs
 - 2026-09-25 | 35fe949c | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
@@ -70,4 +80,4 @@ J. In a build with assertions disabled, no test seam and no test-only entry poin
 - 2026-09-25 | 0e74a563 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-24 | - | - | Michael Lewis (<michael@anspar.org>) | Add A-J: the library opens its shipped backends' storage from a description and closes it, on a failed open too; no object handed to application code writes persisted state, appends a reserved event, publishes, or yields a storage handle at run time; an application's own Postgres tables sit behind a role of its own, and a database on which a role outside the declared library roles may write a library table is refused at open; an application-supplied backend is accepted only through an entry point that names it; test seams and the test-only entry point have no effect with assertions disabled
 
-*End* *Storage barrier* | **Hash**: 35fe949c
+*End* *Storage barrier* | **Hash**: 76dc7e15

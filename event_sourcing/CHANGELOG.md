@@ -1,5 +1,56 @@
 # Changelog
 
+## 0.9.0
+
+Data: data format 3.1, unchanged. A Sembast database file opened with an
+encryption key for the first time is converted in place (see below); one
+opened without a key is unchanged.
+
+### Storage
+
+- A Sembast file description takes an optional `encryptionKey`
+  (`SembastStorage.file(path, encryptionKey: key)`), a
+  `StorageEncryptionKey` of exactly 32 bytes (`StorageEncryptionKey.generate()`
+  draws one from a secure random source). The library then stores every
+  record line of the file, the compacted file included, as AES-256-GCM
+  ciphertext under the key with a fresh random nonce per line
+  (EVS-PRD-storage-barrier/K, EVS-DEV-sembast-encryption). The key's and the
+  description's text forms omit the key. A browser or in-memory description
+  takes no key, and a file description without one stores the file
+  unencrypted, as before.
+- A key that does not decrypt the database, or no key for an encrypted
+  database, makes `EventStore.open` throw `StorageKeyMismatchError`, and the
+  file is left byte for byte as it was (EVS-PRD-storage-barrier/L).
+- An unencrypted database opened with a key is converted: it is opened as
+  an open without a key opens it (which repairs a last line a crash cut
+  short), rewritten line by line into an encrypted copy beside it, the copy
+  read back and compared line by line, flushed, and moved over the file by
+  one rename. A crash at any point leaves either the unencrypted file or
+  the complete encrypted one, and the next open with the key finishes the
+  conversion (EVS-PRD-storage-barrier/M). It holds one line in memory at a
+  time, so it needs no more memory than an ordinary open. A database the
+  0.6 and 0.7 releases wrote (data format 3.0) opens this way with every
+  event and view row.
+- The inspection and conversion run holding an exclusive lock on a file
+  beside the database (`<path>.encryption-lock`), so a conversion in
+  another process waits. The lock is per process: two isolates of one
+  process opening one file remain unsupported, as on Sembast generally.
+- `deleteSembastDatabase` on a file description also deletes what an
+  encrypted open leaves beside the file: an interrupted conversion's copy
+  (`<path>.encrypting`), sembast's compaction files (`~<name>`) and the
+  lock file.
+- `SembastStorage.inspectFile(path)` reports, from the file's first line and
+  writing nothing, whether the database at a path is `absent` (no file, or
+  an empty one), `unencrypted` or `encrypted` (`SembastFileEncryption`). It
+  throws `FormatException` for a file that is not a Sembast database.
+- A second open, in the same isolate, of a location an event store holds
+  open is refused unless it asks for the same key.
+- New dependency: `pointycastle` ^4.0.0, whose pure-Dart AES block cipher
+  the library's own GCM mode runs over (`pointycastle`'s GCM is too slow
+  for a database of a few thousand events). Measured on a desktop in an
+  AOT build, a database of 10,000 events opens in about 1.5 s encrypted
+  (0.3 s unencrypted) and converts in about 6.6 s.
+
 ## 0.8.0
 
 Data: data format 3.1, a minor step: keyed destinations. Postgres schema

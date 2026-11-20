@@ -13,11 +13,22 @@
 // Implements: EVS-PRD-storage-barrier/G
 // a backend the application constructed is accepted only through the
 //   description that names it application-supplied.
+// Implements: EVS-PRD-storage-barrier/L
+// a key that does not decrypt the database, or no key for an encrypted one,
+//   is refused before sembast writes anything.
+// Implements: EVS-DEV-sembast-encryption/E+K
+// the codec-signature refusal surfaces as StorageKeyMismatchError, and a
+//   location held open in this isolate is shared only under the same
+//   encryption setting.
 import 'package:event_sourcing/src/security/security_context_store.dart';
 import 'package:event_sourcing/src/storage/sembast_backend.dart';
 import 'package:event_sourcing/src/storage/sembast_factory.dart';
+import 'package:event_sourcing/src/storage/sembast_file_io.dart'
+    if (dart.library.js_interop) 'package:event_sourcing/src/storage/sembast_file_web.dart';
 import 'package:event_sourcing/src/storage/storage_backend.dart';
+import 'package:event_sourcing/src/storage/storage_encryption.dart';
 import 'package:meta/meta.dart' show internal;
+import 'package:sembast/sembast.dart' show Database, DatabaseException;
 
 /// Where and how an event store's storage lives: the input of
 /// `EventStore.open` and `bootstrapEventStore`.
@@ -36,11 +47,22 @@ sealed class StorageDescription {
 /// browser (IndexedDB) database on the web, or an in-memory database of the
 /// calling isolate. The library selects the factory itself; the description
 /// carries no code.
+///
+/// A file description may carry an [encryptionKey]. The library then stores
+/// every line of the database file encrypted with AES-256-GCM under it, and
+/// an existing unencrypted database at the path is converted to an
+/// encrypted one holding the same records the first time it is opened with
+/// a key. A key that does not decrypt the database, or no key for an
+/// encrypted one, is refused with [StorageKeyMismatchError], leaving the
+/// file unchanged. A description without a key stores the database
+/// unencrypted.
 final class SembastStorage extends StorageDescription {
-  /// The database file at [path], on the native runtimes.
+  /// The database file at [path], on the native runtimes, stored encrypted
+  /// under [encryptionKey] when one is given.
   const SembastStorage.file(
     String path, {
     this.bootLockWait = const Duration(seconds: 60),
+    this.encryptionKey,
   }) : location = path,
        _kind = SembastLocationKind.file;
 
@@ -49,6 +71,7 @@ final class SembastStorage extends StorageDescription {
     String name, {
     this.bootLockWait = const Duration(seconds: 60),
   }) : location = name,
+       encryptionKey = null,
        _kind = SembastLocationKind.browser;
 
   /// The in-memory database named [name] of the calling isolate. It keeps
@@ -58,7 +81,23 @@ final class SembastStorage extends StorageDescription {
     String name, {
     this.bootLockWait = const Duration(seconds: 60),
   }) : location = name,
+       encryptionKey = null,
        _kind = SembastLocationKind.memory;
+
+  /// Whether the Sembast database file at [path] is absent, unencrypted or
+  /// encrypted, read from the first line of the file. It writes nothing,
+  /// and needs no key.
+  ///
+  /// A missing file, or one with no line, is [SembastFileEncryption.absent].
+  /// When the file is missing and the file sembast compacts it into is
+  /// present, that file is the database an open would use, and it is the
+  /// one read. Throws [FormatException] when the first line is not the
+  /// metadata line of a Sembast database, and [UnsupportedError] in the
+  /// browser, which has no database files.
+  // Implements: EVS-DEV-sembast-encryption/J
+  // reads the first line only and writes nothing.
+  static Future<SembastFileEncryption> inspectFile(String path) =>
+      inspectSembastFile(path);
 
   /// The file path, browser database name or in-memory database name.
   final String location;
@@ -68,6 +107,11 @@ final class SembastStorage extends StorageDescription {
   /// effect.
   final Duration bootLockWait;
 
+  /// The key a file description stores its database under; null for an
+  /// unencrypted database, and always null for a browser or in-memory
+  /// description.
+  final StorageEncryptionKey? encryptionKey;
+
   final SembastLocationKind _kind;
 
   @override
@@ -75,13 +119,16 @@ final class SembastStorage extends StorageDescription {
       other is SembastStorage &&
       other._kind == _kind &&
       other.location == location &&
-      other.bootLockWait == bootLockWait;
+      other.bootLockWait == bootLockWait &&
+      other.encryptionKey == encryptionKey;
 
   @override
-  int get hashCode => Object.hash(_kind, location, bootLockWait);
+  int get hashCode => Object.hash(_kind, location, bootLockWait, encryptionKey);
 
   @override
-  String toString() => 'SembastStorage.${_kind.name}($location)';
+  String toString() => encryptionKey == null
+      ? 'SembastStorage.${_kind.name}($location)'
+      : 'SembastStorage.${_kind.name}($location, encrypted)';
 }
 
 /// Storage on a backend the library ships behind a public library of its
@@ -189,12 +236,20 @@ Future<OpenedStorage> openDescribedStorage(
   switch (description) {
     case SembastStorage(:final location, _kind: final kind):
       // The location is recorded as held before the database opens, so a
-      // concurrent open of it in this isolate shares this open.
-      var opening =
-          shareHeldSembastLocation(kind, location) as Future<SembastBackend>?;
-      if (opening == null) {
+      // concurrent open of it in this isolate shares this open, when it
+      // asks for the same encryption.
+      final held = shareHeldSembastLocation(kind, location) as _SembastOpening?;
+      final Future<SembastBackend> opening;
+      if (held == null) {
         opening = _openSembast(description);
-        holdSembastLocation(kind, location, opening);
+        holdSembastLocation(
+          kind,
+          location,
+          _SembastOpening(opening, description.encryptionKey),
+        );
+      } else {
+        _checkSameEncryption(held.key, description);
+        opening = held.backend;
       }
       final SembastBackend backend;
       try {
@@ -221,21 +276,75 @@ Future<OpenedStorage> openDescribedStorage(
   }
 }
 
+/// The open of a Sembast location an event store of this isolate holds,
+/// with the key it was opened under.
+final class _SembastOpening {
+  _SembastOpening(this.backend, this.key);
+  final Future<SembastBackend> backend;
+  final StorageEncryptionKey? key;
+}
+
+/// Refuses a second open of a location this isolate holds open under
+/// [heldKey] when [description] asks for another encryption: a key that
+/// does not decrypt the open database, or no key for an encrypted one,
+/// with [StorageKeyMismatchError]; a key for a database held open
+/// unencrypted with [StateError], since converting it needs every event
+/// store over it closed. The caller was counted as a holder, and is
+/// released before the refusal.
+void _checkSameEncryption(
+  StorageEncryptionKey? heldKey,
+  SembastStorage description,
+) {
+  final key = description.encryptionKey;
+  if (heldKey == null && key == null) return;
+  if (heldKey != null && heldKey.sameAs(key)) return;
+  releaseSembastLocation(description._kind, description.location);
+  if (heldKey == null) {
+    throw StateError(
+      'the Sembast database ${description.location} is held open '
+      'unencrypted by an event store of this isolate; close every event '
+      'store over it before opening it with an encryption key',
+    );
+  }
+  throw StorageKeyMismatchError(description.location, keyGiven: key != null);
+}
+
 Future<SembastBackend> _openSembast(SembastStorage storage) async {
-  final db = await sembastFactoryFor(
-    storage._kind,
-  ).openDatabase(storage.location);
+  final key = storage.encryptionKey;
+  if (key != null) {
+    await prepareEncryptedSembastFile(storage.location, key);
+  }
+  final factory = sembastFactoryFor(storage._kind);
+  final Database db;
+  try {
+    db = await factory.openDatabase(
+      storage.location,
+      codec: key == null ? null : encryptingSembastCodec(key),
+    );
+  } on DatabaseException catch (error) {
+    // sembast compares the codec signature recorded on the database's
+    // first line with the codec it is given before it writes anything,
+    // and refuses a mismatch as an invalid codec.
+    if (error.code != DatabaseException.errInvalidCodec) rethrow;
+    throw StorageKeyMismatchError(storage.location, keyGiven: key != null);
+  }
   return SembastBackend(database: db, bootLockWait: storage.bootLockWait);
 }
 
 /// Deletes the Sembast database [storage] names, through the factory the
-/// library opens it with. A database an earlier data format wrote is
+/// library opens it with. For a database file it also deletes what an
+/// encrypted open leaves beside the file: an encrypted copy an interrupted
+/// conversion left, the files sembast compacts into, and the conversion's
+/// lock file. A database an earlier data format wrote is
 /// refused at open as one that must be reset; this is how the application
 /// resets it. Deleting a database that does not exist does nothing.
 ///
 /// Throws [StateError], deleting nothing, while an event store of the
 /// calling isolate holds the database open: close it first. An event store
 /// whose open failed has already closed its storage.
+// Implements: EVS-DEV-sembast-encryption/O
+// the delete also removes every file an encrypted open leaves beside the
+//   database file.
 // Implements: EVS-DEV-storage-capability/L
 // the library deletes the Sembast database a description names, and
 //   refuses with StateError while an event store of the calling isolate
@@ -248,4 +357,7 @@ Future<void> deleteSembastDatabase(SembastStorage storage) async {
     );
   }
   await sembastFactoryFor(storage._kind).deleteDatabase(storage.location);
+  if (storage._kind == SembastLocationKind.file) {
+    await deleteSembastFileCompanions(storage.location);
+  }
 }

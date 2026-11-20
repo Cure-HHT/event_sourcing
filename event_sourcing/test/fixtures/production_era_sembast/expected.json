@@ -1,0 +1,373 @@
+{
+  "library_version": "0.6.1",
+  "data_format": "3.0",
+  "database_id": "e699ce0e-b5c8-4937-9554-e3287dc9987e",
+  "events": [
+    {
+      "sequence_number": 1,
+      "event_id": "9c80b826-d029-48a0-b66d-3d5ffe165c4d",
+      "entry_type": "lib_version_initialized",
+      "event_type": "lib_version_initialized",
+      "aggregate_id": "_lib",
+      "event_hash": "c48359824108ed026f1eef8013674416b19d5ac1c5b7e1656eba483b8cc962fb",
+      "data": {
+        "version": "0.6.1",
+        "data_format": {
+          "major": 3,
+          "minor": 0
+        },
+        "database_id": "e699ce0e-b5c8-4937-9554-e3287dc9987e",
+        "initializedAt": "2026-11-20T00:22:43.741676Z"
+      }
+    },
+    {
+      "sequence_number": 2,
+      "event_id": "56df7b99-c754-47ff-b8cd-59968384425b",
+      "entry_type": "system.entry_type_registry_initialized",
+      "event_type": "finalized",
+      "aggregate_id": "00000000-0000-4000-8000-00000000f1c5",
+      "event_hash": "68d7294253a1c764c8f9f49342f0db6ffe0e15932857fbec5fa3c710ea89e1e3",
+      "data": {
+        "registry": {
+          "fixture_note": "1.0",
+          "security_context_redacted": "1.0",
+          "security_context_compacted": "1.0",
+          "security_context_purged": "1.0",
+          "system.destination_registered": "1.0",
+          "system.destination_start_date_set": "1.0",
+          "system.destination_end_date_set": "1.0",
+          "system.destination_deleted": "1.0",
+          "system.destination_wedge_recovered": "1.0",
+          "system.destination_wedged": "1.0",
+          "system.destination_halt_requested": "1.0",
+          "system.destination_halt_cancelled": "1.0",
+          "system.retention_policy_applied": "1.0",
+          "system.entry_type_registry_initialized": "1.0",
+          "lib_version_initialized": "1.0",
+          "lib_version_changed": "1.0",
+          "ingest-audit": "1.0",
+          "system.security_finding": "1.0",
+          "system.destination_channel_resumed": "1.0",
+          "system.destination_sender_succeeded": "1.0"
+        },
+        "declarations": {
+          "fixture_note": {
+            "written": {
+              "kind": "version",
+              "eligible": true
+            },
+            "removed": {
+              "kind": "version",
+              "eligible": true
+            }
+          },
+          "security_context_redacted": {
+            "security_context_redacted": {
+              "kind": "annotation",
+              "eligible": false
+            }
+          },
+          "security_context_compacted": {
+            "security_context_compacted": {
+              "kind": "annotation",
+              "eligible": false
+            }
+          },
+          "security_context_purged": {
+            "security_context_purged": {
+              "kind": "annotation",
+              "eligible": false
+            }
+          },
+          "system.destination_registered": {
+            "destination_registered": {
+              "kind": "annotation",
+              "eligible": false
+            }
+          },
+          "system.destination_start_date_set": {
+            "destination_start_date_set": {
+              "kind": "annotation",
+              "eligible": false
+            }
+          },
+          "system.destination_end_date_set": {
+            "destination_end_date_set": {
+              "kind": "annotation",
+              "eligible": false
+            }
+          },
+          "system.destination_deleted": {
+            "destination_deleted": {
+              "kind": "annotation",
+              "eligible": false
+            }
+          },
+          "system.destination_wedge_recovered": {
+            "destination_wedge_recovered": {
+              "kind": "annotation",
+              "eligible": false
+            }
+          },
+          "system.destination_wedged": {
+            "destination_wedged": {
+              "kind": "annotation",
+              "eligible": false
+            }
+          },
+          "system.destination_halt_requested": {
+            "destination_halt_requested": {
+              "kind": "annotation",
+              "eligible": false
+            }
+          },
+          "system.destination_halt_cancelled": {
+            "destination_halt_cancelled": {
+              "kind": "annotation",
+              "eligible": false
+            }
+          },
+          "system.retention_policy_applied": {
+            "finalized": {
+              "kind": "annotation",
+              "eligible": false
+            }
+          },
+          "system.entry_type_registry_initialized": {
+            "finalized": {
+              "kind": "annotation",
+              "eligible": false
+            }
+          },
+          "lib_version_initialized": {
+            "lib_version_initialized": {
+              "kind": "annotation",
+              "eligible": false
+            }
+          },
+          "lib_version_changed": {
+            "lib_version_changed": {
+              "kind": "annotation",
+              "eligible": false
+            }
+          },
+          "ingest-audit": {
+            "ingest.duplicate_received": {
+              "kind": "annotation",
+              "eligible": false
+            },
+            "ingest.delivery_accepted": {
+              "kind": "annotation",
+              "eligible": false
+            }
+          },
+          "system.security_finding": {
+            "security_finding_recorded": {
+              "kind": "annotation",
+              "eligible": false
+            }
+          },
+          "system.destination_channel_resumed": {
+            "destination_channel_resumed": {
+              "kind": "annotation",
+              "eligible": false
+            }
+          },
+          "system.destination_sender_succeeded": {
+            "destination_sender_succeeded": {
+              "kind": "annotation",
+              "eligible": false
+            }
+          }
+        }
+      }
+    },
+    {
+      "sequence_number": 3,
+      "event_id": "d3da6b56-30ea-4318-9051-20c5c794b86e",
+      "entry_type": "system.destination_registered",
+      "event_type": "destination_registered",
+      "aggregate_id": "00000000-0000-4000-8000-00000000f1c5",
+      "event_hash": "ac6fcaa4ea1e827703957d7d0276681d730e8acea81746215dc9c0a2085cd4de",
+      "data": {
+        "id": "fixture-outbound",
+        "wire_format": "fixture-json-1",
+        "allow_hard_delete": false,
+        "serializes_natively": false,
+        "filter_entry_types": [
+          "fixture_note"
+        ],
+        "filter_event_types": null,
+        "filter_predicate_description": null,
+        "database_id": "e699ce0e-b5c8-4937-9554-e3287dc9987e"
+      }
+    },
+    {
+      "sequence_number": 4,
+      "event_id": "1a981ba3-a21e-47f4-99c8-05d7b961f505",
+      "entry_type": "system.destination_start_date_set",
+      "event_type": "destination_start_date_set",
+      "aggregate_id": "00000000-0000-4000-8000-00000000f1c5",
+      "event_hash": "b14c7b5a16f00c01c1a10969c591febf09356a913ea30d4290c762b14ffa6b28",
+      "data": {
+        "id": "fixture-outbound",
+        "start_date": "2026-01-01T00:00:00.000Z",
+        "prior_start_date": null,
+        "database_id": "e699ce0e-b5c8-4937-9554-e3287dc9987e"
+      }
+    },
+    {
+      "sequence_number": 5,
+      "event_id": "d0508df9-34e8-4c6b-ad24-b0803490945d",
+      "entry_type": "fixture_note",
+      "event_type": "written",
+      "aggregate_id": "note-1",
+      "event_hash": "12f0e854061ea8535ac658d586e58b72bc222e527c1168a301a9740114c94497",
+      "data": {
+        "text": "fixture nosebleed record 1",
+        "severity": 1
+      }
+    },
+    {
+      "sequence_number": 6,
+      "event_id": "2e9943aa-0be6-49fc-af2c-88618722d144",
+      "entry_type": "fixture_note",
+      "event_type": "written",
+      "aggregate_id": "note-2",
+      "event_hash": "7e4c559abc1e200224d3d406e855739dc71626c059931e258789595b8b93fc4c",
+      "data": {
+        "text": "fixture nosebleed record 2",
+        "severity": 2
+      }
+    },
+    {
+      "sequence_number": 7,
+      "event_id": "b393d8b2-f40d-42c8-96bb-0c29a3aa21dd",
+      "entry_type": "fixture_note",
+      "event_type": "written",
+      "aggregate_id": "note-3",
+      "event_hash": "4e7f35f055316754cb28c9d085935b05d3a947c3e638b51df767e1c643364775",
+      "data": {
+        "text": "fixture nosebleed record 3",
+        "severity": 3
+      }
+    },
+    {
+      "sequence_number": 8,
+      "event_id": "28a31a1d-6186-4d5b-b7d1-808eeff664b7",
+      "entry_type": "fixture_note",
+      "event_type": "written",
+      "aggregate_id": "note-4",
+      "event_hash": "1fcd24ad82f57697eb2b1cecf73beb5bdc6ecf1070117445bd437dc945e25194",
+      "data": {
+        "text": "fixture nosebleed record 4",
+        "severity": 4
+      }
+    },
+    {
+      "sequence_number": 9,
+      "event_id": "8e8fb509-34e8-493a-9c3f-ccf9279758a5",
+      "entry_type": "fixture_note",
+      "event_type": "written",
+      "aggregate_id": "note-5",
+      "event_hash": "30011917c67ff4975ae937634d85fb6265285d443e7dbed66306be0a8a652a31",
+      "data": {
+        "text": "fixture nosebleed record 5",
+        "severity": 5
+      }
+    },
+    {
+      "sequence_number": 10,
+      "event_id": "e79b5d66-74d4-4a31-94e4-0757eeea1b0e",
+      "entry_type": "fixture_note",
+      "event_type": "written",
+      "aggregate_id": "note-6",
+      "event_hash": "8c08ecb9ee7eddce3822d6d80cc78ce36ee25f1d6d2b113b71cda2145a53447b",
+      "data": {
+        "text": "fixture nosebleed record 6",
+        "severity": 6
+      }
+    },
+    {
+      "sequence_number": 11,
+      "event_id": "dcb6f769-3ae3-40be-b14b-848e0f426aaa",
+      "entry_type": "fixture_note",
+      "event_type": "removed",
+      "aggregate_id": "note-2",
+      "event_hash": "1a5aafff85dde6be313b2318e95b5af4cdd107f375aa1f988a303d082a673570",
+      "data": {}
+    }
+  ],
+  "fixture_notes_rows": [
+    {
+      "text": "fixture nosebleed record 1",
+      "severity": 1,
+      "aggregateId": "note-1",
+      "entryType": "fixture_note",
+      "aggregateType": "FixtureNote",
+      "latestEventId": "d0508df9-34e8-4c6b-ad24-b0803490945d",
+      "updatedAt": "2026-11-20T00:22:43.778755Z",
+      "firstEventTimestamp": "2026-11-20T00:22:43.778755Z",
+      "sequence": 5,
+      "$integrity": {
+        "security_findings": []
+      }
+    },
+    {
+      "text": "fixture nosebleed record 3",
+      "severity": 3,
+      "aggregateId": "note-3",
+      "entryType": "fixture_note",
+      "aggregateType": "FixtureNote",
+      "latestEventId": "b393d8b2-f40d-42c8-96bb-0c29a3aa21dd",
+      "updatedAt": "2026-11-20T00:22:43.782618Z",
+      "firstEventTimestamp": "2026-11-20T00:22:43.782618Z",
+      "sequence": 7,
+      "$integrity": {
+        "security_findings": []
+      }
+    },
+    {
+      "text": "fixture nosebleed record 4",
+      "severity": 4,
+      "aggregateId": "note-4",
+      "entryType": "fixture_note",
+      "aggregateType": "FixtureNote",
+      "latestEventId": "28a31a1d-6186-4d5b-b7d1-808eeff664b7",
+      "updatedAt": "2026-11-20T00:22:43.785779Z",
+      "firstEventTimestamp": "2026-11-20T00:22:43.785779Z",
+      "sequence": 8,
+      "$integrity": {
+        "security_findings": []
+      }
+    },
+    {
+      "text": "fixture nosebleed record 5",
+      "severity": 5,
+      "aggregateId": "note-5",
+      "entryType": "fixture_note",
+      "aggregateType": "FixtureNote",
+      "latestEventId": "8e8fb509-34e8-493a-9c3f-ccf9279758a5",
+      "updatedAt": "2026-11-20T00:22:43.786948Z",
+      "firstEventTimestamp": "2026-11-20T00:22:43.786948Z",
+      "sequence": 9,
+      "$integrity": {
+        "security_findings": []
+      }
+    },
+    {
+      "text": "fixture nosebleed record 6",
+      "severity": 6,
+      "aggregateId": "note-6",
+      "entryType": "fixture_note",
+      "aggregateType": "FixtureNote",
+      "latestEventId": "e79b5d66-74d4-4a31-94e4-0757eeea1b0e",
+      "updatedAt": "2026-11-20T00:22:43.787897Z",
+      "firstEventTimestamp": "2026-11-20T00:22:43.787897Z",
+      "sequence": 10,
+      "$integrity": {
+        "security_findings": []
+      }
+    }
+  ]
+}
