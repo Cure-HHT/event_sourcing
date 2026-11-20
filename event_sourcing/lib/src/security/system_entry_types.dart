@@ -92,6 +92,28 @@ const String kDestinationChannelResumedEntryType =
 const String kDestinationSenderSucceededEntryType =
     'system.destination_sender_succeeded';
 
+/// Reserved id for the hold event the drainer appends when it holds a
+/// keyed destination's block key, and the fill when a release fails until
+/// the retry budget is spent.
+// Implements: EVS-DEV-destination-key-hold/K
+// the hold appends a system.destination_held event.
+const String kDestinationHeldEntryType = 'system.destination_held';
+
+/// Reserved id for the release event an operator's release of a held key
+/// appends.
+// Implements: EVS-DEV-destination-key-hold/O
+// the release appends a system.destination_hold_released event.
+const String kDestinationHoldReleasedEntryType =
+    'system.destination_hold_released';
+
+/// Reserved id for the clearing event the fill appends in the transaction
+/// that empties a releasing key list.
+// Implements: EVS-DEV-destination-key-hold/T
+// the transaction that empties a releasing key list appends a
+//   system.destination_hold_cleared event.
+const String kDestinationHoldClearedEntryType =
+    'system.destination_hold_cleared';
+
 // Implements: EVS-DEV-destination-drain/H
 // each kind of destination audit event carries
 //   an event type distinct from every other kind's, so a declarative filter
@@ -142,9 +164,19 @@ const String kDestinationChannelResumedEventType =
 const String kDestinationSenderSucceededEventType =
     'destination_sender_succeeded';
 
+/// Event type of the hold event ([kDestinationHeldEntryType]).
+const String kDestinationHeldEventType = 'destination_held';
+
+/// Event type of the release event ([kDestinationHoldReleasedEntryType]).
+const String kDestinationHoldReleasedEventType = 'destination_hold_released';
+
+/// Event type of the clearing event ([kDestinationHoldClearedEntryType]).
+const String kDestinationHoldClearedEventType = 'destination_hold_cleared';
+
 /// Every destination audit entry type: the registry's configuration,
-/// recovery and halt audits, the drainer's wedge and resume events and the
-/// succession event. Each carries the
+/// recovery and halt audits, the drainer's wedge and resume events, the
+/// succession event, and the hold, release and clearing events of a keyed
+/// destination. Each carries the
 /// destination identifier in `data['id']` and the appending database's
 /// identity in `data['database_id']`.
 @internal
@@ -159,6 +191,9 @@ const List<String> kDestinationAuditEntryTypes = <String>[
   kDestinationHaltCancelledEntryType,
   kDestinationChannelResumedEntryType,
   kDestinationSenderSucceededEntryType,
+  kDestinationHeldEntryType,
+  kDestinationHoldReleasedEntryType,
+  kDestinationHoldClearedEntryType,
 ];
 
 /// Reserved id for the retention-policy-applied audit event emitted by
@@ -347,6 +382,9 @@ const Set<String> kReservedSystemEntryTypeIds = <String>{
   kSecurityFindingEntryType,
   kDestinationChannelResumedEntryType,
   kDestinationSenderSucceededEntryType,
+  kDestinationHeldEntryType,
+  kDestinationHoldReleasedEntryType,
+  kDestinationHoldClearedEntryType,
 };
 
 /// The reserved system entry-type definitions covering security-
@@ -355,7 +393,7 @@ const Set<String> kReservedSystemEntryTypeIds = <String>{
 /// change audit events (destination registration / start_date / end_date /
 /// deletion / wedge recovery / halt request / halt cancellation, plus
 /// retention-policy-applied per-sweep), the drainer's destination wedge
-/// event,
+/// event, a keyed destination's hold, release and clearing events,
 /// the bootstrap registry-initialized audit, the substrate-internal
 /// lib-version boot events (initialized / changed), and the raw-path
 /// `ingest-audit` event (covering `_emitDuplicateReceivedInTxn`). They
@@ -617,6 +655,42 @@ const List<EntryTypeDefinition> kSystemEntryTypes = <EntryTypeDefinition>[
       ),
     ],
   ),
+  EntryTypeDefinition(
+    id: kDestinationHeldEntryType,
+    registeredVersion: EntryTypeVersion(1, 0),
+    name: 'Destination Held',
+    declarations: <EventTypeDeclaration>[
+      EventTypeDeclaration(
+        eventType: kDestinationHeldEventType,
+        kind: CausalKind.annotation,
+        eligible: false,
+      ),
+    ],
+  ),
+  EntryTypeDefinition(
+    id: kDestinationHoldReleasedEntryType,
+    registeredVersion: EntryTypeVersion(1, 0),
+    name: 'Destination Hold Released',
+    declarations: <EventTypeDeclaration>[
+      EventTypeDeclaration(
+        eventType: kDestinationHoldReleasedEventType,
+        kind: CausalKind.annotation,
+        eligible: false,
+      ),
+    ],
+  ),
+  EntryTypeDefinition(
+    id: kDestinationHoldClearedEntryType,
+    registeredVersion: EntryTypeVersion(1, 0),
+    name: 'Destination Hold Cleared',
+    declarations: <EventTypeDeclaration>[
+      EventTypeDeclaration(
+        eventType: kDestinationHoldClearedEventType,
+        kind: CausalKind.annotation,
+        eligible: false,
+      ),
+    ],
+  ),
 ];
 
 /// The one aggregate type and the event types the library appends a
@@ -736,6 +810,18 @@ const Map<String, ReservedEventShape> kReservedEventShapes =
       kDestinationSenderSucceededEntryType: ReservedEventShape(
         kDestinationAuditAggregateType,
         <String>{kDestinationSenderSucceededEventType},
+      ),
+      kDestinationHeldEntryType: ReservedEventShape(
+        kDestinationAuditAggregateType,
+        <String>{kDestinationHeldEventType},
+      ),
+      kDestinationHoldReleasedEntryType: ReservedEventShape(
+        kDestinationAuditAggregateType,
+        <String>{kDestinationHoldReleasedEventType},
+      ),
+      kDestinationHoldClearedEntryType: ReservedEventShape(
+        kDestinationAuditAggregateType,
+        <String>{kDestinationHoldClearedEventType},
       ),
     };
 

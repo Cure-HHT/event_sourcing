@@ -6,32 +6,33 @@
 
 ## PRODUCT
 
-| ID                                    | Title                           | File                                 | Hash     |
-| ------------------------------------- | ------------------------------- | ------------------------------------ | -------- |
-| EVS-PRD-action-dispatch               | Action Dispatch                 | prd-action-dispatch.md               | 98f5ca1e |
-| EVS-PRD-action-submitter              | Action Submitter                | prd-reaction.md                      | fec6feb6 |
-| EVS-PRD-auth-session                  | Auth Session                    | prd-reaction.md                      | 6b3b75e2 |
-| EVS-PRD-canonical-json                | Canonical JSON Serialization    | prd-canonical-json.md                | 14bb1343 |
-| EVS-PRD-cross-process-event-transport | Cross-Process Event Transport   | prd-reaction.md                      | 3a77adea |
-| EVS-PRD-delivery-channel              | Delivery channel continuity     | delivery-continuity.md               | f6230ffe |
-| EVS-PRD-destinations                  | Destinations                    | prd-destinations.md                  | 4f6634d8 |
-| EVS-PRD-event-log                     | Event Log                       | prd-event-log.md                     | e50ef232 |
-| EVS-PRD-hash-chain-integrity          | Hash-Chain Integrity            | prd-hash-chain-integrity.md          | 5e9d9d6e |
-| EVS-PRD-ingest                        | Ingest Path                     | prd-ingest.md                        | 8ad47c04 |
-| EVS-PRD-library-charter               | Library Charter                 | prd-library-charter.md               | 0021ec08 |
-| EVS-PRD-materializer                  | Materializer                    | prd-materializer.md                  | 45a091af |
-| EVS-PRD-multi-source-canonicalization | Multi-Source Canonicalization   | prd-multi-source-canonicalization.md | ccf88a3b |
-| EVS-PRD-permission-source             | Permission Source               | prd-reaction.md                      | 5fa8d048 |
-| EVS-PRD-permissions-as-events         | Permissions as Events           | prd-permissions-as-events.md         | 0fe7afbd |
-| EVS-PRD-portability                   | Portability                     | prd-portability.md                   | 4fd789d6 |
-| EVS-PRD-provenance                    | Provenance Chain Tracking       | prd-provenance.md                    | d9fe1da3 |
-| EVS-PRD-reaction-scope                | Reaction Scope                  | prd-reaction.md                      | 6c2b0c02 |
-| EVS-PRD-reaction-widget-contract      | Reaction Widget Contract        | prd-reaction.md                      | bb877b44 |
-| EVS-PRD-regulatory-alignment          | Regulatory Alignment            | prd-regulatory-alignment.md          | d8a802ad |
-| EVS-PRD-scoped-permissions            | Scope-aware authorization model | scoped-permissions.md                | 3442b415 |
-| EVS-PRD-storage-barrier               | Storage barrier                 | prd-storage-barrier.md               | 76dc7e15 |
-| EVS-PRD-subscription                  | Subscription                    | prd-subscription.md                  | 026033a7 |
-| EVS-PRD-view-subscriber               | View Subscriber                 | prd-reaction.md                      | 4dd6e5f0 |
+| ID                                    | Title                             | File                                 | Hash     |
+| ------------------------------------- | --------------------------------- | ------------------------------------ | -------- |
+| EVS-PRD-action-dispatch               | Action Dispatch                   | prd-action-dispatch.md               | 98f5ca1e |
+| EVS-PRD-action-submitter              | Action Submitter                  | prd-reaction.md                      | fec6feb6 |
+| EVS-PRD-auth-session                  | Auth Session                      | prd-reaction.md                      | 6b3b75e2 |
+| EVS-PRD-canonical-json                | Canonical JSON Serialization      | prd-canonical-json.md                | 14bb1343 |
+| EVS-PRD-cross-process-event-transport | Cross-Process Event Transport     | prd-reaction.md                      | 3a77adea |
+| EVS-PRD-delivery-channel              | Delivery channel continuity       | delivery-continuity.md               | f6230ffe |
+| EVS-PRD-destination-key-hold          | Key-scoped holds on a destination | prd-destination-key-hold.md          | 1feff106 |
+| EVS-PRD-destinations                  | Destinations                      | prd-destinations.md                  | cddc4d9c |
+| EVS-PRD-event-log                     | Event Log                         | prd-event-log.md                     | e50ef232 |
+| EVS-PRD-hash-chain-integrity          | Hash-Chain Integrity              | prd-hash-chain-integrity.md          | 5e9d9d6e |
+| EVS-PRD-ingest                        | Ingest Path                       | prd-ingest.md                        | 8ad47c04 |
+| EVS-PRD-library-charter               | Library Charter                   | prd-library-charter.md               | 0021ec08 |
+| EVS-PRD-materializer                  | Materializer                      | prd-materializer.md                  | 45a091af |
+| EVS-PRD-multi-source-canonicalization | Multi-Source Canonicalization     | prd-multi-source-canonicalization.md | ccf88a3b |
+| EVS-PRD-permission-source             | Permission Source                 | prd-reaction.md                      | 5fa8d048 |
+| EVS-PRD-permissions-as-events         | Permissions as Events             | prd-permissions-as-events.md         | 0fe7afbd |
+| EVS-PRD-portability                   | Portability                       | prd-portability.md                   | 4fd789d6 |
+| EVS-PRD-provenance                    | Provenance Chain Tracking         | prd-provenance.md                    | d9fe1da3 |
+| EVS-PRD-reaction-scope                | Reaction Scope                    | prd-reaction.md                      | 6c2b0c02 |
+| EVS-PRD-reaction-widget-contract      | Reaction Widget Contract          | prd-reaction.md                      | bb877b44 |
+| EVS-PRD-regulatory-alignment          | Regulatory Alignment              | prd-regulatory-alignment.md          | d8a802ad |
+| EVS-PRD-scoped-permissions            | Scope-aware authorization model   | scoped-permissions.md                | 3442b415 |
+| EVS-PRD-storage-barrier               | Storage barrier                   | prd-storage-barrier.md               | 76dc7e15 |
+| EVS-PRD-subscription                  | Subscription                      | prd-subscription.md                  | 026033a7 |
+| EVS-PRD-view-subscriber               | View Subscriber                   | prd-reaction.md                      | 4dd6e5f0 |
 
 ## DEVELOPMENT
 
@@ -47,9 +48,11 @@
 | EVS-DEV-delivery-channel                   | Delivery channel sender mechanics                            | delivery-continuity.md                  | 29357550 |
 | EVS-DEV-delivery-receiver                  | Delivery channel receiver mechanics                          | delivery-continuity.md                  | d37b43bb |
 | EVS-DEV-delivery-resume                    | Channel resume and new generation                            | delivery-continuity.md                  | ae74fe21 |
-| EVS-DEV-destination-drain                  | Destination queue mechanics                                  | dev-destination-drain.md                | cc80871d |
+| EVS-DEV-destination-drain                  | Destination queue mechanics                                  | dev-destination-drain.md                | 1e1e4047 |
 | EVS-DEV-destination-drain-lock             | Delivery cycle mechanics                                     | dev-destination-drain-lock.md           | 5c712b53 |
-| EVS-DEV-destination-retry-budget           | Destination retry budget and attempt outcomes                | dev-destination-retry-budget.md         | 6c2b3476 |
+| EVS-DEV-destination-key-hold               | Key-scoped holds on a destination queue                      | dev-destination-key-hold.md             | 311c31aa |
+| EVS-DEV-destination-key-hold-guards        | Guards on a keyed destination's holds                        | dev-destination-key-hold-guards.md      | 0c871cf6 |
+| EVS-DEV-destination-retry-budget           | Destination retry budget and attempt outcomes                | dev-destination-retry-budget.md         | 03cce550 |
 | EVS-DEV-effective-permissions-shape        | effectivePermissionsFor surface                              | scoped-permissions.md                   | c6cee772 |
 | EVS-DEV-entry-type-downgrade-refusal       | Entry-type version downgrade refusal                         | dev-entry-type-downgrade-refusal.md     | 3adaac55 |
 | EVS-DEV-event-record                       | The event record as read, stored and sent                    | dev-event-record.md                     | b1c1b22f |
@@ -71,5 +74,5 @@
 | EVS-DEV-severe-log-default                 | Severe log records reach standard error                      | dev-severe-log-default.md               | 2019159d |
 | EVS-DEV-storage-capability                 | The storage capability the library keeps                     | dev-storage-capability.md               | 2747db23 |
 | EVS-DEV-transactional-authorize-execute    | Dispatch tx encompasses authorize + execute + persist        | scoped-permissions.md                   | 5e07a961 |
-| EVS-DEV-version-compatibility              | Entry-type and data-format versions                          | dev-version-compatibility.md            | 11364d97 |
+| EVS-DEV-version-compatibility              | Entry-type and data-format versions                          | dev-version-compatibility.md            | 8de1eacb |
 | EVS-DEV-view-convergence                   | View copies and their catch-up                               | dev-view-convergence.md                 | 766c4e99 |

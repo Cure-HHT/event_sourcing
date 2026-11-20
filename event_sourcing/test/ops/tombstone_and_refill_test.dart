@@ -3,8 +3,10 @@ import 'package:event_sourcing/src/event_store.dart';
 import 'package:event_sourcing/src/lifecycle/lib_version.dart';
 import 'package:event_sourcing/src/security/system_entry_types.dart';
 import 'package:event_sourcing/src/storage/attempt_result.dart';
+import 'package:event_sourcing/src/storage/fifo_entry.dart';
 import 'package:event_sourcing/src/storage/final_status.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
+import 'package:event_sourcing/src/storage/queue_records.dart';
 import 'package:event_sourcing/src/storage/sembast_backend.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
 import 'package:event_sourcing/src/versions.dart';
@@ -487,6 +489,117 @@ void main() {
       expect(result.rowId, headEntryId);
       expect(result.deletedTrailCount, 4);
       expect(result.rewoundTo, 2); // head first_seq = 3, so 3-1 = 2
+    });
+
+    // Verifies: EVS-DEV-destination-key-hold/X
+    // Verifies: EVS-DEV-destination-drain/F
+    // Verifies: EVS-PRD-destinations/N
+    // a swept item a release enqueued returns its events to its key's
+    //   existing list, which keeps its state and hold id, and does not count
+    //   toward the rewind; the other swept items still do.
+    test('a swept released item returns to its key list and does not count '
+        'toward the rewind', () async {
+      final deps = await buildAuditedRegistryDeps(backend);
+      final registry = DestinationRegistry(eventStore: deps.eventStore);
+      final destination = FakeDestination(id: 'dst-k');
+      await registry.addDestination(destination, initiator: _testInit);
+      await registry.setStartDate(
+        destination.id,
+        DateTime.utc(2026, 1, 1),
+        initiator: _testInit,
+      );
+      final events = <StoredEvent>[
+        for (var i = 1; i <= 4; i++)
+          await _appendEvent(
+            backend,
+            eventId: 'k$i',
+            clientTimestamp: DateTime.utc(2026, 4, 22, 10),
+          ),
+      ];
+      Future<FifoEntry> enqueue(
+        List<StoredEvent> batch, {
+        String? blockKey,
+        String? releasedHoldId,
+      }) => backend.transaction(
+        (txn) => backend.enqueueFifoTxn(
+          txn,
+          destination.id,
+          batch,
+          wirePayload: wirePayloadJson(const <String, Object?>{'ok': true}),
+          blockKey: blockKey,
+          releasedHoldId: releasedHoldId,
+        ),
+      );
+      // The head carries k3; behind it a released item carrying k1 and k2,
+      // below the head's event, and an ordinary item carrying k4.
+      final head = await enqueue(<StoredEvent>[events[2]], blockKey: 'J');
+      await enqueue(
+        <StoredEvent>[events[0], events[1]],
+        blockKey: 'K',
+        releasedHoldId: 'hold-k',
+      );
+      await enqueue(<StoredEvent>[events[3]], blockKey: 'J');
+      await appendAttemptForTest(
+        backend,
+        destination.id,
+        head.entryId,
+        AttemptResult(
+          attemptedAt: DateTime.utc(2026, 4, 22, 12),
+          outcome: 'permanent',
+          errorMessage: 'simulated failure',
+        ),
+      );
+      await setStatusForTest(
+        backend,
+        destination.id,
+        head.entryId,
+        FinalStatus.wedged,
+      );
+      await writeFillCursorForTest(
+        backend,
+        destination.id,
+        events.last.sequenceNumber,
+      );
+      final existing = KeyList(
+        holdId: 'hold-k2',
+        state: KeyListState.held,
+        cause: 'permanent_refusal',
+        events: <KeyListEvent>[
+          KeyListEvent(
+            eventId: 'later',
+            sequenceNumber: events.last.sequenceNumber + 1,
+          ),
+        ],
+      );
+      await backend.transaction(
+        (txn) => backend.writeKeyListsTxn(txn, destination.id, {'K': existing}),
+      );
+
+      final result = await registry.tombstoneAndRefill(
+        destination.id,
+        head.entryId,
+        initiator: _testInit,
+      );
+      expect(result.deletedTrailCount, 2);
+      expect(result.rewoundTo, events[2].sequenceNumber - 1);
+      final lists = await backend.transaction(
+        (txn) => backend.readKeyListsTxn(txn, destination.id),
+      );
+      expect(lists, <String, KeyList>{
+        'K': KeyList(
+          holdId: 'hold-k2',
+          state: KeyListState.held,
+          cause: 'permanent_refusal',
+          events: <KeyListEvent>[
+            for (final e in events.take(2))
+              KeyListEvent(
+                eventId: e.eventId,
+                sequenceNumber: e.sequenceNumber,
+              ),
+            ...existing.events,
+          ],
+        ),
+      });
     });
 
     // Verifies: EVS-PRD-destinations/C

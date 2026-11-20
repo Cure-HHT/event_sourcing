@@ -61,7 +61,10 @@ void main() {
       );
       expect(
         persisted,
-        DestinationSchedule(registrationId: registered.eventId),
+        DestinationSchedule(
+          registrationId: registered.eventId,
+          keying: DestinationKeying.unkeyed,
+        ),
       );
       expect(persisted!.allowHardDelete, isFalse);
     });

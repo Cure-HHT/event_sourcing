@@ -19,9 +19,9 @@
 // (fill compare-and-set: the fill writes
 //   queue items, the fill position or a cleared replay request only when,
 //   inside its transaction, the persisted schedule, head status, fill
-//   position, replay request and refill guard equal those its batch was
-//   computed from; the transform and every walk of the log run outside that
-//   transaction)
+//   position, replay request, refill guard and key lists equal those its
+//   batch was computed from; the transform, the block-key evaluation and
+//   every walk of the log run outside that transaction)
 // Implements: EVS-DEV-destination-drain/F
 // (a refill guard holds the fill of a
 //   drainer that declares the guarded configuration; a fill under any other
@@ -47,11 +47,31 @@
 //   payload, and the record is cleared, in one transaction; a transform
 //   that recovers clears the record in the transaction that enqueues its
 //   item)
+// Implements: EVS-DEV-destination-key-hold/A+B+C+D+E+G+L+M
+// (keyed fill — the block key of each
+//   event is evaluated outside the transaction and stored on its item; an
+//   item carries one key's events; a listed key's events are inserted into
+//   its key list, untransformed, on the fill and every replay; a failing key
+//   evaluation follows the transform failure path)
 // Implements: EVS-DEV-destination-retry-budget/B
 // (the fill records the time of each
 //   transform failure in the transform failure record and treats its
 //   budget as spent by the same attempt-count-or-capped-time rule a send's
 //   recorded attempts are measured by)
+// Implements: EVS-DEV-destination-key-hold/A+Q+R+T+V+W
+// (release — before its walk, the fill
+//   releases each releasing key list from its front, only events at or
+//   below the fill position and only while no replay request is pending,
+//   whatever the window; it transforms and evaluates the block keys outside
+//   the transaction, then enqueues the item recording the list's hold id
+//   and removes exactly those events from the list in one compare-and-set
+//   transaction, removing an emptied list with its clearing event; a
+//   failing release is retried under the key's release failure record and,
+//   once the budget is spent, holds the key again)
+// Implements: EVS-DEV-destination-retry-budget/E+F+G
+// (one release failure record per
+//   failing key, recording the time of each failure and spent by the same
+//   attempt-count-or-capped-time rule)
 
 part of '../event_store.dart';
 
@@ -74,6 +94,8 @@ class _FillState {
     required this.refillGuard,
     required this.senderChannel,
     required this.transformFailureRecord,
+    required this.keyLists,
+    required this.releaseFailures,
   });
 
   final DestinationSchedule? schedule;
@@ -93,6 +115,18 @@ class _FillState {
   /// compare-and-set as every other fill decision
   /// (`EVS-DEV-destination-drain/G`).
   final TransformFailureRecord? transformFailureRecord;
+
+  /// The destination's key lists, by block key: a fill routes a listed
+  /// key's events into its list, so a hold or a release that changes them
+  /// after the fill read them makes its commit write nothing
+  /// (`EVS-DEV-destination-drain/G`).
+  final Map<String, KeyList> keyLists;
+
+  /// The destination's release failure records, by block key: a release
+  /// step decides from them whether to retry and when to hold the key
+  /// again, so a record that changed after the fill read it makes its
+  /// commit write nothing.
+  final Map<String, ReleaseFailureRecord> releaseFailures;
 
   bool get headWedged => headStatus == FinalStatus.wedged;
 
@@ -114,6 +148,11 @@ class _FillState {
       txn,
       destinationId,
     );
+    final keyLists = await backend.readKeyListsTxn(txn, destinationId);
+    final releaseFailures = await backend.readReleaseFailuresTxn(
+      txn,
+      destinationId,
+    );
     return _FillState(
       schedule: schedule,
       headStatus: head?.finalStatus,
@@ -122,6 +161,8 @@ class _FillState {
       refillGuard: refillGuard,
       senderChannel: senderChannel,
       transformFailureRecord: transformFailureRecord,
+      keyLists: keyLists,
+      releaseFailures: releaseFailures,
     );
   }
 
@@ -139,7 +180,12 @@ class _FillState {
       other.request == request &&
       other.refillGuard == refillGuard &&
       other.senderChannel == senderChannel &&
-      other.transformFailureRecord == transformFailureRecord;
+      other.transformFailureRecord == transformFailureRecord &&
+      const MapEquality<String, KeyList>().equals(other.keyLists, keyLists) &&
+      const MapEquality<String, ReleaseFailureRecord>().equals(
+        other.releaseFailures,
+        releaseFailures,
+      );
 
   @override
   int get hashCode => Object.hash(
@@ -150,6 +196,8 @@ class _FillState {
     refillGuard,
     senderChannel,
     transformFailureRecord,
+    const MapEquality<String, KeyList>().hash(keyLists),
+    const MapEquality<String, ReleaseFailureRecord>().hash(releaseFailures),
   );
 }
 
@@ -170,23 +218,69 @@ Future<bool> _compareAndSet(
 }) async {
   final seam = DeliveryTestHooks.current?.afterFillReads;
   if (seam != null) await seam(destinationId);
-  return backend.transaction((txn) async {
-    await lock.assertHeldInTxn(txn);
-    await DeliveryTestHooks.current?.beforeQueueWrites?.call(destinationId);
-    final now = await _FillState.readTxn(backend, txn, destinationId);
-    if (now != computedFrom) return false;
-    await write(txn);
-    final guard = computedFrom.refillGuard;
-    if (guard != null &&
-        (cursorAfter ?? computedFrom.cursor) >= guard.refillThrough) {
-      await backend.clearRefillGuardTxn(txn, destinationId);
-    }
-    if (DeliveryTestHooks.current?.failFillTransaction?.call(destinationId) ??
-        false) {
-      throw InjectedFailure('fill transaction of $destinationId');
-    }
-    return true;
-  });
+  return backend.transaction(
+    (txn) => _compareAndSetInTxn(
+      backend,
+      txn,
+      lock,
+      destinationId,
+      computedFrom,
+      () => write(txn),
+      cursorAfter: cursorAfter,
+    ),
+  );
+}
+
+/// [_compareAndSet] in a transaction of [registry]'s event store, for a
+/// write that appends an event through [registry] (a release step's
+/// clearing or hold event). It never moves the fill position.
+Future<bool> _compareAndSetPublishing(
+  DestinationRegistry registry,
+  DrainLock lock,
+  String destinationId,
+  _FillState computedFrom,
+  Future<void> Function(Transaction txn, PublishCollector collector) write,
+) async {
+  final seam = DeliveryTestHooks.current?.afterFillReads;
+  if (seam != null) await seam(destinationId);
+  return registry.eventStore.runTransaction(
+    (txn, collector) => _compareAndSetInTxn(
+      registry._backend,
+      txn,
+      lock,
+      destinationId,
+      computedFrom,
+      () => write(txn, collector),
+    ),
+  );
+}
+
+/// The body of the fill's compare-and-set inside [txn]: see
+/// [_compareAndSet].
+Future<bool> _compareAndSetInTxn(
+  StorageBackend backend,
+  Transaction txn,
+  DrainLock lock,
+  String destinationId,
+  _FillState computedFrom,
+  Future<void> Function() write, {
+  int? cursorAfter,
+}) async {
+  await lock.assertHeldInTxn(txn);
+  await DeliveryTestHooks.current?.beforeQueueWrites?.call(destinationId);
+  final now = await _FillState.readTxn(backend, txn, destinationId);
+  if (now != computedFrom) return false;
+  await write();
+  final guard = computedFrom.refillGuard;
+  if (guard != null &&
+      (cursorAfter ?? computedFrom.cursor) >= guard.refillThrough) {
+    await backend.clearRefillGuardTxn(txn, destinationId);
+  }
+  if (DeliveryTestHooks.current?.failFillTransaction?.call(destinationId) ??
+      false) {
+    throw InjectedFailure('fill transaction of $destinationId');
+  }
+  return true;
 }
 
 /// Promote matching events from the event log into a destination's FIFO
@@ -215,19 +309,26 @@ Future<bool> _compareAndSet(
 ///    while later, undecided events wait for a later pass. A gap replay
 ///    enqueues the admitted events at or below the position whose client
 ///    timestamp lies in `[startDate, gapUpper)`, and leaves the position;
-///    a gap replay's transform is not retried (see `_performReplayRequest`).
-/// 4. Dormant schedule (`startDate == null`) or a window entirely in the
-///    future: nothing to do.
-/// 5. Fetch the events past the position and walk them: an event the filter
+///    a gap batch whose transform is retrying commits only its failure
+///    record and keeps the request pending (see `_performReplayRequest`).
+/// 4. With [registry] (the registry whose event store is over [backend]),
+///    every key list in state releasing is released by one step, in key
+///    order (see [_releaseStep]), whatever the window.
+/// 5. Dormant schedule (`startDate == null`) or a window entirely in the
+///    future: nothing further to do.
+/// 6. Fetch the events past the position and walk them: an event the filter
 ///    rejects or that precedes `startDate` is decided; an event past
 ///    `upper = min(endDate, now)` is deferred and stops the walk; every
 ///    other event is in the window.
-/// 6. No event in the window: advance the position past the decided events
+/// 7. No event in the window: advance the position past the decided events
 ///    (so they are not re-evaluated) and return.
-/// 7. Otherwise assemble a greedy batch through `canAddToBatch`. A lone
-///    event younger than `maxAccumulateTime` is held (nothing written)
-///    unless [flushHeld] is set.
-/// 8. Build the item: a native destination gets a library-built envelope
+/// 8. Otherwise assemble a greedy batch through `canAddToBatch`, of events
+///    whose block key (evaluated outside any transaction on a keyed
+///    destination) is the first event's. A batch of a key that has a key
+///    list is inserted into that list, untransformed, and the position
+///    advances past it. A lone event younger than `maxAccumulateTime` is
+///    held (nothing written) unless [flushHeld] is set.
+/// 9. Build the item: a native destination gets a library-built envelope
 ///    and never runs a transform. Any other destination's `transform` runs
 ///    outside any transaction; on success the item commits with the
 ///    position advanced to the batch's last event, clearing any earlier
@@ -273,7 +374,10 @@ Future<bool> _compareAndSet(
 /// [backend] the fill writes, and its delivery channel: [databaseId], the
 /// destination, the persisted schedule's registration and the generation of
 /// the destination's sender channel record. [clock] defaults to
-/// `() => DateTime.now().toUtc()`. [policy] is the retry budget in effect
+/// `() => DateTime.now().toUtc()`. [registry], when given, is the registry
+/// whose event store is over [backend]: the release step appends its
+/// clearing and hold events through it, and a fill without it releases
+/// nothing. [policy] is the retry budget in effect
 /// (the fill's caller resolves it the way `drain` does, falling back to
 /// [SyncPolicy.defaults]); [cadence] is the delivery cycle's cadence. Both
 /// bound how long a failing transform is retried before its batch enqueues
@@ -291,9 +395,12 @@ Future<void> fillBatch(
   bool flushHeld = false,
   String? declaredFingerprint,
   String? registrationId,
+  DestinationRegistry? registry,
 }) async {
   final now = (clock ?? () => DateTime.now().toUtc())();
   final id = destination.id;
+  // Consumer code: read once, outside any transaction.
+  final keying = DestinationKeying.of(destination);
 
   // Perform every pending replay request before filling: a request recorded
   // while one is performed is performed next, so the position never
@@ -301,13 +408,9 @@ Future<void> fillBatch(
   _FillState state;
   for (;;) {
     state = await _FillState.read(backend, id);
-    if (state.schedule == null || state.headWedged) return;
-    if (registrationId != null &&
-        state.schedule!.registrationId != registrationId) {
+    if (_fillHeld(state, id, registrationId, declaredFingerprint, keying)) {
       return;
     }
-    final guard = state.refillGuard;
-    if (guard != null && guard.fingerprint == declaredFingerprint) return;
     final request = state.request;
     if (request == null) break;
     final performed = await _performReplayRequest(
@@ -324,6 +427,33 @@ Future<void> fillBatch(
       cadence: cadence,
     );
     if (!performed) return;
+  }
+
+  // Release each releasing key list from its front before the walk, whatever
+  // the window (`EVS-DEV-destination-key-hold/V`); the walk then reads the
+  // state the release left.
+  if (registry != null &&
+      state.keyLists.values.any((l) => l.state == KeyListState.releasing)) {
+    await _releaseLists(
+      destination,
+      backend: backend,
+      registry: registry,
+      lock: lock,
+      state: state,
+      source: source,
+      now: now,
+      databaseId: databaseId,
+      policy: policy,
+      cadence: cadence,
+      registrationId: registrationId,
+      declaredFingerprint: declaredFingerprint,
+      keying: keying,
+    );
+    state = await _FillState.read(backend, id);
+    if (_fillHeld(state, id, registrationId, declaredFingerprint, keying) ||
+        state.request != null) {
+      return;
+    }
   }
 
   final schedule = state.schedule!;
@@ -402,13 +532,28 @@ Future<void> fillBatch(
     return;
   }
 
-  final batch = <StoredEvent>[inWindow.first];
-  for (final c in inWindow.skip(1)) {
-    if (destination.canAddToBatch(batch, c)) {
-      batch.add(c);
-    } else {
-      break;
-    }
+  final assembled = await _assembleBatch(
+    destination,
+    inWindow,
+    0,
+    _BlockKeys(destination),
+  );
+  final batch = assembled.batch;
+  final key = assembled.key;
+
+  // A listed key's batch is inserted into its list, untransformed, in place
+  // of an item; nothing is held for a later event to join it.
+  if (key != null && state.keyLists.containsKey(key)) {
+    final lists = _routed(state.keyLists, key, batch);
+    await _compareAndSet(backend, lock, id, state, (txn) async {
+      await writeQueueItemsTxn(txn, backend, id, standalone);
+      await backend.writeKeyListsTxn(txn, id, lists);
+      await backend.writeFillCursorTxn(txn, id, batch.last.sequenceNumber);
+      if (state.transformFailureRecord != null) {
+        await backend.clearTransformFailureRecordTxn(txn, id);
+      }
+    }, cursorAfter: batch.last.sequenceNumber);
+    return;
   }
 
   // maxAccumulateTime hold: a lone ordinary event is held (nothing written,
@@ -437,6 +582,9 @@ Future<void> fillBatch(
     channel: channel,
     policy: policy,
     cadence: cadence,
+    blockKey: key,
+    keyError: assembled.keyError,
+    keyStackTrace: assembled.keyStackTrace,
   );
   if (decision.skip) {
     // The retry curve has not yet allowed another attempt: the fill
@@ -472,27 +620,319 @@ Future<void> fillBatch(
   }, cursorAfter: batch.last.sequenceNumber);
 }
 
+/// Whether the fill writes nothing for [state]: the destination was
+/// deleted, its head is wedged, its persisted registration is not
+/// [registrationId], its persisted schedule records a keying other than
+/// [keying] (the keying of the destination the drainer registers), or a
+/// refill guard names [declaredFingerprint].
+bool _fillHeld(
+  _FillState state,
+  String destinationId,
+  String? registrationId,
+  String? declaredFingerprint,
+  DestinationKeying keying,
+) {
+  if (state.schedule == null || state.headWedged) return true;
+  if (registrationId != null &&
+      state.schedule!.registrationId != registrationId) {
+    return true;
+  }
+  // Implements: EVS-DEV-destination-key-hold-guards/D
+  // a fill, a replay or a release step under a keying other than the
+  //   recorded one writes nothing; the schedule is part of the
+  //   compare-and-set, so a keying recorded while the fill builds its items
+  //   makes its commit write nothing too.
+  final recorded = state.schedule!.keying;
+  if (recorded != null && recorded != keying) {
+    libraryLog(
+      'sync_cycle',
+      'the fill of destination "$destinationId" is held: this '
+          'process registers it $keying, and its persisted schedule records '
+          '$recorded',
+      level: LibraryLogLevel.warning,
+    );
+    return true;
+  }
+  final guard = state.refillGuard;
+  return guard != null && guard.fingerprint == declaredFingerprint;
+}
+
+/// The most events of a releasing list's front a release step reads from
+/// the log; the step's batch is assembled from them.
+const int _releaseFrontLimit = 500;
+
+/// Run one release step ([_releaseStep]) for each of [state]'s releasing
+/// key lists, in key order, each on state read afresh. Stops when the fill
+/// is held or a replay request is pending.
+Future<void> _releaseLists(
+  Destination destination, {
+  required StorageBackend backend,
+  required DestinationRegistry registry,
+  required DrainLock lock,
+  required _FillState state,
+  required Source source,
+  required DateTime now,
+  required String databaseId,
+  required SyncPolicy policy,
+  required Duration cadence,
+  required String? registrationId,
+  required String? declaredFingerprint,
+  required DestinationKeying keying,
+}) async {
+  final keys = <String>[
+    for (final entry in state.keyLists.entries)
+      if (entry.value.state == KeyListState.releasing) entry.key,
+  ]..sort();
+  for (var i = 0; i < keys.length; i++) {
+    final current = i == 0
+        ? state
+        : await _FillState.read(backend, destination.id);
+    if (_fillHeld(
+          current,
+          destination.id,
+          registrationId,
+          declaredFingerprint,
+          keying,
+        ) ||
+        current.request != null) {
+      return;
+    }
+    await _releaseStep(
+      destination,
+      registry: registry,
+      lock: lock,
+      state: current,
+      key: keys[i],
+      source: source,
+      now: now,
+      databaseId: databaseId,
+      policy: policy,
+      cadence: cadence,
+    );
+  }
+}
+
+/// Release the next item of [key]'s list in [state], when the list is
+/// releasing.
+///
+/// The step takes the list's front events whose sequence number is at or
+/// below the fill position (none while the position is below the front:
+/// a recovery's re-walk may still insert an older event of the key ahead
+/// of it), assembles one batch from them, evaluates their block keys and
+/// runs the destination's transform, all outside any transaction. The item
+/// carries [key], the list's key, whatever the evaluation returns. While
+/// the key's release failure record's backoff after its last failure has
+/// not elapsed, it does nothing.
+///
+/// On success it enqueues the item at the tail with the list's hold id,
+/// removes exactly the batch's events from the list (the list itself, with
+/// its clearing event, when that empties it) and removes the key's release
+/// failure record, in one compare-and-set transaction. On a failure of the
+/// transform or the block-key evaluation, or an event of the front missing
+/// from the log, it records the failure in the key's release failure
+/// record; once the recorded failures have spent [policy]'s retry budget,
+/// it instead returns the list to held under a new hold id with cause
+/// `transform_failed`, appending the hold event with no queue item and the
+/// event it failed to build, and removes the record, in one transaction
+/// that leaves the queue items and the wedge record unchanged.
+// Implements: EVS-DEV-destination-key-hold/A+Q+R+T+W
+// Implements: EVS-DEV-destination-retry-budget/E+F+G
+// Implements: EVS-PRD-destination-key-hold/C+E+F+J
+// a release queues the key's held events in sequence order, holds the key
+//   again once its transform has failed past the retry budget, and appends
+//   the clearing event when the list empties.
+Future<void> _releaseStep(
+  Destination destination, {
+  required DestinationRegistry registry,
+  required DrainLock lock,
+  required _FillState state,
+  required String key,
+  required Source source,
+  required DateTime now,
+  required String databaseId,
+  required SyncPolicy policy,
+  required Duration cadence,
+}) async {
+  final backend = registry._backend;
+  final id = destination.id;
+  final list = state.keyLists[key];
+  if (list == null || list.state != KeyListState.releasing) return;
+  final record = state.releaseFailures[key];
+  if (record != null &&
+      record.failedAt.isNotEmpty &&
+      now.isBefore(
+        record.failedAt.last.add(policy.backoffFor(record.failedAt.length)),
+      )) {
+    return;
+  }
+  final front = list.events
+      .takeWhile((e) => e.sequenceNumber <= state.cursor)
+      .take(_releaseFrontLimit)
+      .toList();
+  if (front.isEmpty) return;
+  final events = <StoredEvent>[];
+  for (final entry in front) {
+    final event = await backend.findEventById(entry.eventId);
+    if (event == null) break;
+    events.add(event);
+  }
+
+  BuiltQueueItem? item;
+  var failedEventId = front.first.eventId;
+  if (events.isEmpty) {
+    libraryLog(
+      'sync_cycle',
+      'the release of key "$key" of destination "$id" names event '
+          '$failedEventId, which is not in the log',
+      level: LibraryLogLevel.severe,
+    );
+  } else {
+    final assembled = await _assembleBatch(
+      destination,
+      events,
+      0,
+      _BlockKeys(destination),
+    );
+    failedEventId = assembled.batch.first.eventId;
+    try {
+      final keyError = assembled.keyError;
+      if (keyError != null) {
+        Error.throwWithStackTrace(
+          keyError,
+          assembled.keyStackTrace ?? StackTrace.empty,
+        );
+      }
+      item = await buildQueueItem(
+        destination,
+        assembled.batch,
+        source: source,
+        now: now,
+        channel: _channelOf(destination, state, databaseId),
+        // The item belongs to the list it is released from, whatever the
+        // events' block keys evaluate to now: a key that changed since the
+        // hold must not move them under another key, or under none.
+        blockKey: key,
+      );
+    } on Object catch (e, st) {
+      final failed = assembled.keyError != null ? 'block key' : 'transform';
+      libraryLog(
+        'sync_cycle',
+        'the $failed of destination "$id" failed on event $failedEventId '
+            'released from key "$key"',
+        level: LibraryLogLevel.severe,
+        error: e,
+        stackTrace: st,
+      );
+    }
+  }
+
+  final failures = <String, ReleaseFailureRecord>{...state.releaseFailures}
+    ..remove(key);
+  if (item != null) {
+    final built = item;
+    final releasedIds = <String>{for (final e in built.batch) e.eventId};
+    final remaining = <KeyListEvent>[
+      for (final e in list.events)
+        if (!releasedIds.contains(e.eventId)) e,
+    ];
+    final lists = <String, KeyList>{...state.keyLists}..remove(key);
+    if (remaining.isNotEmpty) {
+      lists[key] = KeyList(
+        holdId: list.holdId,
+        state: KeyListState.releasing,
+        cause: list.cause,
+        events: remaining,
+      );
+    }
+    await _compareAndSetPublishing(registry, lock, id, state, (
+      txn,
+      collector,
+    ) async {
+      await backend.enqueueFifoTxn(
+        txn,
+        id,
+        built.batch,
+        wirePayload: built.wirePayload,
+        nativeEnvelope: built.nativeEnvelope,
+        blockKey: built.blockKey,
+        releasedHoldId: list.holdId,
+      );
+      await backend.writeKeyListsTxn(txn, id, lists);
+      if (record != null) {
+        await backend.writeReleaseFailuresTxn(txn, id, failures);
+      }
+      if (remaining.isEmpty) {
+        await registry._clearHoldInTxn(
+          txn,
+          collector,
+          destinationId: id,
+          key: key,
+          holdId: list.holdId,
+        );
+      }
+    });
+    return;
+  }
+
+  final times = <DateTime>[...?record?.failedAt, now];
+  if (retryBudgetSpentAt(times, policy, cadence)) {
+    await _compareAndSetPublishing(registry, lock, id, state, (
+      txn,
+      collector,
+    ) async {
+      await backend.writeReleaseFailuresTxn(txn, id, failures);
+      await registry._holdKeyInTxn(
+        txn,
+        collector,
+        destinationId: id,
+        key: key,
+        cause: WedgeCause.transformFailed.wire,
+        attemptCount: times.length,
+        failedEventId: failedEventId,
+      );
+    });
+    return;
+  }
+  failures[key] = ReleaseFailureRecord(
+    failures: times.length,
+    failedAt: times,
+    lastEventId: failedEventId,
+  );
+  await _compareAndSet(
+    backend,
+    lock,
+    id,
+    state,
+    (txn) => backend.writeReleaseFailuresTxn(txn, id, failures),
+  );
+}
+
 /// Perform [request] under the compare-and-set: build its items outside any
-/// transaction, then commit them, the advanced position, a pending
-/// transform failure record and (once every part of the request is
-/// resolved) the cleared request together. Returns whether it committed.
+/// transaction, then commit them, the routed key lists, the advanced
+/// position, a pending transform failure record and (once every part of
+/// the request is resolved) the cleared request together. Returns whether
+/// it committed a resolved request.
 ///
-/// A first-activation batch whose transform is still backing off, or has
-/// failed again without spending its retry budget, stops the walk: the
-/// request stays pending and events past the reached position are
-/// retried at a later fill (`EVS-DEV-destination-drain/Y`). The transform
-/// failure record this stop reads and writes is always the one a first
-/// activation's walk names; a gap replay never reads or writes it, whatever
-/// it currently holds (that record, if any, belongs to an unrelated live
-/// fill batch — see the guard below).
+/// Both portions decide their batches through the fill's transform failure
+/// path (`EVS-DEV-destination-drain/Y`), and route a listed key's batches
+/// into its list (`EVS-DEV-destination-key-hold/L`).
 ///
-/// [buildGapReplayRows] is not retry-aware: a transform failure while it
-/// builds a gap replay's items propagates out of this call uncaught, and
-/// the pass writes nothing. Once a first activation's walk has stopped
-/// early at least once (a persisted record proves an earlier call already
-/// built, and this call already committed, the gap replay's own items),
-/// the gap portion is not rebuilt on a later retry, so a stalled
-/// activation's retries do not double-enqueue it.
+/// A gap batch whose transform or block-key evaluation is still backing
+/// off, or has failed again without spending its retry budget, leaves the
+/// gap unresolved: the call commits only the pending failure record (none
+/// while backing off), no item and no list, so the next pass rebuilds the
+/// whole gap and enqueues none of its events twice. The request stays
+/// pending.
+///
+/// A first-activation batch that stops the same way stops the walk: the
+/// request stays pending and events past the reached position are retried
+/// at a later fill, while the items built before it commit. Its record
+/// names a batch past the fill position (a gap batch's events lie at or
+/// below it), which proves an earlier call already committed the gap
+/// portion, so the gap is not rebuilt on a later retry and a stalled
+/// activation's retries do not double-enqueue it. A pure gap replay never
+/// clears a record past the fill position: that record belongs to an
+/// unrelated live fill batch.
 Future<bool> _performReplayRequest(
   Destination destination,
   StorageBackend backend,
@@ -508,23 +948,21 @@ Future<bool> _performReplayRequest(
 }) async {
   final id = destination.id;
   final schedule = state.schedule!;
+  final existingRecord = state.transformFailureRecord;
   final items = <BuiltQueueItem>[];
+  var keyLists = state.keyLists;
   int? advanceTo;
   TransformFailureRecord? pendingRecord;
-  var activationDone = !request.firstActivation;
+  var activationDone = true;
   final gapUpper = request.gapUpper;
   final startDate = schedule.startDate;
   final gapActive =
       gapUpper != null && startDate != null && startDate.isBefore(gapUpper);
-  // A persisted record proves an earlier call for this same request already
-  // built (and this function will have committed) the gap portion's items:
-  // see the doc comment above. This guards only a request that also carries
-  // a first activation: a pure gap replay has no incremental progress to
-  // protect, and the record it sees may belong to an unrelated live-fill
-  // batch that has nothing to do with this request.
-  final runGapPortion =
-      gapActive &&
-      (!request.firstActivation || state.transformFailureRecord == null);
+  final activationStalled =
+      request.firstActivation &&
+      existingRecord != null &&
+      existingRecord.sequenceRange.firstSeq > state.cursor;
+  final runGapPortion = gapActive && !activationStalled;
   // Implements: EVS-DEV-destination-drain/X
   // A channel-wide own event (a succession
   // event or a security finding) already queued as pending, wedged, or
@@ -546,20 +984,32 @@ Future<bool> _performReplayRequest(
           (!e.clientTimestamp.isBefore(startDate) &&
               e.clientTimestamp.isBefore(gapUpper)),
     );
-    items.addAll(
-      await buildGapReplayRows(
-        destination,
-        events,
-        startDate: startDate,
-        gapUpper: gapUpper,
-        fillCursor: state.cursor,
-        now: now,
-        source: source,
-        channel: channel,
-        databaseId: databaseId,
-        alreadyQueuedChannelWide: alreadyQueuedChannelWide,
-      ),
+    final gap = await buildGapReplayRows(
+      destination,
+      events,
+      startDate: startDate,
+      gapUpper: gapUpper,
+      fillCursor: state.cursor,
+      now: now,
+      source: source,
+      channel: channel,
+      databaseId: databaseId,
+      alreadyQueuedChannelWide: alreadyQueuedChannelWide,
+      keyLists: keyLists,
+      policy: policy,
+      cadence: cadence,
+      existingFailureRecord: existingRecord,
     );
+    if (gap.stoppedEarly) {
+      final record = gap.pendingFailureRecord;
+      if (record == null) return false;
+      await _compareAndSet(backend, lock, id, state, (txn) async {
+        await backend.writeTransformFailureRecordTxn(txn, id, record);
+      });
+      return false;
+    }
+    items.addAll(gap.items);
+    keyLists = gap.keyLists;
   }
   if (request.firstActivation) {
     final candidates = await backend.findAllEvents(afterSequence: state.cursor);
@@ -574,32 +1024,42 @@ Future<bool> _performReplayRequest(
       databaseId: databaseId,
       policy: policy,
       cadence: cadence,
-      existingFailureRecord: state.transformFailureRecord,
+      existingFailureRecord: existingRecord,
       alreadyQueuedChannelWide: alreadyQueuedChannelWide,
+      keyLists: keyLists,
     );
     items.addAll(build.items);
+    keyLists = build.keyLists;
     advanceTo = build.cursor;
     pendingRecord = build.pendingFailureRecord;
     activationDone = !build.stoppedEarly;
   }
   final cursor = advanceTo;
-  // The record this function ever writes or clears is the one a first
-  // activation's walk consulted; a pure gap replay (request.firstActivation
-  // false) never touches it, whatever it currently holds — that record, if
-  // any, belongs to an unrelated live fill.
-  final clearsRecord =
-      request.firstActivation &&
-      activationDone &&
-      pendingRecord == null &&
-      state.transformFailureRecord != null;
+  // The record this function clears is one a batch of this request named:
+  // whatever record a first activation's walk consulted, or a gap batch's,
+  // at or below the fill position.
+  final ownsRecord =
+      existingRecord != null &&
+      (request.firstActivation ||
+          existingRecord.sequenceRange.lastSeq <= state.cursor);
+  final clearsRecord = activationDone && pendingRecord == null && ownsRecord;
   final recordChanges = pendingRecord != null || clearsRecord;
-  if (items.isEmpty && cursor == null && !recordChanges && !activationDone) {
+  final listsChange = !const MapEquality<String, KeyList>().equals(
+    keyLists,
+    state.keyLists,
+  );
+  if (items.isEmpty &&
+      cursor == null &&
+      !recordChanges &&
+      !listsChange &&
+      !activationDone) {
     // Nothing at all would change: the same "still backing off, write
     // nothing" outcome the live fill returns without a transaction.
     return false;
   }
   final committed = await _compareAndSet(backend, lock, id, state, (txn) async {
     await writeQueueItemsTxn(txn, backend, id, items);
+    if (listsChange) await backend.writeKeyListsTxn(txn, id, keyLists);
     if (cursor != null) await backend.writeFillCursorTxn(txn, id, cursor);
     if (pendingRecord != null) {
       await backend.writeTransformFailureRecordTxn(txn, id, pendingRecord);

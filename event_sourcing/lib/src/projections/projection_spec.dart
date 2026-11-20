@@ -61,7 +61,9 @@ class AggregateProjectionSpec extends ProjectionSpec {
 
 /// A projection that maintains a flat lookup table — one row per
 /// extracted key — under the library's default Layer-2 conventions:
-/// `insertEventTypes` upsert a row, `removeEventTypes` delete a row.
+/// `insertEventTypes` upsert a row, `updateEventTypes` merge fields into an
+/// existing row, `removeEventTypes` delete a row, and the event types of
+/// `listedRemovals` delete every row an event names in a list.
 /// The substrate could equally keep deleted rows as tombstones, or
 /// merge inserts rather than overwriting; the present semantics are
 /// conventions chosen for the common case.
@@ -73,6 +75,10 @@ class TableProjectionSpec extends ProjectionSpec {
     required this.removeEventTypes,
     required this.rowKey,
     required this.rowData,
+    this.updateEventTypes = const <String>{},
+    this.updateData = const SelectedFields(<String>[]),
+    this.matchField,
+    this.listedRemovals,
   });
   @override
   final String viewName;
@@ -82,4 +88,20 @@ class TableProjectionSpec extends ProjectionSpec {
   final Set<String> removeEventTypes;
   final RowKeyExtractor rowKey;
   final RowDataExtractor rowData;
+
+  /// Event types that merge the fields [updateData] extracts into the row
+  /// at their key; an update for a key with no row changes nothing.
+  final Set<String> updateEventTypes;
+
+  /// The fields an update event merges into its row.
+  final RowDataExtractor updateData;
+
+  /// When set, an update or remove event changes the row at its key only
+  /// while that row's [matchField] equals the event's data field of the
+  /// same name; otherwise it changes nothing.
+  final String? matchField;
+
+  /// When set, an event of one of its event types deletes every row it
+  /// names in a list (a row it names that does not exist is skipped).
+  final ListedRowKeys? listedRemovals;
 }

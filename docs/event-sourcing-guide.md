@@ -698,7 +698,8 @@ final eventStore = datastore.eventStore;
 
 Every event type your app appends must have its `entryType` registered
 here — missing entries fail at append time, not boot. The library's own
-reserved system entry types, and its default destination-wedges view, are
+reserved system entry types, and its default destination-wedges and
+destination-holds views, are
 registered by the open itself; list only your application's types (an id
 the library reserves is refused unless it is the library's own
 definition). The
@@ -1460,6 +1461,16 @@ design:
   transaction, the two can differ for the moment between them), and rows
   for other databases come from wedge events a peer forwarded, as that peer
   asserts them. Tell local rows from peer rows by that field.
+- Every store also folds the library's default destination-holds view
+  (`defaultDestinationHoldsSpec`, view `default_destination_holds`): one
+  row per held key of a keyed destination, keyed
+  `<database identity>|<destination>|<key>`, inserted in state `held` by a
+  hold event (a re-hold replaces it under the new hold id), moved to
+  `releasing` by the release event naming its hold, and removed by the
+  clearing event naming its hold or by the deletion that names its key
+  list. `DestinationRegistry.readDeliveryStatus` (or
+  `readDeliveryStatusInTxn`, inside a transaction you hold) reads the key
+  lists themselves.
 
 Activating that machinery — canonicalization rules: per-aggregate-type
 rules saying who is the canonical authority for that aggregate, who can
@@ -2159,6 +2170,117 @@ rewinds below events that `sent` items above the rewind point already
 delivered, when a destination deleted and registered again refills events
 the earlier registration delivered, and when a send's outcome did not
 commit (the drainer lost its lock or stopped before recording it).
+
+#### Key-scoped holds
+
+A destination's queue is one FIFO, so a permanent refusal of one subject's
+item would stop every subject behind it. A destination that can name the
+subject of each event opts in to holding that subject alone. One rule
+carries the feature: while a key has a key list, none of that key's events
+enters the queue except by the list's release, in sequence order.
+
+A destination opts in by overriding three members of `Destination` (a
+class that writes `implements Destination` declares them): `keyed => true`,
+`blockKeyOf(event)`, which returns the key naming the subject, or null for
+none, and `keyScheme`, a non-empty name for the rule `blockKeyOf` computes
+keys by (for example `participant-v1`; change it whenever a change to
+`blockKeyOf` may give one subject's events another key). A keyed destination
+without a key scheme is refused at registration.
+
+The hold covers only events that carry the held key. An event of the held
+subject whose `blockKeyOf` returns null, or a key containing `|`, is queued
+as a keyless item and is not held back with its subject's events: once
+queued it makes every later key-scoped refusal wedge the destination (see
+below). So `blockKeyOf` must return the subject's key for every event that
+belongs to a subject, and null only for an event that belongs to none. The fill evaluates it beside the transform, outside its transaction,
+and stores the key on each queue item, which carries events of one key only.
+A key containing `|` is queued as a keyless item. A keyed destination may
+not also serialize natively. The send returns
+`SendPermanent(error: ..., scope: WedgeScope.key)` when the refusal
+concerns only that item's key; the default scope is the destination.
+
+On such a refusal the drainer, in one transaction, tombstones the head,
+removes the key's other pending items and records the key's events in a
+key list, in sequence order and each once, in state held under a new hold
+id (a UUID), and appends `system.destination_held`. Every other key keeps
+delivering. From then on the fill and every replay insert that key's events
+into the list instead of enqueuing them.
+
+An operator releases a held key with
+`DestinationRegistry.releaseHold(id, key, holdId: ..., initiator: ...,
+requestId: ...)`, naming the hold id from the hold event or the status. The
+result is `ReleaseHoldApplied` (the list is now releasing; the event is
+`system.destination_hold_released`), `ReleaseHoldAlreadyReleasing` (a
+repeated request for the same hold changes nothing and returns the first
+event) or `ReleaseHoldStale` (the key is not held, or is held under another
+hold id; nothing is released). The fill then moves the list's events back
+into the queue, in order and gated on the fill position, whatever the
+schedule window, stamping each released item with the hold id. The release
+that empties the list removes it and appends
+`system.destination_hold_cleared`.
+
+If the transform or the key evaluation fails on a listed event while
+releasing, the failure is recorded for that key, retried under the retry
+curve and, once the budget is spent, the list returns to held under a new
+hold id with cause `transform_failed`. A recovery (`tombstoneAndRefill`)
+returns the events of any released items it removes to their key lists
+rather than rewinding the fill below them; deleting the destination removes
+its lists and names them in the deletion event's `key_lists`.
+
+To read holds, `readDeliveryStatus()` lists each destination's key lists
+(`keyLists`: state, hold id and events), and `readDeliveryStatusInTxn`
+reads the same inside a transaction the caller holds, which a caller that
+decides a release inside its own transaction needs. The library's default
+`default_destination_holds` view (`defaultDestinationHoldsSpec`, registered
+by `EventStore.open`) has one row per held key, in state `held` or
+`releasing`.
+
+Some failures stay destination-wide whatever the scope a send states: a
+refusal on a head with no block key, or while any pending item has none (a
+keyless item cannot be told from the held subject's), a spent retry budget,
+a transform-failed head, a halt request, and an acceptance with no receiver
+record. These wedge the destination as before. A wedge or halt leaves key
+lists unchanged.
+
+The key lists outlive a process, and a process that computes keys
+differently from the one that held a key would queue that key's new events
+ahead of the held ones. Every registration therefore records the
+destination's keying -- `keyed` and `keyScheme` -- in its persisted schedule
+(`DestinationSchedule.keying`) and in its registration event. While the
+database holds key lists for the id, `addDestination` refuses a
+registration that is not keyed, or whose keying differs from the recorded
+one (registry check `refused_keying_changed`): release and clear the lists,
+or delete the destination, before changing the keying. Without key lists a
+new keying is accepted and recorded. A process registered earlier under
+another keying keeps running, so its fill, replays and release steps write
+nothing while the recorded keying differs from its own, and a key-scoped
+refusal it drains wedges the head instead of holding the key. A schedule
+written before keyings were recorded (a database migrated in place) takes
+the keying of the next registration.
+
+Two failures mean the key lists no longer match the log, and retrying
+clears neither. If an event at a releasing list's front is missing from the
+log, the release records a release failure and, once the budget is spent,
+holds the key again with that event still at the front; every later
+release of the key ends the same way. If a recovery must re-create a list
+whose hold event is missing from the log, or a released item names an event
+the log lacks or carries no block key, `tombstoneAndRefill` throws
+`StateError` and writes only its registry check record
+(`refused_released_item_unreturnable`). A hold that cannot be committed for
+the same kind of reason (an item behind the head that carries attempts, an
+event missing from the log) is rolled back and the head is wedged
+destination-wide, so the ordinary recovery applies.
+In either case the operator deletes the destination with
+`deleteDestination` (it needs the destination's hard-delete opt-in), which
+removes its key lists, and registers it again; the refill sends its
+admitted events again, at least once.
+
+Postgres schema version 10 adds the block key and hold id to the queue and
+raises the minimum compatible schema version to 10, so deploy stop-then-
+start: stop every instance of the previous build before starting the new
+one. A rollback to a build of schema 9 is then a restore of the database,
+for every consumer, keyed destinations or not. A persisted Sembast database that holds a keyed destination opens only
+with data format 3.1 or later.
 
 ### Reading order from here
 

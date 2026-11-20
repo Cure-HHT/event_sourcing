@@ -267,8 +267,8 @@ void main() {
 
     // Verifies: EVS-DEV-version-compatibility/C
     // Verifies: EVS-DEV-version-compatibility/N
-    test('the data-format version of this build is 3.0', () {
-      expect(LibVersion.dataFormat, const DataFormatVersion(3, 0));
+    test('the data-format version of this build is 3.1', () {
+      expect(LibVersion.dataFormat, const DataFormatVersion(3, 1));
     });
   });
 

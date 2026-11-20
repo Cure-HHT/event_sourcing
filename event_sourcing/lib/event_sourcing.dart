@@ -183,11 +183,21 @@ export 'src/core/errors/sync_exception.dart';
 // exported.
 export 'src/destinations/batch_envelope_metadata.dart'
     show BatchEnvelopeMetadata;
+export 'src/destinations/default_destination_holds_spec.dart'
+    show defaultDestinationHoldsSpec;
 export 'src/destinations/default_destination_wedges_spec.dart'
     show defaultDestinationWedgesSpec;
 export 'src/destinations/destination.dart' show Destination;
 export 'src/destinations/destination_schedule.dart'
-    show DestinationSchedule, SetEndDateResult, TombstoneAndRefillResult;
+    show
+        DestinationKeying,
+        DestinationSchedule,
+        ReleaseHoldAlreadyReleasing,
+        ReleaseHoldApplied,
+        ReleaseHoldResult,
+        ReleaseHoldStale,
+        SetEndDateResult,
+        TombstoneAndRefillResult;
 export 'src/destinations/halt_purpose.dart' show HaltPurpose;
 export 'src/destinations/receiver_response.dart'
     show
@@ -332,9 +342,17 @@ export 'src/projections/primitives/derived_field.dart'
         FallbackValue,
         FirstEventTimestamp;
 export 'src/projections/primitives/row_data.dart'
-    show PayloadField, RowDataExtractor, SelectedFields, WholePayload;
+    show
+        CombinedRowData,
+        ConstantFields,
+        EventTimestampField,
+        ListLengthField,
+        PayloadField,
+        RowDataExtractor,
+        SelectedFields,
+        WholePayload;
 export 'src/projections/primitives/row_key.dart'
-    show AggregateIdKey, CompositeKey, RowKeyExtractor;
+    show AggregateIdKey, CompositeKey, ListedRowKeys, RowKeyExtractor;
 export 'src/projections/projection_registry.dart' show ProjectionRegistry;
 // Callers create AggregateProjectionSpec / TableProjectionSpec values,
 // register them in a ProjectionRegistry, and pass the registry to
@@ -402,6 +420,12 @@ export 'src/security/system_entry_types.dart'
         kDestinationHaltCancelledEventType,
         kDestinationHaltRequestedEntryType,
         kDestinationHaltRequestedEventType,
+        kDestinationHeldEntryType,
+        kDestinationHeldEventType,
+        kDestinationHoldClearedEntryType,
+        kDestinationHoldClearedEventType,
+        kDestinationHoldReleasedEntryType,
+        kDestinationHoldReleasedEventType,
         kDestinationRegisteredEntryType,
         kDestinationRegisteredEventType,
         kDestinationSenderSucceededEntryType,
@@ -471,8 +495,12 @@ export 'src/storage/initiator.dart'
 export 'src/storage/queue_records.dart'
     show
         HaltRequest,
+        KeyList,
+        KeyListEvent,
+        KeyListState,
         QueueRetirement,
         RegistryCheck,
+        ReleaseFailureRecord,
         ReplayRequest,
         SendFence,
         SenderChannelRecord,
@@ -488,7 +516,8 @@ export 'src/storage/send_result.dart'
         SendAnswered,
         SendTransient,
         SendPermanent,
-        SendNotAttempted;
+        SendNotAttempted,
+        WedgeScope;
 export 'src/storage/source.dart' show Source;
 export 'src/storage/storage_backend.dart' show StorageBackend;
 export 'src/storage/storage_description.dart'

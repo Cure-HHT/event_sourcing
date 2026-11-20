@@ -50,6 +50,16 @@ class DemoDestination implements Destination, DemoKnobs {
   @override
   bool get serializesNatively => false;
 
+  // Not keyed: every queue item carries no block key.
+  @override
+  bool get keyed => false;
+
+  @override
+  Future<String?> blockKeyOf(StoredEvent event) async => null;
+
+  @override
+  String? get keyScheme => null;
+
   // Not a native destination: it has no receiver endpoint to pull from.
   @override
   ChannelPull? get channelPull => null;

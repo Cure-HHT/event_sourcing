@@ -565,7 +565,7 @@ class ProjectionInterpreter {
           ),
         );
       }
-      final change = await switch (spec) {
+      final folded = await switch (spec) {
         AggregateProjectionSpec() => AggregateFold.applyEvent(
           txn: txn,
           backend: backend,
@@ -574,7 +574,7 @@ class ProjectionInterpreter {
           integrity: marks.own,
           copyId: copyId,
           rows: access,
-        ),
+        ).then((change) => <AggregateFoldChange>[?change]),
         TableProjectionSpec() => TableFold.applyEvent(
           txn: txn,
           backend: backend,
@@ -585,7 +585,7 @@ class ProjectionInterpreter {
           rows: access,
         ),
       };
-      if (change != null) changes.add(change);
+      changes.addAll(folded);
     }
     if (marks.refresh.isNotEmpty) {
       changes.addAll(

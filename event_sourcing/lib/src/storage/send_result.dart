@@ -90,24 +90,49 @@ class SendTransient extends SendResult {
   String toString() => 'SendTransient(error: $error, httpStatus: $httpStatus)';
 }
 
+/// What a permanent failure concerns: the whole destination, or only the
+/// block key of the item it refused.
+// Implements: EVS-PRD-destination-key-hold/A+D
+// the delivery implementation states whether a permanent failure concerns
+//   the destination or only the key of the item it refused.
+enum WedgeScope {
+  /// The failure concerns the destination: the drainer wedges its queue.
+  destination,
+
+  /// The failure concerns only the refused item's block key: on a keyed
+  /// destination whose every pending item carries a block key, the drainer
+  /// holds that key instead of wedging the queue.
+  key,
+}
+
 /// The destination will not accept the payload, and retry would not change
 /// that. The drain loop SHALL mark the FIFO head `wedged` and stop
-/// draining this destination until operator action.
+/// draining this destination until operator action, unless [scope] is
+/// [WedgeScope.key] on a keyed destination, where it holds the head's
+/// block key instead.
 class SendPermanent extends SendResult {
-  const SendPermanent({required this.error});
+  const SendPermanent({
+    required this.error,
+    this.scope = WedgeScope.destination,
+  });
 
   /// Operator-readable error string.
   final String error;
 
+  /// What the failure concerns; [WedgeScope.destination] unless the
+  /// destination states that the refusal concerns only the item's key.
+  final WedgeScope scope;
+
   @override
   bool operator ==(Object other) =>
-      identical(this, other) || other is SendPermanent && error == other.error;
+      identical(this, other) ||
+      other is SendPermanent && error == other.error && scope == other.scope;
 
   @override
-  int get hashCode => Object.hash(SendPermanent, error);
+  int get hashCode => Object.hash(SendPermanent, error, scope);
 
   @override
-  String toString() => 'SendPermanent(error: $error)';
+  String toString() => 'SendPermanent(error: $error, scope: ${scope.name})';
 }
 
 /// The destination did not attempt delivery: its transport declined to

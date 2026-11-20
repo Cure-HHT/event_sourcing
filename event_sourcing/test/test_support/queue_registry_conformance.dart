@@ -1129,6 +1129,39 @@ void runQueueRegistryScenarios(
         expect(await w.channelRecord('x'), SenderChannelRecord.initial);
       });
 
+      // Verifies: EVS-DEV-destination-key-hold/F
+      // a destination that is both keyed and natively serializing is refused
+      //   before anything is written.
+      test('addDestination refuses a keyed destination that '
+          'serializesNatively', () async {
+        if (!available) return;
+        await expectLater(
+          w.registry.addDestination(
+            _KeyedNativeDestination(id: 'kn'),
+            initiator: _init,
+          ),
+          throwsA(
+            isA<ArgumentError>().having(
+              (e) => e.toString(),
+              'message',
+              allOf(contains('keyed'), contains('serializes natively')),
+            ),
+          ),
+        );
+        expect(w.registry.byId('kn'), isNull);
+      });
+
+      // Verifies: EVS-DEV-destination-key-hold/F
+      // a keyed destination that does not serialize natively registers.
+      test('addDestination accepts a keyed destination', () async {
+        if (!available) return;
+        await w.registry.addDestination(
+          _KeyedDestination(id: 'k'),
+          initiator: _init,
+        );
+        expect(w.registry.byId('k'), isNotNull);
+      });
+
       // Verifies: EVS-DEV-delivery-channel/E
       // no registry operation but the registration and the deletion changes
       //   a sender channel record: date changes, a halt request and its
@@ -1377,6 +1410,216 @@ void runQueueRegistryScenarios(
           initiator: _init,
         );
         expect(w.registry.byId('x'), isNotNull);
+      });
+    });
+
+    // ------------------------------------------------------------------
+    // Key lists in the delivery status and the deletion
+    // ------------------------------------------------------------------
+
+    group('key lists', () {
+      KeyList list(String holdId, KeyListState state, List<StoredEvent> es) =>
+          KeyList(
+            holdId: holdId,
+            state: state,
+            cause: 'permanent_refusal',
+            events: <KeyListEvent>[
+              for (final e in es)
+                KeyListEvent(
+                  eventId: e.eventId,
+                  sequenceNumber: e.sequenceNumber,
+                ),
+            ],
+          );
+
+      Future<Map<String, KeyList>> writeLists(
+        String destId,
+        List<StoredEvent> es,
+      ) async {
+        final lists = <String, KeyList>{
+          'A': list('hold-a', KeyListState.held, <StoredEvent>[es[0]]),
+          'B': list('hold-b', KeyListState.releasing, <StoredEvent>[es[1]]),
+        };
+        await w.backend.transaction(
+          (txn) => w.backend.writeKeyListsTxn(txn, destId, lists),
+        );
+        return lists;
+      }
+
+      // Verifies: EVS-DEV-destination-drain/T
+      // the delivery-status read shows each destination's key lists, with
+      //   their state and hold id; a destination with none shows none.
+      test('readDeliveryStatus lists key lists with state', () async {
+        if (!available) return;
+        await w.registry.addDestination(
+          _KeyedDestination(id: 'x'),
+          initiator: _init,
+        );
+        await w.registry.addDestination(
+          FakeDestination(id: 'y'),
+          initiator: _init,
+        );
+        final lists = await writeLists('x', <StoredEvent>[
+          await w.note('a1'),
+          await w.note('b1'),
+        ]);
+        final status = await w.registry.readDeliveryStatus();
+        final x = status.destinations['x']!;
+        expect(x.keyLists, lists);
+        expect(x.keyLists['A']!.state, KeyListState.held);
+        expect(x.keyLists['A']!.holdId, 'hold-a');
+        expect(x.keyLists['B']!.state, KeyListState.releasing);
+        expect(x.toString(), contains('hold-b'));
+        expect(status.destinations['y']!.keyLists, isEmpty);
+      });
+
+      // Verifies: EVS-DEV-destination-key-hold/Z
+      // the in-transaction read returns, inside a caller's transaction (of
+      //   the event store or of its storage reader), the records the
+      //   standalone read returns, read from that transaction (a key list
+      //   the caller wrote earlier in it included); a handle the event store
+      //   or its reader did not issue, or whose body has returned, is
+      //   refused.
+      test('readDeliveryStatusInTxn returns the same inside a caller '
+          'transaction', () async {
+        if (!available) return;
+        await w.registry.addDestination(
+          _KeyedDestination(id: 'x'),
+          initiator: _init,
+        );
+        final a1 = await w.note('a1');
+        await writeLists('x', <StoredEvent>[a1, await w.note('b1')]);
+        final standalone = await w.registry.readDeliveryStatus();
+        final standaloneLists = standalone.destinations['x']!.keyLists;
+        late Transaction carried;
+        final inTxn = await w.store.runTransaction((txn, _) async {
+          carried = txn;
+          final same = await w.registry.readDeliveryStatusInTxn(txn);
+          expect(same.toString(), standalone.toString());
+          expect(same.destinations['x']!.keyLists, standaloneLists);
+          final c = list('hold-c', KeyListState.held, <StoredEvent>[a1]);
+          await w.backend.writeKeyListsTxn(txn, 'x', <String, KeyList>{
+            ...standaloneLists,
+            'C': c,
+          });
+          return w.registry.readDeliveryStatusInTxn(txn);
+        });
+        expect(inTxn.destinations['x']!.keyLists.keys.toSet(), <String>{
+          'A',
+          'B',
+          'C',
+        });
+        // A storage reader's transaction is a caller transaction too.
+        final viaReader = await w.store.reader.transaction(
+          w.registry.readDeliveryStatusInTxn,
+        );
+        expect(
+          viaReader.toString(),
+          (await w.registry.readDeliveryStatus()).toString(),
+        );
+        // A handle from another store's reader is refused.
+        final other = await w.openProcess();
+        await expectLater(
+          other.store.reader.transaction(w.registry.readDeliveryStatusInTxn),
+          throwsA(isA<StateError>()),
+        );
+        await expectLater(
+          w.registry.readDeliveryStatusInTxn(carried),
+          throwsA(isA<StateError>()),
+        );
+        await expectLater(
+          w.backend.transaction(w.registry.readDeliveryStatusInTxn),
+          throwsA(isA<StateError>()),
+        );
+      });
+
+      // Verifies: EVS-DEV-destination-drain/A
+      // a deletion removes the destination's key lists and release failure
+      //   records with its other per-destination records, and names in its
+      //   deletion event each key list it removes, by key and hold id.
+      test('deleteDestination removes key lists and release failures and '
+          'names the holds in its deletion event', () async {
+        if (!available) return;
+        await w.registry.addDestination(
+          _KeyedDestination(id: 'x', allowHardDelete: true),
+          initiator: _init,
+        );
+        await w.registry.addDestination(
+          _KeyedDestination(id: 'y', allowHardDelete: true),
+          initiator: _init,
+        );
+        final es = <StoredEvent>[await w.note('a1'), await w.note('b1')];
+        await writeLists('x', es);
+        final kept = await writeLists('y', es);
+        final failure = ReleaseFailureRecord(
+          failures: 1,
+          failedAt: <DateTime>[DateTime.utc(2026, 5, 1)],
+          lastEventId: es[1].eventId,
+        );
+        for (final id in <String>['x', 'y']) {
+          await w.backend.transaction(
+            (txn) => w.backend.writeReleaseFailuresTxn(
+              txn,
+              id,
+              <String, ReleaseFailureRecord>{'B': failure},
+            ),
+          );
+        }
+        expect(
+          await w.db.backendStateKeys(),
+          containsAll(<String>['keylists_x', 'release_failures_x']),
+        );
+
+        await w.registry.deleteDestination('x', initiator: _init);
+
+        expect(
+          await w.backend.transaction(
+            (txn) => w.backend.readKeyListsTxn(txn, 'x'),
+          ),
+          isEmpty,
+        );
+        expect(
+          await w.backend.transaction(
+            (txn) => w.backend.readReleaseFailuresTxn(txn, 'x'),
+          ),
+          isEmpty,
+        );
+        expect(
+          (await w.db.backendStateKeys()).where((k) => k.endsWith('_x')),
+          isEmpty,
+          reason: 'nothing was queued, so no sequence counter remains',
+        );
+        final audit = (await w.audits(kDestinationDeletedEntryType)).single;
+        expect(audit.data['key_lists'], <Object?>[
+          <String, Object?>{'key': 'A', 'hold_id': 'hold-a'},
+          <String, Object?>{'key': 'B', 'hold_id': 'hold-b'},
+        ]);
+        // Another destination's lists and records are untouched.
+        expect(
+          await w.backend.transaction(
+            (txn) => w.backend.readKeyListsTxn(txn, 'y'),
+          ),
+          kept,
+        );
+        expect(
+          await w.backend.transaction(
+            (txn) => w.backend.readReleaseFailuresTxn(txn, 'y'),
+          ),
+          <String, ReleaseFailureRecord>{'B': failure},
+        );
+      });
+
+      // Verifies: EVS-DEV-destination-drain/A
+      // a deletion of a destination that holds no key names no key list.
+      test('a deletion with no key list names none', () async {
+        if (!available) return;
+        await w.registry.addDestination(
+          FakeDestination(id: 'x', allowHardDelete: true),
+          initiator: _init,
+        );
+        await w.registry.deleteDestination('x', initiator: _init);
+        final audit = (await w.audits(kDestinationDeletedEntryType)).single;
+        expect(audit.data['key_lists'], isEmpty);
       });
     });
 
@@ -2209,4 +2452,18 @@ void runQueueRegistryScenarios(
       );
     });
   });
+}
+
+class _KeyedNativeDestination extends NativeDestination {
+  _KeyedNativeDestination({super.id});
+
+  @override
+  bool get keyed => true;
+}
+
+class _KeyedDestination extends FakeDestination {
+  _KeyedDestination({super.id, super.allowHardDelete});
+
+  @override
+  bool get keyed => true;
 }

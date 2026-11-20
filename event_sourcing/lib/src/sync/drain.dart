@@ -152,6 +152,14 @@ Future<void> _lockCheck(
 /// failure was reported) gets nothing more. The pass then ends. Items
 /// behind a wedged head are never attempted.
 ///
+/// A [SendPermanent] scoped to [WedgeScope.key], on a head that carries a
+/// block key while every pending item carries one, holds that key instead,
+/// whether or not the attempt spends the budget: the same transaction
+/// records the attempt and runs `DestinationRegistry._holdKeyInTxn`, and the
+/// pass goes on with the next head. On a head with no block key, or while
+/// a keyless item is pending, it wedges the head as any permanent failure
+/// does.
+///
 /// [policy] is an optional [SyncPolicy] override; when null, the drain
 /// falls back to [SyncPolicy.defaults]. Its `maxAttempts` and
 /// `maxRetryTime` are the budget in effect, recorded in every wedge event
@@ -188,6 +196,8 @@ Future<void> drain(
   final effective = policy ?? SyncPolicy.defaults;
   checkRetryBudget(effective);
   final destinationId = destination.id;
+  // Consumer code: read once, outside any transaction.
+  final keying = DestinationKeying.of(destination);
   while (true) {
     if (stopRequested?.call() ?? false) return;
     // (1) Read the head. A wedged head halts the drain; recovery is
@@ -214,16 +224,19 @@ Future<void> drain(
       return;
     }
 
-    // (2) Status derivation from the recorded attempts.
+    // (2) Status derivation from the recorded attempts. A hold takes the
+    // head out of the queue, and the pass goes on with the next head.
     if (_derivedCause(head, effective, cadence) != null) {
-      await _wedgeFromAttempts(
+      final held = await _wedgeFromAttempts(
         registry,
         lock,
         destinationId: destinationId,
         policy: effective,
         cadence: cadence,
         declared: declared,
+        keying: keying,
       );
+      if (held) continue;
       return;
     }
 
@@ -395,36 +408,70 @@ Future<void> drain(
 
     if (cause != null) {
       // The attempt, the wedged status, the wedge event and the wedge
-      // record commit together.
-      try {
-        final discarded = await registry.eventStore.runTransaction((
+      // record commit together; or, for a refusal that holds the head's
+      // block key, the attempt and the hold.
+      // Implements: EVS-DEV-destination-drain/C+J
+      // the attempt commits with the wedge or the hold it produces; a
+      //   key-scoped refusal holds the key whether or not the attempt
+      //   spends the retry budget.
+      final bool held;
+      // The attempt with its hold or wedge. With [allowHold] false a
+      // key-scoped refusal wedges the head too: the drainer runs it so
+      // after a hold that threw rolled back (see [_HoldFailed]).
+      Future<({String? discarded, bool held})> decide({
+        required bool allowHold,
+      }) => registry.eventStore.runTransaction((txn, collector) async {
+        await _lockCheck(lock, txn, destinationId);
+        await backend.appendAttemptTxn(
           txn,
-          collector,
-        ) async {
-          await _lockCheck(lock, txn, destinationId);
-          await backend.appendAttemptTxn(
-            txn,
-            destinationId,
-            head.entryId,
-            attempt,
-          );
-          final wedged = await registry._wedgeHeadInTxn(
-            txn,
-            collector,
-            destinationId: destinationId,
-            rowId: head.entryId,
-            cause: cause,
-            maxAttempts: effective.maxAttempts,
-            maxRetryMs: effective.maxRetryTime.inMilliseconds,
-            drainerEpoch: lock.epoch,
-            configuration: declared?.configuration,
-            configurationFingerprint: declared?.fingerprint,
+          destinationId,
+          head.entryId,
+          attempt,
+        );
+        if (allowHold &&
+            attempt.outcome == 'permanent' &&
+            attempt.scope == WedgeScope.key &&
+            await _holdable(backend, txn, destinationId, head, keying)) {
+          await _holdOrSignal(
+            () => registry._holdKeyInTxn(
+              txn,
+              collector,
+              destinationId: destinationId,
+              key: head.blockKey!,
+              head: head,
+              cause: WedgeCause.permanentRefusal.wire,
+              attemptCount: head.attempts.length + 1,
+            ),
           );
           _injectOutcomeFailure(destinationId, attempt.outcome);
-          return wedged.discardedHaltRequestEventId;
-        });
-        _logDiscardedHaltRequest(destinationId, discarded);
-        _injectAfterWedgeTransaction(destinationId);
+          return (discarded: null, held: true);
+        }
+        final wedged = await registry._wedgeHeadInTxn(
+          txn,
+          collector,
+          destinationId: destinationId,
+          rowId: head.entryId,
+          cause: cause,
+          maxAttempts: effective.maxAttempts,
+          maxRetryMs: effective.maxRetryTime.inMilliseconds,
+          drainerEpoch: lock.epoch,
+          configuration: declared?.configuration,
+          configurationFingerprint: declared?.fingerprint,
+        );
+        _injectOutcomeFailure(destinationId, attempt.outcome);
+        return (discarded: wedged.discardedHaltRequestEventId, held: false);
+      });
+      try {
+        ({String? discarded, bool held}) outcome;
+        try {
+          outcome = await decide(allowHold: true);
+        } on _HoldFailed catch (failed) {
+          _logHoldFailed(destinationId, failed);
+          outcome = await decide(allowHold: false);
+        }
+        held = outcome.held;
+        _logDiscardedHaltRequest(destinationId, outcome.discarded);
+        if (!held) _injectAfterWedgeTransaction(destinationId);
       } on DrainLockLostException {
         // The check is the transaction's first step: nothing committed,
         // and a drainer that lost the lock records nothing more.
@@ -441,17 +488,20 @@ Future<void> drain(
         // before its lock check.
         libraryLog(
           'drain',
-          'the transaction wedging the head of $destinationId reported '
-              'failure',
+          'the transaction wedging the head of $destinationId, or holding '
+              'its block key, reported failure',
           level: LibraryLogLevel.severe,
           error: e,
           stackTrace: st,
         );
         final attemptRecordedAlone = await backend.transaction((txn) async {
           final current = await backend.readFifoHeadTxn(txn, destinationId);
-          if (current != null &&
-              current.entryId == head.entryId &&
-              current.finalStatus == FinalStatus.wedged) {
+          // A head no longer at the front was tombstoned by a hold that
+          // committed before its failure was reported.
+          if (current == null || current.entryId != head.entryId) {
+            return false;
+          }
+          if (current.finalStatus == FinalStatus.wedged) {
             final record = await backend.readWedgeRecordTxn(txn, destinationId);
             if (record?.rowId == head.entryId) return false;
           }
@@ -469,13 +519,16 @@ Future<void> drain(
         libraryLog(
           'drain',
           attemptRecordedAlone
-              ? 'the wedge of $destinationId did not commit; its attempt was '
-                    'recorded alone and the pass ends'
-              : 'the wedge of $destinationId committed before its failure '
-                    'was reported; nothing more is recorded and the pass ends',
+              ? 'the wedge or hold of $destinationId did not commit; its '
+                    'attempt was recorded alone and the pass ends'
+              : 'the wedge or hold of $destinationId committed before its '
+                    'failure was reported; nothing more is recorded and the '
+                    'pass ends',
           level: LibraryLogLevel.warning,
         );
+        return;
       }
+      if (held) continue;
       return;
     }
 
@@ -520,33 +573,40 @@ Future<void> honourHaltById(
   required DrainLock lock,
 }) async {
   final backend = registry._backend;
-  final head = await backend.readFifoHead(destinationId);
-  if (head == null || head.finalStatus != null) return;
-  final requested = await backend.transaction(
-    (txn) => backend.readHaltRequestTxn(txn, destinationId),
-  );
-  await DeliveryTestHooks.current?.afterHaltLoopTopRead?.call(destinationId);
-  if (requested == null) return;
-  if (_derivedCause(head, null, Duration.zero) != null) {
-    await _wedgeFromAttempts(
+  while (true) {
+    final head = await backend.readFifoHead(destinationId);
+    if (head == null || head.finalStatus != null) return;
+    final requested = await backend.transaction(
+      (txn) => backend.readHaltRequestTxn(txn, destinationId),
+    );
+    await DeliveryTestHooks.current?.afterHaltLoopTopRead?.call(destinationId);
+    if (requested == null) return;
+    if (_derivedCause(head, null, Duration.zero) != null) {
+      // A hold takes the head out of the queue; the request is honoured
+      // at the next head.
+      final held = await _wedgeFromAttempts(
+        registry,
+        lock,
+        destinationId: destinationId,
+        policy: null,
+        cadence: Duration.zero,
+        declared: null,
+        keying: null,
+      );
+      if (held) continue;
+      return;
+    }
+    await _honourHalt(
       registry,
       lock,
       destinationId: destinationId,
+      requestEventId: requested.requestEventId,
       policy: null,
       cadence: Duration.zero,
       declared: null,
     );
     return;
   }
-  await _honourHalt(
-    registry,
-    lock,
-    destinationId: destinationId,
-    requestEventId: requested.requestEventId,
-    policy: null,
-    cadence: Duration.zero,
-    declared: null,
-  );
 }
 
 /// Runs the transaction that honours [requestEventId] for [destinationId]
@@ -642,48 +702,84 @@ void _observeFenceBodyRun(String destinationId) {
   }
 }
 
-/// Wedges [destinationId]'s pending head for the cause its recorded
-/// attempts call for under [policy] and [cadence] (a null [policy]: no
-/// budget in effect, so only a permanent refusal), in its own transaction,
-/// without a send. The transaction reads the head again and decides again
-/// before it wedges: with one drainer the head cannot change between the
-/// two reads, so the second decision is defence in depth. A failure is
-/// logged; whether the transaction committed is not known, and the next
-/// pass reads the head again before any send.
-Future<void> _wedgeFromAttempts(
+/// Gives [destinationId]'s pending head the status its recorded attempts
+/// call for under [policy] and [cadence] (a null [policy]: no budget in
+/// effect, so only a permanent refusal), in its own transaction, without a
+/// send: it holds the head's block key when the last attempt reported a
+/// permanent failure scoped to that key and the head is holdable (see
+/// [_holdable]), whether or not the attempts spent the budget, and wedges
+/// the head otherwise. The transaction reads the head again and decides
+/// again before it writes: with one drainer the head cannot change between
+/// the two reads, so the second decision is defence in depth. Returns true
+/// only when a hold committed. A failure is logged; whether the
+/// transaction committed is not known, and the next pass reads the head
+/// again before any send.
+// Implements: EVS-DEV-destination-drain/J
+// the status derivation holds the block key, without a further send, when
+//   the last attempt reported a key-scoped permanent failure, and wedges for
+//   any other permanent failure or a spent budget.
+Future<bool> _wedgeFromAttempts(
   DestinationRegistry registry,
   DrainLock lock, {
   required String destinationId,
   required SyncPolicy? policy,
   required Duration cadence,
   required DrainerConfiguration? declared,
+  required DestinationKeying? keying,
 }) async {
   final backend = registry._backend;
+  // The hold or wedge. With [allowHold] false a key-scoped refusal wedges
+  // the head too: the drainer runs it so after a hold that threw rolled
+  // back (see [_HoldFailed]).
+  Future<({String? discarded, bool held})> decide({required bool allowHold}) =>
+      registry.eventStore.runTransaction((txn, collector) async {
+        await _lockCheck(lock, txn, destinationId);
+        final current = await backend.readFifoHeadTxn(txn, destinationId);
+        if (current == null || current.finalStatus != null) {
+          return (discarded: null, held: false);
+        }
+        final cause = _derivedCause(current, policy, cadence);
+        if (cause == null) return (discarded: null, held: false);
+        if (allowHold &&
+            _lastAttemptKeyScoped(current) &&
+            await _holdable(backend, txn, destinationId, current, keying)) {
+          await _holdOrSignal(
+            () => registry._holdKeyInTxn(
+              txn,
+              collector,
+              destinationId: destinationId,
+              key: current.blockKey!,
+              head: current,
+              cause: WedgeCause.permanentRefusal.wire,
+              attemptCount: current.attempts.length,
+            ),
+          );
+          return (discarded: null, held: true);
+        }
+        final wedged = await registry._wedgeHeadInTxn(
+          txn,
+          collector,
+          destinationId: destinationId,
+          rowId: current.entryId,
+          cause: cause,
+          maxAttempts: policy?.maxAttempts,
+          maxRetryMs: policy?.maxRetryTime.inMilliseconds,
+          drainerEpoch: lock.epoch,
+          configuration: declared?.configuration,
+          configurationFingerprint: declared?.fingerprint,
+        );
+        return (discarded: wedged.discardedHaltRequestEventId, held: false);
+      });
   try {
-    final discarded = await registry.eventStore.runTransaction((
-      txn,
-      collector,
-    ) async {
-      await _lockCheck(lock, txn, destinationId);
-      final current = await backend.readFifoHeadTxn(txn, destinationId);
-      if (current == null || current.finalStatus != null) return null;
-      final cause = _derivedCause(current, policy, cadence);
-      if (cause == null) return null;
-      final wedged = await registry._wedgeHeadInTxn(
-        txn,
-        collector,
-        destinationId: destinationId,
-        rowId: current.entryId,
-        cause: cause,
-        maxAttempts: policy?.maxAttempts,
-        maxRetryMs: policy?.maxRetryTime.inMilliseconds,
-        drainerEpoch: lock.epoch,
-        configuration: declared?.configuration,
-        configurationFingerprint: declared?.fingerprint,
-      );
-      return wedged.discardedHaltRequestEventId;
-    });
-    _logDiscardedHaltRequest(destinationId, discarded);
+    ({String? discarded, bool held}) outcome;
+    try {
+      outcome = await decide(allowHold: true);
+    } on _HoldFailed catch (failed) {
+      _logHoldFailed(destinationId, failed);
+      outcome = await decide(allowHold: false);
+    }
+    _logDiscardedHaltRequest(destinationId, outcome.discarded);
+    if (outcome.held) return true;
     _injectAfterWedgeTransaction(destinationId);
   } on DrainLockLostException {
     rethrow;
@@ -693,14 +789,86 @@ Future<void> _wedgeFromAttempts(
   } on Object catch (e, st) {
     libraryLog(
       'drain',
-      'wedging the head of $destinationId from its recorded attempts '
-          'reported failure; the pass ends',
+      'wedging the head of $destinationId, or holding its block key, from '
+          'its recorded attempts reported failure; the pass ends',
       level: LibraryLogLevel.severe,
       error: e,
       stackTrace: st,
     );
   }
+  return false;
 }
+
+/// Whether [head]'s last recorded attempt reported a permanent failure
+/// scoped to its block key.
+bool _lastAttemptKeyScoped(FifoEntry head) =>
+    head.attempts.isNotEmpty &&
+    head.attempts.last.outcome == 'permanent' &&
+    head.attempts.last.scope == WedgeScope.key;
+
+/// Whether a key-scoped permanent failure on [head] holds its block key,
+/// read inside [txn]: the head carries a block key, every pending item of
+/// [destinationId] carries one, and the persisted schedule records a keyed
+/// keying that equals [keying], the keying of the destination the drainer
+/// registers (a null [keying], for a destination the drainer does not
+/// register, matches any keyed one). Otherwise the library cannot tell
+/// which subject a keyless item belongs to, or a process under another
+/// keying may route the key's events past the hold, and the failure wedges
+/// the head.
+// Implements: EVS-DEV-destination-key-hold/I
+// a key-scoped failure on a keyless head, or while a keyless item is
+//   pending, wedges the head with cause permanent_refusal.
+// Implements: EVS-DEV-destination-key-hold-guards/E
+// a key-scoped failure under a keying other than the recorded one wedges
+//   the head instead of holding its key.
+Future<bool> _holdable(
+  StorageBackend backend,
+  Transaction txn,
+  String destinationId,
+  FifoEntry head,
+  DestinationKeying? keying,
+) async {
+  if (head.blockKey == null) return false;
+  final recorded = (await backend.readScheduleTxn(txn, destinationId))?.keying;
+  final keyingHolds = recorded == null
+      ? keying?.keyed ?? false
+      : recorded.keyed && (keying == null || keying == recorded);
+  return keyingHolds &&
+      !await backend.hasPendingKeylessRowTxn(txn, destinationId);
+}
+
+/// A hold that threw inside its transaction ([StateError] from
+/// `DestinationRegistry._holdKeyInTxn`: the log or the queue is not as the
+/// hold requires). Thrown out of the transaction so it rolls back, after
+/// which the drainer wedges the head destination-wide, so the destination's
+/// recovery applies instead of the same hold failing at every pass.
+class _HoldFailed implements Exception {
+  _HoldFailed(this.error, this.stackTrace);
+  final Object error;
+  final StackTrace stackTrace;
+}
+
+/// Runs [hold], turning a [StateError] it throws into [_HoldFailed].
+// Implements: EVS-DEV-destination-key-hold-guards/F
+// a hold that throws rolls back, and the head is wedged destination-wide.
+Future<void> _holdOrSignal(Future<String> Function() hold) async {
+  try {
+    await hold();
+    // The hold reports a log or queue it cannot hold as a StateError.
+    // ignore: avoid_catching_errors
+  } on StateError catch (e, st) {
+    throw _HoldFailed(e, st);
+  }
+}
+
+void _logHoldFailed(String destinationId, _HoldFailed failed) => libraryLog(
+  'drain',
+  'holding the block key of the head of $destinationId failed; the head is '
+      'wedged destination-wide instead',
+  level: LibraryLogLevel.severe,
+  error: failed.error,
+  stackTrace: failed.stackTrace,
+);
 
 /// Wedges [destinationId]'s pending, transform-failed head with cause
 /// [WedgeCause.transformFailed], in its own transaction, without a send.
@@ -922,13 +1090,17 @@ AttemptResult _attemptFromResult(
         deliveryNumber: number,
         deliveryHash: hash,
       );
-    case SendPermanent(:final error):
+    // Implements: EVS-DEV-destination-key-hold/J
+    // the attempt records whether its permanent failure was scoped to the
+    //   item's block key.
+    case SendPermanent(:final error, :final scope):
       return AttemptResult(
         attemptedAt: attemptedAt,
         outcome: 'permanent',
         errorMessage: error,
         deliveryNumber: number,
         deliveryHash: hash,
+        scope: scope,
       );
     case SendAnswered(:final response):
       return AttemptResult(

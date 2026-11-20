@@ -47,6 +47,7 @@ const Map<int, Map<String, List<String>>> _enumeratedValuesByDataFormatMajor =
           'operator_halt',
           'permanent_refusal',
           'retry_budget_exhausted',
+          'transform_failed',
         ],
         'purpose': <String>['pause', 'reconfigure'],
         'kind': <String>[
@@ -217,6 +218,18 @@ const Map<int, Map<String, List<Object>>> _shapesByDataFormatMajor =
           'system_destination',
           <String>['destination_sender_succeeded'],
         ],
+        'system.destination_held': <Object>[
+          'system_destination',
+          <String>['destination_held'],
+        ],
+        'system.destination_hold_released': <Object>[
+          'system_destination',
+          <String>['destination_hold_released'],
+        ],
+        'system.destination_hold_cleared': <Object>[
+          'system_destination',
+          <String>['destination_hold_cleared'],
+        ],
       },
     };
 
@@ -294,6 +307,9 @@ void main() {
             kDestinationChannelResumedEventType,
         kDestinationSenderSucceededEntryType:
             kDestinationSenderSucceededEventType,
+        kDestinationHeldEntryType: kDestinationHeldEventType,
+        kDestinationHoldReleasedEntryType: kDestinationHoldReleasedEventType,
+        kDestinationHoldClearedEntryType: kDestinationHoldClearedEventType,
       };
       expect(kDestinationAuditEntryTypes.toSet(), byKind.keys.toSet());
       expect(kDestinationAuditEntryTypes.toSet(), <String>{

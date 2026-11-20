@@ -5,7 +5,11 @@
 // LibVersion.dataFormat is the library's data-format version, distinct from
 //   the package version.
 // Implements: EVS-DEV-version-compatibility/N
-// the library declares data-format version 3.0.
+// the library declares data-format version 3.1.
+// Implements: EVS-DEV-version-compatibility/C
+// a persisted Sembast database that holds a keyed destination is opened
+//   only by a build of data-format 3.1 or later: a precondition the
+//   consumer keeps, stated on [LibVersion.dataFormat].
 import 'package:event_sourcing/src/versions.dart';
 
 /// This build's library versions: its package version ([version]) and its
@@ -23,7 +27,7 @@ class LibVersion {
   /// The version of the event_sourcing library compiled into this build.
   /// Update in lockstep with `pubspec.yaml`'s `version` field. Recorded in
   /// the log; it decides nothing.
-  static const String version = '0.8.0';
+  static const String version = '0.9.0';
 
   /// The data-format version of this build: what it stores and sends,
   /// distinct from [version]. Stamped on every event the library appends.
@@ -34,7 +38,13 @@ class LibVersion {
   /// deployment is a restore from a backup taken before the switch, or a
   /// roll-forward. See [DataFormatVersion] for the rule that decides a minor
   /// or a major bump.
-  static const DataFormatVersion dataFormat = DataFormatVersion(3, 0);
+  ///
+  /// 3.1 adds keyed destinations. A Postgres schema of this build refuses
+  /// every build before it; a persisted Sembast database has no such
+  /// minimum, so the consumer keeps the precondition that a Sembast
+  /// database holding a keyed destination is opened only by a build of 3.1
+  /// or later.
+  static const DataFormatVersion dataFormat = DataFormatVersion(3, 1);
 
   /// Returns negative if [a] < [b], positive if [a] > [b], 0 if equal.
   /// Compares dot-separated integer components left to right; trailing

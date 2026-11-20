@@ -106,6 +106,48 @@ abstract class Destination {
   //   outcomes.
   ChannelPull? get channelPull => null;
 
+  /// Whether this destination names, for each event, the subject whose
+  /// events must stay in order (its block key, [blockKeyOf]). A keyed
+  /// destination's delivery implementation may report a permanent failure
+  /// scoped to the refused item's key (`SendPermanent.scope`), on which the
+  /// library holds that key's events back and keeps delivering every other
+  /// key's. When `false` (the default) every queue item carries no block key
+  /// and the destination behaves as every destination did before keys. A
+  /// destination that holds key lists registers only while it is keyed.
+  // Implements: EVS-PRD-destination-key-hold/A
+  // a destination declares whether it names a key for each event it
+  //   queues; one that does not behaves as before keys.
+  bool get keyed => false;
+
+  /// The block key of [event] on a keyed destination: the subject whose
+  /// events must reach the receiver in order. The library evaluates it
+  /// beside [transform], outside any transaction, and treats a throw as a
+  /// failure of the transform on the event. Null for an event with no key.
+  /// A destination that is not [keyed] keeps the default, which returns
+  /// null.
+  ///
+  /// A hold covers only the events that carry the held key: an event of a
+  /// held subject for which this returns null (or a key containing `|`) is
+  /// queued keyless, ahead of the subject's held events, and makes every
+  /// later key-scoped refusal wedge the destination. Return the subject's
+  /// key for every event that belongs to a subject, and null only for an
+  /// event that belongs to none.
+  // Implements: EVS-PRD-destination-key-hold/A
+  // a keyed destination declares the key of each event it queues.
+  Future<String?> blockKeyOf(StoredEvent event) async => null;
+
+  /// The name of a keyed destination's key scheme: the rule [blockKeyOf]
+  /// computes keys by, such as `participant-v1`. A keyed destination SHALL
+  /// declare one, non-empty, and change it whenever a change to
+  /// [blockKeyOf] may give one subject's events another key. Registration
+  /// records it with [keyed] in the persisted schedule, refuses a change to
+  /// either while the destination has key lists, and a fill or a hold under
+  /// a keying other than the recorded one writes nothing. Ignored on a
+  /// destination that is not keyed; null by default.
+  // Implements: EVS-DEV-destination-key-hold-guards/A
+  // a keyed destination names the scheme its block keys are computed by.
+  String? get keyScheme => null;
+
   /// Destination-owned batching rule. Invoked by `fillBatch` once per
   /// candidate event under consideration: returning `true` adds
   /// [candidate] to [currentBatch]; returning `false` ends the current

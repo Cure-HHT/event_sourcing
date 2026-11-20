@@ -634,9 +634,9 @@ class ViewCatchUpDriver {
             aggregateTypes: filter.aggregateTypes,
           );
           // The rows the chunk's folds read by key, loaded in one read: an
-          // aggregate fold reads its aggregate's row, a table fold the row
-          // a remove event deletes. A key the table's extractor cannot
-          // extract is not loaded; its fold fails on its own.
+          // aggregate fold reads its aggregate's row, a table fold the rows
+          // an update or remove event changes. A key the table's extractor
+          // cannot extract is not loaded; its fold fails on its own.
           if (rows != null) {
             switch (spec) {
               case AggregateProjectionSpec():
@@ -647,7 +647,8 @@ class ViewCatchUpDriver {
               case TableProjectionSpec():
                 await rows.prefetch(<String>{
                   for (final e in read)
-                    if (spec.interest.matches(e)) ?TableFold.readKeyOf(spec, e),
+                    if (spec.interest.matches(e))
+                      ...TableFold.readKeysOf(spec, e),
                 });
             }
           }

@@ -21,6 +21,8 @@ class UnguardedThirdPartyBackend extends ThirdPartyBackend {
     String? wireFormat,
     String? transformVersion,
     int? resendsDeliveryNumber,
+    String? blockKey,
+    String? releasedHoldId,
   }) => super.enqueueFifoTxn(
     txn,
     destinationId,
@@ -32,5 +34,7 @@ class UnguardedThirdPartyBackend extends ThirdPartyBackend {
     wireFormat: wireFormat,
     transformVersion: transformVersion,
     resendsDeliveryNumber: resendsDeliveryNumber,
+    blockKey: blockKey,
+    releasedHoldId: releasedHoldId,
   );
 }

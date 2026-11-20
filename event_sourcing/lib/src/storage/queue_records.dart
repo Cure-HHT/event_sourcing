@@ -23,38 +23,58 @@
 //   batch's sequence range, so a retry evaluates the same batch and the
 //   budget it spends is auditable once the batch enqueues as one
 //   transform-failed item.
-import 'package:collection/collection.dart' show DeepCollectionEquality;
+import 'package:collection/collection.dart'
+    show DeepCollectionEquality, ListEquality;
 import 'package:event_sourcing/src/destinations/halt_purpose.dart';
 import 'package:event_sourcing/src/destinations/wedge_cause.dart';
 import 'package:event_sourcing/src/ingest/delivery_channel.dart';
-import 'package:event_sourcing/src/storage/fifo_entry.dart' show SequenceRange;
+import 'package:event_sourcing/src/storage/fifo_entry.dart'
+    show FifoEntry, SequenceRange;
 
 /// What a trail sweep removed from a destination's queue: the number of
-/// pending items it deleted and the lowest event sequence number any of them
-/// carried (`null` when it deleted none).
+/// pending items it deleted, the lowest event sequence number carried by a
+/// deleted item that records no released hold id (`null` when it deleted
+/// none), and the deleted items that record one.
+// Implements: EVS-DEV-destination-drain/F
+// the sweep reports the lowest event of the removed items no release
+//   enqueued, which bounds the recovery's rewind, and the removed items a
+//   release enqueued, whose events the recovery returns to their lists.
 class TrailSweepResult {
-  const TrailSweepResult({required this.deletedCount, this.minFirstSeq});
+  const TrailSweepResult({
+    required this.deletedCount,
+    this.minFirstSeq,
+    this.released = const <FifoEntry>[],
+  });
 
   /// Number of pending items deleted.
   final int deletedCount;
 
-  /// Lowest `event_id_range.first_seq` among the deleted items, or `null`
-  /// when none was deleted.
+  /// Lowest `event_id_range.first_seq` among the deleted items that record
+  /// no released hold id, or `null` when none was deleted.
   final int? minFirstSeq;
+
+  /// The deleted items that record a released hold id, in
+  /// `sequence_in_queue` order.
+  final List<FifoEntry> released;
 
   @override
   bool operator ==(Object other) =>
       other is TrailSweepResult &&
       other.deletedCount == deletedCount &&
-      other.minFirstSeq == minFirstSeq;
+      other.minFirstSeq == minFirstSeq &&
+      const ListEquality<FifoEntry>().equals(other.released, released);
 
   @override
-  int get hashCode => Object.hash(deletedCount, minFirstSeq);
+  int get hashCode => Object.hash(
+    deletedCount,
+    minFirstSeq,
+    const ListEquality<FifoEntry>().hash(released),
+  );
 
   @override
   String toString() =>
       'TrailSweepResult(deletedCount: $deletedCount, '
-      'minFirstSeq: $minFirstSeq)';
+      'minFirstSeq: $minFirstSeq, released: $released)';
 }
 
 /// What retiring a destination's queue on deletion did: the wedged head it
@@ -728,4 +748,290 @@ final class SenderChannelRecord {
   String toString() =>
       'SenderChannelRecord(generation: $generation, receiverRecord: '
       '$receiverRecord, receiverDatabaseId: $receiverDatabaseId)';
+}
+
+/// The state of a key list: [held] until an operator releases it,
+/// [releasing] while the fill moves its events back into the queue.
+enum KeyListState {
+  /// The key's events wait for an operator's release.
+  held,
+
+  /// An operator released the hold; the fill enqueues the list's events
+  /// from its front.
+  releasing,
+}
+
+/// One event of a key list: its id and its sequence number in the log.
+class KeyListEvent {
+  const KeyListEvent({required this.eventId, required this.sequenceNumber});
+
+  /// Decode from the persisted JSON form.
+  factory KeyListEvent.fromJson(Map<String, Object?> json) {
+    final eventId = json['event_id'];
+    if (eventId is! String) {
+      throw const FormatException(
+        'KeyListEvent: missing or non-string "event_id"',
+      );
+    }
+    final sequenceNumber = json['sequence_number'];
+    if (sequenceNumber is! int) {
+      throw const FormatException(
+        'KeyListEvent: missing or non-integer "sequence_number"',
+      );
+    }
+    return KeyListEvent(eventId: eventId, sequenceNumber: sequenceNumber);
+  }
+
+  /// The event's id.
+  final String eventId;
+
+  /// The event's sequence number in the log.
+  final int sequenceNumber;
+
+  /// Persisted JSON form.
+  Map<String, Object?> toJson() => <String, Object?>{
+    'event_id': eventId,
+    'sequence_number': sequenceNumber,
+  };
+
+  @override
+  bool operator ==(Object other) =>
+      other is KeyListEvent &&
+      other.eventId == eventId &&
+      other.sequenceNumber == sequenceNumber;
+
+  @override
+  int get hashCode => Object.hash(eventId, sequenceNumber);
+
+  @override
+  String toString() =>
+      'KeyListEvent(eventId: $eventId, sequenceNumber: $sequenceNumber)';
+}
+
+/// The per-destination, per-key record that holds a held key's events out
+/// of the queue: the hold id of the hold event that opened or last
+/// re-opened it, its [state], the cause of that hold, and the key's events
+/// in sequence order, each once.
+///
+/// The constructor sorts [events] by sequence number and keeps the first of
+/// any events sharing an id, so every list read or written holds its events
+/// in sequence order, each once.
+///
+/// Persisted, with the destination's other key lists, under `backend_state`
+/// key `keylists_<destinationId>`.
+// Implements: EVS-DEV-destination-key-hold/H+L+M
+// a key list holds its key's events in sequence order, each event once,
+//   in state held or releasing, under the hold id of the hold that opened
+//   or last re-opened it; inserting an event it already holds leaves it
+//   unchanged.
+class KeyList {
+  KeyList({
+    required this.holdId,
+    required this.state,
+    required this.cause,
+    required List<KeyListEvent> events,
+  }) : events = List<KeyListEvent>.unmodifiable(_ordered(events));
+
+  /// Decode from the persisted JSON form.
+  factory KeyList.fromJson(Map<String, Object?> json) {
+    final holdId = json['hold_id'];
+    if (holdId is! String) {
+      throw const FormatException('KeyList: missing or non-string "hold_id"');
+    }
+    final stateRaw = json['state'];
+    final state = stateRaw is String
+        ? KeyListState.values.asNameMap()[stateRaw]
+        : null;
+    if (state == null) {
+      throw FormatException('KeyList: missing or unknown "state" $stateRaw');
+    }
+    final cause = json['cause'];
+    if (cause is! String) {
+      throw const FormatException('KeyList: missing or non-string "cause"');
+    }
+    final eventsRaw = json['events'];
+    if (eventsRaw is! List) {
+      throw const FormatException('KeyList: missing or non-list "events"');
+    }
+    return KeyList(
+      holdId: holdId,
+      state: state,
+      cause: cause,
+      events: <KeyListEvent>[
+        for (final e in eventsRaw)
+          if (e is Map)
+            KeyListEvent.fromJson(Map<String, Object?>.from(e))
+          else
+            throw const FormatException(
+              'KeyList: non-object entry in "events"',
+            ),
+      ],
+    );
+  }
+
+  /// The hold id of the hold event that opened or last re-opened the list.
+  final String holdId;
+
+  /// Whether the list waits for a release or is being released.
+  final KeyListState state;
+
+  /// The cause of the hold: `permanent_refusal` or `transform_failed`.
+  final String cause;
+
+  /// The key's events, in sequence order, each once.
+  final List<KeyListEvent> events;
+
+  /// This list with [event] inserted at its sequence position, or this list
+  /// itself when it already holds an event with [event]'s id.
+  KeyList withInserted(KeyListEvent event) {
+    if (events.any((e) => e.eventId == event.eventId)) return this;
+    return KeyList(
+      holdId: holdId,
+      state: state,
+      cause: cause,
+      events: <KeyListEvent>[...events, event],
+    );
+  }
+
+  /// Persisted JSON form.
+  Map<String, Object?> toJson() => <String, Object?>{
+    'hold_id': holdId,
+    'state': state.name,
+    'cause': cause,
+    'events': <Map<String, Object?>>[for (final e in events) e.toJson()],
+  };
+
+  static List<KeyListEvent> _ordered(List<KeyListEvent> events) {
+    final seen = <String>{};
+    final unique = <KeyListEvent>[
+      for (final e in events)
+        if (seen.add(e.eventId)) e,
+    ];
+    // List.sort is not stable; the index breaks ties so the order of events
+    // sharing a sequence number is the order they were given in.
+    final indexed = unique.indexed.toList()
+      ..sort((a, b) {
+        final bySequence = a.$2.sequenceNumber.compareTo(b.$2.sequenceNumber);
+        return bySequence != 0 ? bySequence : a.$1.compareTo(b.$1);
+      });
+    return <KeyListEvent>[for (final (_, e) in indexed) e];
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      other is KeyList &&
+      other.holdId == holdId &&
+      other.state == state &&
+      other.cause == cause &&
+      const ListEquality<KeyListEvent>().equals(other.events, events);
+
+  @override
+  int get hashCode => Object.hash(
+    holdId,
+    state,
+    cause,
+    const ListEquality<KeyListEvent>().hash(events),
+  );
+
+  @override
+  String toString() =>
+      'KeyList(holdId: $holdId, state: ${state.name}, cause: $cause, '
+      'events: $events)';
+}
+
+/// A key's failing release, kept while the fill retries it: the failures
+/// recorded, when each happened, and the event the release failed to build
+/// last.
+///
+/// The fill writes it when the transform or the block-key evaluation fails
+/// on the events a release would enqueue next, and removes it when the
+/// release succeeds or, once the failures have spent the destination's
+/// retry budget, in the transaction that holds the key again.
+///
+/// Persisted, with the destination's other release failure records, under
+/// `backend_state` key `release_failures_<destinationId>`.
+// Implements: EVS-DEV-destination-key-hold/W
+// the per-key release failure record: the failures recorded and their
+//   times, timed and spent like the fill's transform failure record.
+class ReleaseFailureRecord {
+  const ReleaseFailureRecord({
+    required this.failures,
+    required this.failedAt,
+    this.lastEventId,
+  });
+
+  /// Decode from the persisted JSON form.
+  factory ReleaseFailureRecord.fromJson(Map<String, Object?> json) {
+    final failures = json['failures'];
+    if (failures is! int) {
+      throw const FormatException(
+        'ReleaseFailureRecord: missing or non-integer "failures"',
+      );
+    }
+    final times = json['failed_at'];
+    if (times is! List) {
+      throw const FormatException(
+        'ReleaseFailureRecord: missing or non-list "failed_at"',
+      );
+    }
+    final lastEventId = json['last_event_id'];
+    if (lastEventId != null && lastEventId is! String) {
+      throw const FormatException(
+        'ReleaseFailureRecord: "last_event_id" must be a String when present',
+      );
+    }
+    return ReleaseFailureRecord(
+      failures: failures,
+      failedAt: <DateTime>[
+        for (final t in times)
+          if (t is String)
+            DateTime.parse(t).toUtc()
+          else
+            throw const FormatException(
+              'ReleaseFailureRecord: non-string entry in "failed_at"',
+            ),
+      ],
+      lastEventId: lastEventId as String?,
+    );
+  }
+
+  /// The release failures recorded for the key.
+  final int failures;
+
+  /// When the release failed, oldest first.
+  final List<DateTime> failedAt;
+
+  /// The event the release failed to build last, or null when unknown.
+  final String? lastEventId;
+
+  /// Persisted JSON form.
+  Map<String, Object?> toJson() => <String, Object?>{
+    'failures': failures,
+    'failed_at': <String>[
+      for (final t in failedAt) t.toUtc().toIso8601String(),
+    ],
+    'last_event_id': lastEventId,
+  };
+
+  @override
+  bool operator ==(Object other) =>
+      other is ReleaseFailureRecord &&
+      other.failures == failures &&
+      other.lastEventId == lastEventId &&
+      other.failedAt.length == failedAt.length &&
+      Iterable<int>.generate(
+        failedAt.length,
+      ).every((i) => other.failedAt[i].isAtSameMomentAs(failedAt[i]));
+
+  @override
+  int get hashCode => Object.hash(
+    failures,
+    lastEventId,
+    Object.hashAll(failedAt.map((t) => t.toUtc().microsecondsSinceEpoch)),
+  );
+
+  @override
+  String toString() =>
+      'ReleaseFailureRecord(failures: $failures, failedAt: $failedAt, '
+      'lastEventId: $lastEventId)';
 }
